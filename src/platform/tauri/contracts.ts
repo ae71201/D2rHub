@@ -52,6 +52,8 @@ export const TAURI_COMMANDS = [
   "import_accounts",
   "initialize_bnet_account",
   "kill_all_d2r_processes",
+  "inspect_account_launch_health",
+  "close_selected_accounts",
   "kill_browser_processes",
   "launch_accounts",
   "launch_battle_net_only",

@@ -25,16 +25,13 @@ use crate::launch_context::{
     account_game_executable_identity, ContextPurpose, HostRuntimeLease, LaunchContext,
 };
 use crate::state::{AccountLifecycleLease, SharedState};
-use crate::token_registry_trace::{WebTokenReadMonitor, WEB_TOKEN_VALUE_NAME};
+use crate::token_registry_change::{WebTokenChangeMonitor, WEB_TOKEN_VALUE_NAME};
 
 /// 启动进度详情
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchResult {
     pub account_id: String,
     pub success: bool,
-    /// A live game with its mutex cleared, but no confirmed login signal.
-    #[serde(default)]
-    pub login_unconfirmed: bool,
     pub d2r_pid: Option<u32>,
     pub error: Option<String>,
     pub mutex_killed: bool,
@@ -94,7 +91,6 @@ impl Drop for TemporarySettingsOverride {
 }
 
 const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
-const NETWORK_READY_REQUIRED_SAMPLES: u8 = 2;
 
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
@@ -124,56 +120,8 @@ fn spawn_battle_net_launch_command(
     command.spawn()
 }
 
-fn token_launch_is_ready(login_signal_ready: bool, mutex_closed: bool) -> bool {
+fn launch_login_is_ready(login_signal_ready: bool, mutex_closed: bool) -> bool {
     login_signal_ready && mutex_closed
-}
-
-fn record_network_readiness_sample(consecutive_samples: &mut u8, connected: bool) -> bool {
-    if connected {
-        *consecutive_samples = consecutive_samples.saturating_add(1);
-    } else {
-        *consecutive_samples = 0;
-    }
-    *consecutive_samples >= NETWORK_READY_REQUIRED_SAMPLES
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BattleNetReadinessSource {
-    Etw,
-    Tcp,
-}
-
-fn battle_net_readiness_source(
-    web_token_read_by_target_pid: bool,
-    stable_tcp_connection: bool,
-) -> Option<BattleNetReadinessSource> {
-    if web_token_read_by_target_pid {
-        Some(BattleNetReadinessSource::Etw)
-    } else if stable_tcp_connection {
-        Some(BattleNetReadinessSource::Tcp)
-    } else {
-        None
-    }
-}
-
-fn stop_optional_web_token_monitor(
-    monitor: &mut Option<WebTokenReadMonitor>,
-    account_id: &str,
-    reason: &str,
-) {
-    if let Some(monitor) = monitor.take() {
-        crate::logger::log_msg(
-            "INFO",
-            "TokenETW",
-            &format!(
-                "[Account {account_id}] 停止原因={reason}；{}",
-                monitor.diagnostics()
-            ),
-        );
-        if let Err(error) = monitor.stop() {
-            crate::logger::log_msg("WARN", "Launch", &format!("[Account {account_id}] {error}"));
-        }
-    }
 }
 
 #[derive(Default)]
@@ -216,6 +164,76 @@ impl MutexRemovalState {
             .map(|error| format!("已检测到但未能确认清除 ({error})"))
             .unwrap_or_else(|| "已检测到但未能确认清除".to_string())
     }
+}
+
+// Abort on every return path, including when the parent launch future is dropped.
+struct LaunchBackgroundTask(tokio::task::JoinHandle<()>);
+impl LaunchBackgroundTask {
+    fn abort(&self) {
+        self.0.abort();
+    }
+}
+impl Drop for LaunchBackgroundTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn spawn_mutex_removal(
+    state: &SharedState,
+    cancellation_ticket: CancellationTicket,
+    pid: u32,
+    executable: &Path,
+    mutex_state: std::sync::Arc<MutexRemovalState>,
+) -> LaunchBackgroundTask {
+    let state_clone = state.clone();
+    let process = crate::infrastructure::system::LaunchProcessGuard::capture(pid, executable);
+    LaunchBackgroundTask(tokio::spawn(async move {
+        let mut closed_at_least_once = false;
+        for _ in 0..120 {
+            if is_cancelled(&state_clone, cancellation_ticket)
+                || !process.as_ref().is_some_and(|process| process.is_running())
+            {
+                break;
+            }
+            match crate::infrastructure::system::find_mutex_handle(pid, MUTEX_NAME) {
+                Ok(Some(hid)) => {
+                    mutex_state.record_found();
+                    match crate::infrastructure::system::close_handle(pid, &hid) {
+                        Ok(()) => {
+                            closed_at_least_once = true;
+                            match crate::infrastructure::system::find_mutex_handle(pid, MUTEX_NAME)
+                            {
+                                Ok(None) => {
+                                    mutex_state.confirm_closed();
+                                    break;
+                                }
+                                Ok(Some(_)) => {
+                                    mutex_state.record_error("关闭后仍检测到互斥句柄");
+                                }
+                                Err(error) => {
+                                    mutex_state
+                                        .record_error(format!("确认互斥句柄清除失败: {error}"));
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            mutex_state.record_error(error.to_string());
+                        }
+                    }
+                }
+                Ok(None) if closed_at_least_once => {
+                    mutex_state.confirm_closed();
+                    break;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    mutex_state.record_error(error.to_string());
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }))
 }
 
 fn graphics_settings_path(
@@ -403,21 +421,9 @@ fn finish_launch_task(task: TaskHandle, result: &Result<Vec<LaunchResult>, AppEr
             let _ = task.cancelled("启动已取消");
         }
         Ok(results) => {
-            let failures = results
-                .iter()
-                .filter(|result| !result.success && !result.login_unconfirmed)
-                .count();
-            let unconfirmed = results
-                .iter()
-                .filter(|result| result.login_unconfirmed)
-                .count();
+            let failures = results.iter().filter(|result| !result.success).count();
             if failures == 0 {
-                let message = if unconfirmed > 0 {
-                    format!("启动队列完成，其中 {unconfirmed} 个账号登录状态未确认")
-                } else {
-                    "启动任务完成".to_string()
-                };
-                let _ = task.succeed(&message);
+                let _ = task.succeed("启动任务完成");
             } else {
                 let _ = task.fail(
                     "account-launch-partial-failure",
@@ -446,7 +452,6 @@ fn account_path_error(account_id: &str, err: AppError) -> LaunchResult {
         d2r_pid: None,
         error: Some(err.to_string()),
         mutex_killed: false,
-        login_unconfirmed: false,
     }
 }
 
@@ -509,7 +514,6 @@ fn already_running_result(
         error: Some(message),
         // 已存在的实例不会进入后续队列安全判断，视为无需处理互斥句柄。
         mutex_killed: true,
-        login_unconfirmed: false,
     }
 }
 
@@ -660,7 +664,7 @@ fn preflight_accounts(
     Ok(())
 }
 
-fn preflight_account_meta(
+pub(crate) fn preflight_account_meta(
     config: &GlobalConfig,
     meta: &AccountMeta,
     purpose: ContextPurpose,
@@ -849,7 +853,6 @@ async fn cancel_with_cleanup(
         d2r_pid: None,
         error: Some("启动已被用户取消".to_string()),
         mutex_killed: false,
-        login_unconfirmed: false,
     }
 }
 
@@ -936,7 +939,6 @@ async fn launch_battle_net_only_impl(
                 d2r_pid: None,
                 error: Some("启动已被用户取消".to_string()),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
             for remaining in &account_ids[i + 1..] {
                 emit_cancelled(&app, remaining);
@@ -946,7 +948,6 @@ async fn launch_battle_net_only_impl(
                     d2r_pid: None,
                     error: Some("启动已被用户取消".to_string()),
                     mutex_killed: false,
-                    login_unconfirmed: false,
                 });
             }
             return Ok(results);
@@ -1003,7 +1004,6 @@ async fn launch_battle_net_only_impl(
                 d2r_pid: None,
                 error: Some("启动已被用户取消".to_string()),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
             for remaining in &account_ids[i + 1..] {
                 emit_cancelled(&app, remaining);
@@ -1013,7 +1013,6 @@ async fn launch_battle_net_only_impl(
                     d2r_pid: None,
                     error: Some("启动已被用户取消".to_string()),
                     mutex_killed: false,
-                    login_unconfirmed: false,
                 });
             }
             return Ok(results);
@@ -1114,7 +1113,6 @@ async fn prepare_bnet_environment(
             d2r_pid: None,
             error: Some("启动已被用户取消".to_string()),
             mutex_killed: false,
-            login_unconfirmed: false,
         }
     };
 
@@ -1136,7 +1134,6 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(message),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
         }
         Err(error) => {
@@ -1148,7 +1145,6 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(message),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
         }
     }
@@ -1294,7 +1290,6 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(e),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
         }
         Err(_) => {
@@ -1306,7 +1301,6 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(msg),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
         }
     }
@@ -1329,7 +1323,6 @@ async fn prepare_bnet_environment(
             d2r_pid: None,
             error: Some(msg),
             mutex_killed: false,
-            login_unconfirmed: false,
         });
     }
     let battle_net_spawn_path = battle_net_path.clone();
@@ -1347,7 +1340,6 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(msg),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
         }
         Err(_) => {
@@ -1359,7 +1351,6 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(msg),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
         }
     }
@@ -1508,7 +1499,6 @@ async fn launch_single_bnet_only(
         d2r_pid: None,
         error: None,
         mutex_killed: false,
-        login_unconfirmed: false,
     }
 }
 
@@ -1749,7 +1739,6 @@ async fn launch_accounts_impl(
                 d2r_pid: None,
                 error: Some("启动已被用户取消".to_string()),
                 mutex_killed: false,
-                login_unconfirmed: false,
             });
             // 剩余未启动的账号也标记为取消
             for remaining in &account_ids[i + 1..] {
@@ -1760,7 +1749,6 @@ async fn launch_accounts_impl(
                     d2r_pid: None,
                     error: Some("启动已被用户取消".to_string()),
                     mutex_killed: false,
-                    login_unconfirmed: false,
                 });
             }
             break;
@@ -1798,14 +1786,8 @@ async fn launch_accounts_impl(
         .await;
         let killed = result.mutex_killed;
         let success = result.success;
-        let can_continue = launch_queue_can_continue(success || result.login_unconfirmed, killed);
-        let result_level = if result.login_unconfirmed {
-            "WARN"
-        } else if success {
-            "INFO"
-        } else {
-            "ERROR"
-        };
+        let can_continue = launch_queue_can_continue(success, killed);
+        let result_level = if success { "INFO" } else { "ERROR" };
         let pid = result.d2r_pid;
         let err = result.error.clone();
         crate::logger::log_msg(
@@ -1822,8 +1804,7 @@ async fn launch_accounts_impl(
             memory_trim.trim_halfway(&state, cancellation_ticket).await;
         }
 
-        // 正常结果必须完成就绪检测并清除互斥句柄；ETW/TCP 均不可用时，
-        // 已确认存活且清除互斥的降级结果可以继续，但不会标为登录成功。
+        // 必须确认 WEB_TOKEN 变化并清除互斥句柄，失败或超时停止队列。
         if !can_continue && i + 1 < total {
             let (queue_message, remaining_error) = if success {
                 ("互斥句柄未清除，后续账号暂停启动", "互斥句柄未清除，已暂停")
@@ -1845,7 +1826,6 @@ async fn launch_accounts_impl(
                     d2r_pid: None,
                     error: Some(remaining_error.to_string()),
                     mutex_killed: false,
-                    login_unconfirmed: false,
                 });
             }
             break;
@@ -1960,24 +1940,7 @@ async fn launch_single(
     };
     let expected_game_path = context.installation.game_executable.clone();
 
-    // Battle.net 模式并行使用 ETW 与 TCP 1119 联网连接。ETW 是增强信号而非硬依赖：
-    // 权限不足或监听启动失败时继续使用 TCP，不阻断游戏启动。
-    emit(
-        "connect",
-        "running",
-        "正在启动 WEB_TOKEN ETW 监听（与 TCP 1119 并行）...",
-    );
-    let mut token_read_monitor = match WebTokenReadMonitor::start() {
-        Ok(monitor) => Some(monitor),
-        Err(error) => {
-            emit(
-                "connect",
-                "warning",
-                &format!("{error}；将继续使用 TCP 1119 联网检测"),
-            );
-            None
-        }
-    };
+    let mut token_change_monitor = None;
 
     // ── Step 4: 记录当前 D2R 进程快照 ──
     let before_pids = crate::infrastructure::system::snapshot_processes("D2R.exe".to_string());
@@ -2177,6 +2140,23 @@ async fn launch_single(
             };
 
             if should_send {
+                if token_change_monitor.is_none() {
+                    token_change_monitor = Some(
+                        match WebTokenChangeMonitor::capture(
+                            &context.token_registry_path(),
+                            account_id,
+                            2,
+                        ) {
+                            Ok(monitor) => monitor,
+                            Err(error) => return account_path_error(account_id, error),
+                        },
+                    );
+                    emit(
+                        "connect",
+                        "running",
+                        "已在战网启动游戏前建立 WEB_TOKEN 基线",
+                    );
+                }
                 let battle_net_path = battle_net_path.clone();
                 emit(
                     "game",
@@ -2347,7 +2327,6 @@ async fn launch_single(
                 d2r_pid: None,
                 error: Some(error),
                 mutex_killed: false,
-                login_unconfirmed: false,
             };
         }
     };
@@ -2376,66 +2355,41 @@ async fn launch_single(
         d2r_pid,
     );
 
-    // 从识别到新 PID 的时刻开始计算按键窗口：延迟 2 秒，最多持续 9 秒。
-    // ETW/TCP 任一命中时会立即结束按键发送。
+    // 延迟 2 秒发送登录按键，达到该模式的变化次数后停止。
     let d2r_started_at = std::time::Instant::now();
 
-    // ── Step 7: 互斥句柄清除 (后台任务，与 Step 8 并发) ──
-    let mutex_killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mutex_found_once = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mutex_task = {
-        let killed = mutex_killed.clone();
-        let found = mutex_found_once.clone();
-        let state_clone = state.clone();
-        tokio::spawn(async move {
-            loop {
-                if is_cancelled(&state_clone, cancellation_ticket) {
-                    break;
-                }
-                if let Ok(Some(hid)) =
-                    crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
-                {
-                    found.store(true, std::sync::atomic::Ordering::SeqCst);
-                    let _ = crate::infrastructure::system::close_handle(d2r_pid, &hid);
-                    if let Ok(None) =
-                        crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
-                    {
-                        killed.store(true, std::sync::atomic::Ordering::SeqCst);
-                        break;
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            }
-        })
-    };
+    // ── 杀 Mutex ──
+    let mutex_state = std::sync::Arc::new(MutexRemovalState::default());
+    let mutex_task = spawn_mutex_removal(
+        state,
+        cancellation_ticket,
+        d2r_pid,
+        &context.installation.game_executable,
+        mutex_state.clone(),
+    );
 
-    // ── Step 8: ETW 与 TCP 1119 联网检测并行竞争，任一命中即停止另一检测 ──
     emit(
         "connect",
         "running",
-        "正在跳过动画，并行等待 ETW 或 TCP 1119 联网连接就绪...",
+        "等待 WEB_TOKEN 两次实际变化（首次刷新不放行）...",
     );
-    emit("mutex", "running", "后台监控互斥句柄中...");
-
+    emit("mutex", "running", "后台清除互斥句柄中（必须成功）...");
+    let Some(monitor) = token_change_monitor.as_ref() else {
+        mutex_task.abort();
+        return account_path_error(
+            account_id,
+            AppError::RegistryError("未建立启动前 WEB_TOKEN 基线，已停止队列".into()),
+        );
+    };
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(60);
-    let mut readiness_source = None;
-    let mut network_ready_samples = 0u8;
-
-    let mut keys_logged = false;
     let key_start = d2r_started_at + std::time::Duration::from_secs(2);
-    let key_deadline = key_start + std::time::Duration::from_secs(9);
     let mut next_key_send = key_start;
-    let mut next_tcp_sample = std::time::Instant::now();
-    while readiness_source.is_none() && start.elapsed() < timeout {
+    let mut change_logged = false;
+    let mut key_attempts = 0u32;
+    let mut mutex_logged = false;
+    let failure = loop {
         if is_cancelled(state, cancellation_ticket) {
-            emit("done", "error", "已取消，正在保存状态...");
             mutex_task.abort();
-            stop_optional_web_token_monitor(
-                &mut token_read_monitor,
-                account_id,
-                "启动取消或提前结束",
-            );
             return cancel_with_cleanup(
                 config,
                 &context,
@@ -2444,156 +2398,63 @@ async fn launch_single(
             )
             .await;
         }
-
-        let now = std::time::Instant::now();
-        let web_token_read = token_read_monitor
+        if !game_process
             .as_ref()
-            .is_some_and(|monitor| monitor.was_read_by(d2r_pid));
-        let mut stable_tcp_connection = false;
-
-        // ETW 已命中时不再读取 TCP 表；否则 TCP 约每秒采样一次。
-        if !web_token_read && now >= next_tcp_sample {
-            stable_tcp_connection = record_network_readiness_sample(
-                &mut network_ready_samples,
-                crate::infrastructure::system::check_game_connected(d2r_pid),
-            );
-            next_tcp_sample = now + std::time::Duration::from_secs(1);
-        }
-
-        readiness_source = battle_net_readiness_source(web_token_read, stable_tcp_connection);
-        if let Some(source) = readiness_source {
-            match source {
-                BattleNetReadinessSource::Etw => emit(
-                    "connect",
-                    "ok",
-                    "ETW 检测到 D2R 已读取 WEB_TOKEN，停止 TCP 与跳过按键检测",
-                ),
-                BattleNetReadinessSource::Tcp => emit(
-                    "connect",
-                    "ok",
-                    "TCP 1119 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
-                ),
+            .is_some_and(|process| process.is_running())
+        {
+            if game_process
+                .as_ref()
+                .is_some_and(|process| process.has_exited())
+            {
+                state
+                    .multi_instance()
+                    .instances()
+                    .remove_if_pid(account_id, d2r_pid);
             }
-            break;
+            break Some("原游戏进程已退出或无法确认存活，已停止启动队列".to_string());
         }
-
-        if now >= next_key_send && now < key_deadline {
-            let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
-            if !keys_logged {
-                emit("connect", "running", "正在发送按键跳过动画...");
-                keys_logged = true;
+        let changed = match monitor.changed() {
+            Ok(changed) => changed,
+            Err(error) => break Some(error),
+        };
+        if changed && !change_logged {
+            emit("connect", "ok", "WEB_TOKEN 已完成两次变化，停止登录按键");
+            change_logged = true;
+        }
+        if mutex_state.is_closed() && !mutex_logged {
+            emit("mutex", "ok", "互斥句柄已清除");
+            mutex_logged = true;
+        }
+        if launch_login_is_ready(changed, mutex_state.is_closed()) {
+            break None;
+        }
+        if start.elapsed() >= std::time::Duration::from_secs(60) {
+            break Some(format!(
+                "等待登录与互斥清除超时：WEB_TOKEN 已变化 {}/2 次；互斥句柄 {}；已停止队列",
+                monitor.change_count().unwrap_or_default(),
+                mutex_state.diagnostics()
+            ));
+        }
+        let now = std::time::Instant::now();
+        if !changed && now >= next_key_send {
+            let sent = crate::infrastructure::system::send_keys_to_window(d2r_pid);
+            key_attempts += 1;
+            if key_attempts == 1 || key_attempts.is_multiple_of(10) {
+                emit("connect", "running", &format!("持续发送登录按键：第 {key_attempts} 次，结果 {sent:?}，WEB_TOKEN 已变化 {}/2 次", monitor.change_count().unwrap_or_default()));
             }
             next_key_send = now + std::time::Duration::from_millis(500);
         }
-
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-
-    let etw_diagnostics = token_read_monitor
-        .as_ref()
-        .map(WebTokenReadMonitor::diagnostics)
-        .unwrap_or_else(|| "监听不可用".to_string());
-    stop_optional_web_token_monitor(
-        &mut token_read_monitor,
-        account_id,
-        match readiness_source {
-            Some(BattleNetReadinessSource::Etw) => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
-            Some(BattleNetReadinessSource::Tcp) => {
-                "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）"
-            }
-            None => "登录信号等待超时，保留 ETW 诊断",
-        },
-    );
-
-    let readiness_degraded = readiness_source.is_none();
-    if readiness_degraded
-        && !game_process
-            .as_ref()
-            .is_some_and(|process| process.is_running())
-    {
-        mutex_task.abort();
-        if game_process
-            .as_ref()
-            .is_some_and(|process| process.has_exited())
-        {
-            state
-                .multi_instance()
-                .instances()
-                .remove_if_pid(account_id, d2r_pid);
-        }
-        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
-        emit("done", "error", error);
+    };
+    mutex_task.abort();
+    if let Some(error) = failure {
+        emit("done", "error", &error);
         return LaunchResult {
             account_id: account_id.to_string(),
             success: false,
-            d2r_pid: None,
-            error: Some(error.to_string()),
-            mutex_killed: false,
-            login_unconfirmed: false,
-        };
-    }
-
-    if readiness_degraded {
-        // ETW/TCP are readiness signals, not proof that the game process is
-        // usable. Keep the account eligible for a degraded batch continuation,
-        // but require the independent mutex cleanup below before proceeding.
-        emit(
-            "connect",
-            "warning",
-            &format!(
-                "登录信号未确认，将自动清理 ETW 并检查互斥状态后再决定是否继续：{etw_diagnostics}"
-            ),
-        );
-    }
-
-    // ── 任一登录信号已就绪，等待互斥句柄确认（最多 3s）──
-    if !mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
-        emit("mutex", "running", "等待互斥句柄确认...");
-        let mutex_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while std::time::Instant::now() < mutex_deadline {
-            if is_cancelled(state, cancellation_ticket) {
-                emit("done", "error", "已取消，正在保存状态...");
-                mutex_task.abort();
-                return cancel_with_cleanup(
-                    config,
-                    &context,
-                    account_id,
-                    preserved_default_mod_args.as_deref(),
-                )
-                .await;
-            }
-            if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-    }
-
-    if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
-        emit("mutex", "ok", "互斥句柄已清除");
-    } else if mutex_found_once.load(std::sync::atomic::Ordering::SeqCst) {
-        emit("mutex", "warning", "互斥句柄曾检测到但清除失败");
-    } else {
-        emit(
-            "mutex",
-            "warning",
-            "未检测到互斥句柄，下一个游戏可能无法成功启动",
-        );
-    }
-
-    if readiness_degraded && !mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
-        let error = format!(
-            "登录信号等待超时且互斥句柄未确认：ETW 未命中（{etw_diagnostics}）；TCP 1119 未连续两次检测到目标 D2R 联网连接"
-        );
-        emit("connect", "error", &error);
-        mutex_task.abort();
-        return LaunchResult {
-            account_id: account_id.to_string(),
-            success: false,
-            d2r_pid: None,
+            d2r_pid: Some(d2r_pid),
             error: Some(error),
-            mutex_killed: false,
-            login_unconfirmed: false,
+            mutex_killed: mutex_state.is_closed(),
         };
     }
 
@@ -2627,16 +2488,24 @@ async fn launch_single(
         })
         .await;
 
-    match sync_res {
+    let sync_error = match sync_res {
         Ok(Ok(())) => {
             emit("cleanup", "ok", "战网已关闭，状态已同步");
+            None
         }
-        Ok(Err(e)) => {
-            emit("cleanup", "warning", &format!("回写状态失败: {}", e));
-        }
-        Err(_) => {
-            emit("cleanup", "warning", "回写状态线程异常");
-        }
+        Ok(Err(e)) => Some(format!("回写认证状态失败，已停止队列: {e}")),
+        Err(_) => Some("回写认证状态线程异常，已停止队列".to_string()),
+    };
+    if let Some(error) = sync_error {
+        emit("cleanup", "error", &error);
+        emit("done", "error", &error);
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: Some(d2r_pid),
+            error: Some(error),
+            mutex_killed: mutex_state.is_closed(),
+        };
     }
 
     // 更新最后启动时间
@@ -2652,13 +2521,9 @@ async fn launch_single(
 
     mutex_task.abort();
 
-    #[cfg(target_os = "windows")]
-    memory_trim.confirm(pending_memory_trim);
-
-    if readiness_degraded
-        && !game_process
-            .as_ref()
-            .is_some_and(|process| process.is_running())
+    if !game_process
+        .as_ref()
+        .is_some_and(|process| process.is_running())
     {
         if game_process
             .as_ref()
@@ -2669,7 +2534,7 @@ async fn launch_single(
                 .instances()
                 .remove_if_pid(account_id, d2r_pid);
         }
-        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
+        let error = "原游戏进程已退出或无法确认存活，已停止启动队列";
         emit("done", "error", error);
         return LaunchResult {
             account_id: account_id.to_string(),
@@ -2677,27 +2542,27 @@ async fn launch_single(
             d2r_pid: None,
             error: Some(error.to_string()),
             mutex_killed: false,
-            login_unconfirmed: false,
         };
     }
 
-    let result_message = if readiness_degraded {
-        "游戏进程已启动，登录状态未确认；互斥句柄已清除，允许继续队列"
-    } else {
-        "启动完成"
-    };
-    emit(
-        "done",
-        if readiness_degraded { "warning" } else { "ok" },
-        result_message,
-    );
+    if is_cancelled(state, cancellation_ticket) {
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: Some(d2r_pid),
+            error: Some("已取消".into()),
+            mutex_killed: mutex_state.is_closed(),
+        };
+    }
+    #[cfg(target_os = "windows")]
+    memory_trim.confirm(pending_memory_trim);
+    emit("done", "ok", "启动完成");
     LaunchResult {
         account_id: account_id.to_string(),
-        success: !readiness_degraded,
+        success: true,
         d2r_pid: Some(d2r_pid),
-        error: readiness_degraded.then(|| result_message.to_string()),
-        mutex_killed: mutex_killed.load(std::sync::atomic::Ordering::SeqCst),
-        login_unconfirmed: readiness_degraded,
+        error: None,
+        mutex_killed: mutex_state.is_closed(),
     }
 }
 
@@ -2735,7 +2600,6 @@ async fn launch_single_token(
             d2r_pid: None,
             error: Some("启动已被用户取消".to_string()),
             mutex_killed: false,
-            login_unconfirmed: false,
         }
     };
 
@@ -2804,7 +2668,6 @@ async fn launch_single_token(
                         d2r_pid: None,
                         error: Some(format!("Token 解码失败: {}", e)),
                         mutex_killed: false,
-                        login_unconfirmed: false,
                     };
                 }
             }
@@ -2816,7 +2679,6 @@ async fn launch_single_token(
                 d2r_pid: None,
                 error: Some("账号缺少 Token".to_string()),
                 mutex_killed: false,
-                login_unconfirmed: false,
             };
         }
     };
@@ -2858,22 +2720,9 @@ async fn launch_single_token(
         return account_path_error(account_id, error);
     }
     emit("copy", "ok", "配置覆盖完成");
-    emit(
-        "connect",
-        "running",
-        "正在启动 WEB_TOKEN ETW 监听（与 TCP 1119 并行）...",
-    );
-    let mut token_read_monitor = match WebTokenReadMonitor::start() {
-        Ok(monitor) => Some(monitor),
-        Err(error) => {
-            emit(
-                "connect",
-                "warning",
-                &format!("{error}；将继续使用 TCP 1119 联网检测"),
-            );
-            None
-        }
-    };
+    let token_change_monitor =
+        WebTokenChangeMonitor::start(token_registry_path, protected_bytes, account_id);
+    emit("connect", "running", "已以本次注入值建立 WEB_TOKEN 基线");
 
     // 3. 记录之前存在的 D2R 进程
     let before_pids = crate::infrastructure::system::snapshot_processes("D2R.exe".to_string());
@@ -2895,11 +2744,6 @@ async fn launch_single_token(
                 cmd.args(args);
             }
             Err(error) => {
-                stop_optional_web_token_monitor(
-                    &mut token_read_monitor,
-                    account_id,
-                    "启动取消或提前结束",
-                );
                 return account_path_error(account_id, AppError::ConfigReadError(error));
             }
         }
@@ -2909,18 +2753,12 @@ async fn launch_single_token(
     match spawn_res {
         Ok(Ok(_)) => {}
         _ => {
-            stop_optional_web_token_monitor(
-                &mut token_read_monitor,
-                account_id,
-                "启动取消或提前结束",
-            );
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
                 d2r_pid: None,
                 error: Some("启动 D2R.exe 失败".to_string()),
                 mutex_killed: false,
-                login_unconfirmed: false,
             };
         }
     }
@@ -2933,11 +2771,6 @@ async fn launch_single_token(
 
     while wait_start.elapsed().as_secs() < timeout_secs {
         if is_cancelled(state, cancellation_ticket) {
-            stop_optional_web_token_monitor(
-                &mut token_read_monitor,
-                account_id,
-                "启动取消或提前结束",
-            );
             return cancelled();
         }
 
@@ -2966,18 +2799,12 @@ async fn launch_single_token(
         let (d2r_pids, sys_ret) = match process_refresh {
             Ok(result) => result,
             Err(error) => {
-                stop_optional_web_token_monitor(
-                    &mut token_read_monitor,
-                    account_id,
-                    "启动取消或提前结束",
-                );
                 return LaunchResult {
                     account_id: account_id.to_string(),
                     success: false,
                     d2r_pid: None,
                     error: Some(format!("刷新游戏进程列表失败: {error}")),
                     mutex_killed: false,
-                    login_unconfirmed: false,
                 };
             }
         };
@@ -3058,24 +2885,17 @@ async fn launch_single_token(
         }
         None => {
             emit("game", "error", "等待游戏进程启动超时");
-            stop_optional_web_token_monitor(
-                &mut token_read_monitor,
-                account_id,
-                "启动取消或提前结束",
-            );
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
                 d2r_pid: None,
                 error: Some("等待游戏进程启动超时".to_string()),
                 mutex_killed: false,
-                login_unconfirmed: false,
             };
         }
     };
 
-    // 从识别到新 PID 的时刻开始计算按键窗口：延迟 2 秒，最多持续 9 秒。
-    // ETW/TCP 任一命中时会立即结束按键发送。
+    // 延迟 2 秒发送登录按键，达到该模式的变化次数后停止。
     let d2r_started_at = std::time::Instant::now();
 
     let game_process = crate::infrastructure::system::LaunchProcessGuard::capture(
@@ -3093,227 +2913,87 @@ async fn launch_single_token(
 
     // ── 杀 Mutex ──
     let mutex_state = std::sync::Arc::new(MutexRemovalState::default());
-    let mutex_task = {
-        let mutex_state = mutex_state.clone();
-        tokio::spawn(async move {
-            let mut closed_at_least_once = false;
-            for _ in 0..120 {
-                match crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
-                    Ok(Some(hid)) => {
-                        mutex_state.record_found();
-                        match crate::infrastructure::system::close_handle(d2r_pid, &hid) {
-                            Ok(()) => {
-                                closed_at_least_once = true;
-                                match crate::infrastructure::system::find_mutex_handle(
-                                    d2r_pid, MUTEX_NAME,
-                                ) {
-                                    Ok(None) => {
-                                        mutex_state.confirm_closed();
-                                        break;
-                                    }
-                                    Ok(Some(_)) => {
-                                        mutex_state.record_error("关闭后仍检测到互斥句柄");
-                                    }
-                                    Err(error) => {
-                                        mutex_state
-                                            .record_error(format!("确认互斥句柄清除失败: {error}"));
-                                    }
-                                }
-                            }
-                            Err(error) => {
-                                mutex_state.record_error(error.to_string());
-                            }
-                        }
-                    }
-                    Ok(None) if closed_at_least_once => {
-                        mutex_state.confirm_closed();
-                        break;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        mutex_state.record_error(error.to_string());
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            }
-        })
-    };
+    let mutex_task = spawn_mutex_removal(
+        state,
+        cancellation_ticket,
+        d2r_pid,
+        &context.installation.game_executable,
+        mutex_state.clone(),
+    );
 
-    // ── ETW 与 TCP 1119 任一命中后停止检测和跳过按键，继续等待互斥句柄清除 ──
     emit(
         "connect",
         "running",
-        "正在跳过动画，并行等待 ETW 或 TCP 1119 联网连接就绪...",
+        "等待 WEB_TOKEN 相对启动基线发生变化...",
     );
-    emit("mutex", "running", "后台监控互斥句柄中...");
-
+    emit("mutex", "running", "后台清除互斥句柄中（必须成功）...");
+    let monitor = &token_change_monitor;
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(60);
-    let mut readiness_source = None;
-    let mut network_ready_samples = 0u8;
-    let mut next_tcp_sample = start;
     let key_start = d2r_started_at + std::time::Duration::from_secs(2);
     let key_deadline = key_start + std::time::Duration::from_secs(9);
     let mut next_key_send = key_start;
-    let mut etw_diagnostics = None;
-    let mut launch_ready;
-    let mut mutex_closed_logged = false;
-
-    loop {
+    let mut change_logged = false;
+    let mut mutex_logged = false;
+    let failure = loop {
         if is_cancelled(state, cancellation_ticket) {
             mutex_task.abort();
-            stop_optional_web_token_monitor(
-                &mut token_read_monitor,
-                account_id,
-                "启动取消或提前结束",
-            );
             return cancelled();
         }
-
-        let now = std::time::Instant::now();
-        if readiness_source.is_none() {
-            let web_token_read = token_read_monitor
-                .as_ref()
-                .is_some_and(|monitor| monitor.was_read_by(d2r_pid));
-            let mut stable_tcp_connection = false;
-
-            if !web_token_read && now >= next_tcp_sample {
-                stable_tcp_connection = record_network_readiness_sample(
-                    &mut network_ready_samples,
-                    crate::infrastructure::system::check_game_connected(d2r_pid),
-                );
-                next_tcp_sample = now + std::time::Duration::from_secs(1);
-            }
-
-            readiness_source = battle_net_readiness_source(web_token_read, stable_tcp_connection);
-            if let Some(source) = readiness_source {
-                etw_diagnostics = token_read_monitor
-                    .as_ref()
-                    .map(WebTokenReadMonitor::diagnostics);
-                stop_optional_web_token_monitor(
-                    &mut token_read_monitor,
-                    account_id,
-                    match source {
-                        BattleNetReadinessSource::Etw => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
-                        BattleNetReadinessSource::Tcp => {
-                            "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）"
-                        }
-                    },
-                );
-                match source {
-                    BattleNetReadinessSource::Etw => emit(
-                        "connect",
-                        "ok",
-                        "ETW 检测到 D2R 已读取 WEB_TOKEN，停止 TCP 与跳过按键检测",
-                    ),
-                    BattleNetReadinessSource::Tcp => emit(
-                        "connect",
-                        "ok",
-                        "TCP 1119 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
-                    ),
-                }
-            } else if now >= next_key_send && now < key_deadline {
-                let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
-                next_key_send = now + std::time::Duration::from_millis(500);
-            }
-        }
-
-        let mutex_closed = mutex_state.is_closed();
-        if mutex_closed && !mutex_closed_logged {
-            emit("mutex", "ok", "互斥句柄已清除");
-            mutex_closed_logged = true;
-        }
-        launch_ready = token_launch_is_ready(readiness_source.is_some(), mutex_closed);
-        if launch_ready || start.elapsed() >= timeout {
-            break;
-        }
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-
-    let etw_diagnostics = etw_diagnostics
-        .or_else(|| {
-            token_read_monitor
-                .as_ref()
-                .map(WebTokenReadMonitor::diagnostics)
-        })
-        .unwrap_or_else(|| "监听不可用".to_string());
-    stop_optional_web_token_monitor(
-        &mut token_read_monitor,
-        account_id,
-        "登录信号等待超时，保留 ETW 诊断",
-    );
-
-    // A missing ETW/TCP signal is recoverable for this account only when the
-    // independent mutex monitor has already confirmed that the instance can
-    // coexist with the next launch. This keeps the batch moving without
-    // treating an unverified login as a normal success.
-    let readiness_degraded = readiness_source.is_none() && mutex_state.is_closed();
-    if readiness_degraded
-        && !game_process
+        if !game_process
             .as_ref()
             .is_some_and(|process| process.is_running())
-    {
-        mutex_task.abort();
-        if game_process
-            .as_ref()
-            .is_some_and(|process| process.has_exited())
         {
-            state
-                .multi_instance()
-                .instances()
-                .remove_if_pid(account_id, d2r_pid);
+            if game_process
+                .as_ref()
+                .is_some_and(|process| process.has_exited())
+            {
+                state
+                    .multi_instance()
+                    .instances()
+                    .remove_if_pid(account_id, d2r_pid);
+            }
+            break Some("原游戏进程已退出或无法确认存活，已停止启动队列".to_string());
         }
-        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
-        emit("done", "error", error);
-        return LaunchResult {
-            account_id: account_id.to_string(),
-            success: false,
-            d2r_pid: None,
-            error: Some(error.to_string()),
-            mutex_killed: false,
-            login_unconfirmed: false,
+        let changed = match monitor.changed() {
+            Ok(changed) => changed,
+            Err(error) => break Some(error),
         };
-    }
-
-    if readiness_degraded {
-        launch_ready = true;
-        emit(
-            "connect",
-            "warning",
-            "登录信号未确认，但互斥句柄已清除；已自动清理 ETW 并以降级状态继续",
-        );
-    }
-
-    if !launch_ready {
-        let error = format!(
-            "等待游戏登录就绪与互斥句柄清除超时：ETW {}（{}）；TCP 1119 {}；互斥句柄 {}",
-            if readiness_source == Some(BattleNetReadinessSource::Etw) {
-                "已命中"
-            } else {
-                "未命中"
-            },
-            etw_diagnostics,
-            match readiness_source {
-                Some(BattleNetReadinessSource::Tcp) => "已连续两次检测到目标 D2R 联网连接",
-                Some(BattleNetReadinessSource::Etw) => "已在 ETW 命中后停止检测",
-                None => "未连续两次检测到目标 D2R 联网连接",
-            },
-            mutex_state.diagnostics(),
-        );
-        emit("connect", "error", &error);
-        emit("mutex", "error", &error);
-        mutex_task.abort();
+        if changed && !change_logged {
+            emit("connect", "ok", "WEB_TOKEN 已变化，停止跳过动画按键");
+            change_logged = true;
+        }
+        if mutex_state.is_closed() && !mutex_logged {
+            emit("mutex", "ok", "互斥句柄已清除");
+            mutex_logged = true;
+        }
+        if launch_login_is_ready(changed, mutex_state.is_closed()) {
+            break None;
+        }
+        if start.elapsed() >= std::time::Duration::from_secs(60) {
+            break Some(format!(
+                "等待登录与互斥清除超时：WEB_TOKEN {}；互斥句柄 {}；已停止队列",
+                if changed { "已变化" } else { "未变化" },
+                mutex_state.diagnostics()
+            ));
+        }
+        let now = std::time::Instant::now();
+        if !changed && now >= next_key_send && now < key_deadline {
+            let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
+            next_key_send = now + std::time::Duration::from_millis(500);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    mutex_task.abort();
+    if let Some(error) = failure {
+        emit("done", "error", &error);
         return LaunchResult {
             account_id: account_id.to_string(),
             success: false,
-            d2r_pid: None,
+            d2r_pid: Some(d2r_pid),
             error: Some(error),
-            mutex_killed: false,
-            login_unconfirmed: false,
+            mutex_killed: mutex_state.is_closed(),
         };
     }
-    let _ = mutex_task.await;
 
     // 更新最后启动时间
     let accounts_dir_clone = config.accounts_dir.clone();
@@ -3326,13 +3006,9 @@ async fn launch_single_token(
     })
     .await;
 
-    #[cfg(target_os = "windows")]
-    memory_trim.confirm(pending_memory_trim);
-
-    if readiness_degraded
-        && !game_process
-            .as_ref()
-            .is_some_and(|process| process.is_running())
+    if !game_process
+        .as_ref()
+        .is_some_and(|process| process.is_running())
     {
         if game_process
             .as_ref()
@@ -3343,7 +3019,7 @@ async fn launch_single_token(
                 .instances()
                 .remove_if_pid(account_id, d2r_pid);
         }
-        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
+        let error = "原游戏进程已退出或无法确认存活，已停止启动队列";
         emit("done", "error", error);
         return LaunchResult {
             account_id: account_id.to_string(),
@@ -3351,27 +3027,27 @@ async fn launch_single_token(
             d2r_pid: None,
             error: Some(error.to_string()),
             mutex_killed: false,
-            login_unconfirmed: false,
         };
     }
 
-    let result_message = if readiness_degraded {
-        "游戏进程已启动，登录状态未确认；互斥句柄已清除，允许继续队列"
-    } else {
-        "启动完成"
-    };
-    emit(
-        "done",
-        if readiness_degraded { "warning" } else { "ok" },
-        result_message,
-    );
+    if is_cancelled(state, cancellation_ticket) {
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: Some(d2r_pid),
+            error: Some("已取消".into()),
+            mutex_killed: mutex_state.is_closed(),
+        };
+    }
+    #[cfg(target_os = "windows")]
+    memory_trim.confirm(pending_memory_trim);
+    emit("done", "ok", "启动完成");
     LaunchResult {
         account_id: account_id.to_string(),
-        success: !readiness_degraded,
+        success: true,
         d2r_pid: Some(d2r_pid),
-        error: readiness_degraded.then(|| result_message.to_string()),
+        error: None,
         mutex_killed: mutex_state.is_closed(),
-        login_unconfirmed: readiness_degraded,
     }
 }
 
@@ -3473,10 +3149,9 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 mod tests {
     use super::{
         apply_temporary_graphics_override_at_path, battle_net_launch_argument,
-        battle_net_readiness_source, launch_queue_can_continue, parse_windows_command_line,
-        persist_window_position, preflight_accounts, record_network_readiness_sample,
-        replace_bnet_roaming_snapshot, token_launch_is_ready, unique_account_window_executable,
-        validate_legacy_reg_sections, BattleNetReadinessSource, LaunchGraphicsOverride,
+        launch_login_is_ready, launch_queue_can_continue, parse_windows_command_line,
+        persist_window_position, preflight_accounts, replace_bnet_roaming_snapshot,
+        unique_account_window_executable, validate_legacy_reg_sections, LaunchGraphicsOverride,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::domain::config::GlobalConfig;
@@ -3484,39 +3159,25 @@ mod tests {
     use crate::state::{AccountLifecycleLease, AppState};
 
     #[test]
-    fn token_read_and_closed_mutex_are_both_required_for_token_launch() {
-        assert!(!token_launch_is_ready(false, false));
-        assert!(!token_launch_is_ready(false, true));
-        assert!(!token_launch_is_ready(true, false));
-        assert!(token_launch_is_ready(true, true));
+    fn dropping_launch_scope_aborts_background_mutex_worker() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let task = super::LaunchBackgroundTask(tokio::spawn(std::future::pending::<()>()));
+            let abort = task.0.abort_handle();
+            drop(task);
+            tokio::task::yield_now().await;
+            assert!(abort.is_finished());
+        });
     }
 
     #[test]
-    fn battle_net_network_readiness_requires_consecutive_samples() {
-        let mut samples = 0;
-        assert!(!record_network_readiness_sample(&mut samples, true));
-        assert!(record_network_readiness_sample(&mut samples, true));
-
-        assert!(!record_network_readiness_sample(&mut samples, false));
-        assert_eq!(samples, 0);
-        assert!(!record_network_readiness_sample(&mut samples, true));
-    }
-
-    #[test]
-    fn battle_net_accepts_the_first_etw_or_stable_tcp_signal() {
-        assert_eq!(battle_net_readiness_source(false, false), None);
-        assert_eq!(
-            battle_net_readiness_source(true, false),
-            Some(BattleNetReadinessSource::Etw)
-        );
-        assert_eq!(
-            battle_net_readiness_source(false, true),
-            Some(BattleNetReadinessSource::Tcp)
-        );
-        assert_eq!(
-            battle_net_readiness_source(true, true),
-            Some(BattleNetReadinessSource::Etw)
-        );
+    fn token_change_and_closed_mutex_are_both_required_for_launch() {
+        assert!(!launch_login_is_ready(false, false));
+        assert!(!launch_login_is_ready(false, true));
+        assert!(!launch_login_is_ready(true, false));
+        assert!(launch_login_is_ready(true, true));
     }
 
     #[test]

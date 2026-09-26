@@ -49,7 +49,6 @@ windows = { version = "0.58", features = [
     "Win32_System_Memory",
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
-    "Win32_System_Diagnostics_Etw",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_HiDpi",
@@ -65,5 +64,4 @@ reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-featu
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
-ferrisetw = "1.2"
 wasapi = "0.24.0"

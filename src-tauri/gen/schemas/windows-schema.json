@@ -453,12 +453,6 @@
           "markdownDescription": "Enables the check_cloud_version command without any pre-configured scope."
         },
         {
-          "description": "Enables the check_game_connected command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-check-game-connected",
-          "markdownDescription": "Enables the check_game_connected command without any pre-configured scope."
-        },
-        {
           "description": "Enables the check_path_exists command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check-path-exists",
@@ -469,6 +463,12 @@
           "type": "string",
           "const": "allow-check-saved-games-settings",
           "markdownDescription": "Enables the check_saved_games_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the close_selected_accounts command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-close-selected-accounts",
+          "markdownDescription": "Enables the close_selected_accounts command without any pre-configured scope."
         },
         {
           "description": "Enables the create_account command without any pre-configured scope.",
@@ -721,6 +721,12 @@
           "type": "string",
           "const": "allow-initialize-bnet-account",
           "markdownDescription": "Enables the initialize_bnet_account command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the inspect_account_launch_health command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-inspect-account-launch-health",
+          "markdownDescription": "Enables the inspect_account_launch_health command without any pre-configured scope."
         },
         {
           "description": "Enables the install_update command without any pre-configured scope.",
@@ -1263,12 +1269,6 @@
           "markdownDescription": "Denies the check_cloud_version command without any pre-configured scope."
         },
         {
-          "description": "Denies the check_game_connected command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-check-game-connected",
-          "markdownDescription": "Denies the check_game_connected command without any pre-configured scope."
-        },
-        {
           "description": "Denies the check_path_exists command without any pre-configured scope.",
           "type": "string",
           "const": "deny-check-path-exists",
@@ -1279,6 +1279,12 @@
           "type": "string",
           "const": "deny-check-saved-games-settings",
           "markdownDescription": "Denies the check_saved_games_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the close_selected_accounts command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-close-selected-accounts",
+          "markdownDescription": "Denies the close_selected_accounts command without any pre-configured scope."
         },
         {
           "description": "Denies the create_account command without any pre-configured scope.",
@@ -1531,6 +1537,12 @@
           "type": "string",
           "const": "deny-initialize-bnet-account",
           "markdownDescription": "Denies the initialize_bnet_account command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the inspect_account_launch_health command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-inspect-account-launch-health",
+          "markdownDescription": "Denies the inspect_account_launch_health command without any pre-configured scope."
         },
         {
           "description": "Denies the install_update command without any pre-configured scope.",

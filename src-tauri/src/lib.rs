@@ -19,7 +19,7 @@ mod state;
 mod stats;
 mod stats_page;
 #[cfg(target_os = "windows")]
-mod token_registry_trace;
+mod token_registry_change;
 mod tray;
 mod window_placement;
 
@@ -277,6 +277,8 @@ pub fn run() {
             commands::system::is_admin,
             commands::system::get_d2r_pids,
             commands::system::kill_all_d2r_processes,
+            commands::account_batch::inspect_account_launch_health,
+            commands::account_batch::close_selected_accounts,
             commands::system::bring_bnet_to_foreground,
             commands::system::bring_self_to_foreground,
             commands::system::hide_main_window,
@@ -284,7 +286,6 @@ pub fn run() {
             commands::system::get_foreground_window_title,
             commands::system::get_d2r_window_titles,
             commands::system::refresh_account_running_state,
-            commands::system::check_game_connected,
             commands::system::send_keys_to_window,
             commands::system::snapshot_processes,
             commands::system::wait_for_new_process,

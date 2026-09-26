@@ -18,6 +18,10 @@ type SettingsPatch = Partial<AccountQuickSettings>;
 type SettingsSubscriber = () => void;
 
 const settingsSubscribers = new Map<string, Set<SettingsSubscriber>>();
+const settingsFlushers = new Map<string, () => Promise<void>>();
+export async function flushAccountQuickSettings(accountIds: string[]): Promise<void> {
+  await Promise.all(accountIds.map(id => settingsFlushers.get(id)?.()));
+}
 let settingsListenerPromise: Promise<void> | null = null;
 
 function ensureSettingsListener(): void {
@@ -165,6 +169,11 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
       void flush().catch(() => undefined);
     }, 600);
   }, [flush]);
+
+  useEffect(() => {
+    settingsFlushers.set(accountId, flush);
+    return () => { if (settingsFlushers.get(accountId) === flush) settingsFlushers.delete(accountId); };
+  }, [accountId, flush]);
 
   useEffect(() => {
     if (!enabled) return;

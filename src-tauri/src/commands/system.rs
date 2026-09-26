@@ -41,11 +41,6 @@ pub async fn wait_for_new_process(
 }
 
 #[tauri::command]
-pub fn check_game_connected(pid: u32) -> bool {
-    adapter::check_game_connected(pid)
-}
-
-#[tauri::command]
 pub fn bring_window_by_title_to_front(window_title: &str) -> bool {
     adapter::bring_window_by_title_to_front(window_title)
 }
@@ -60,7 +55,7 @@ pub fn get_d2r_window_titles() -> Vec<String> {
     adapter::get_d2r_window_titles()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn refresh_account_running_state(
     state: tauri::State<'_, crate::state::SharedState>,
 ) -> Result<Vec<String>, String> {

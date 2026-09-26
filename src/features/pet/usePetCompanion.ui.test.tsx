@@ -45,15 +45,9 @@ afterEach(async () => {
 });
 
 describe("desktop companion input", () => {
-  it("does not announce an unconfirmed login as a failure, but still announces real failures", () => {
+  it("announces a failed launch", () => {
     const { result } = renderHook(() => usePetCompanion({ ...config, bongo_cat_chatterbox: true }));
-    act(() => mocks.listeners.get("launch-ended")?.({
-      payload: { success: false, login_unconfirmed: true },
-    }));
-    expect(result.current.activeDrops).toHaveLength(0);
-    act(() => mocks.listeners.get("launch-ended")?.({
-      payload: { success: false, login_unconfirmed: false },
-    }));
+    act(() => mocks.listeners.get("launch-ended")?.({ payload: { success: false } }));
     expect(result.current.activeDrops).toHaveLength(1);
     expect(result.current.activeDrops[0].color).toBe("#b54040");
   });

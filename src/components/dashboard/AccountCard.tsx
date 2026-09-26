@@ -30,6 +30,7 @@ import {
 } from "../../utils/regionPaths";
 import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
 import { AccountModEditor } from "./AccountModEditor";
+import { AccountStatusLight, type AccountStatusLightProps } from "./AccountStatusLight";
 import {
   type AccountQuickSettings,
   useAccountQuickSettings,
@@ -42,6 +43,7 @@ const stepLabels: Record<string, string> = {
 };
 
 export interface GridItemProps {
+  runtimeStatus?: Omit<AccountStatusLightProps, "name" | "running">;
   account: AccountMeta;
   onRename: (id: string, name: string) => Promise<boolean>;
   onDelete: (id: string) => void;
@@ -166,7 +168,7 @@ export function AccountGridItem({
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
   modCapsuleLoading, modCapsuleError, onRequestModCapsules,
-  getPositionSchemeUsage, onUpdateToken, onReinitialize, config,
+  getPositionSchemeUsage, onUpdateToken, onReinitialize, config, runtimeStatus,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -395,6 +397,7 @@ export function AccountGridItem({
       className="spatial-tile group account-tile flex min-h-[152px] flex-col animate-card-in"
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
+      data-batch-selected={runtimeStatus?.selected || undefined}
       data-scheme-edit={isSelectionMode ? "true" : undefined}
       style={{
         cursor: isSelectionMode
@@ -469,7 +472,18 @@ export function AccountGridItem({
               )}
             </div>
           </div>
-          <span className={account.initialized && !tokenMigrationRequired ? "state-dot state" : "state-dot state warn"} />
+          <AccountStatusLight
+            name={display} running={account.is_running}
+            issue={!account.initialized ? "账号尚未初始化" : tokenMigrationRequired ? "请先迁移为 Token 直启" : null}
+            {...runtimeStatus}
+            activity={runtimeStatus?.activity || (progress?.status === "running" ? "启动中" : undefined)}
+            disabled={isSelectionMode || runtimeStatus?.disabled}
+            onRepair={() => {
+              if ((!account.initialized && account.auth_mode === "token") || tokenMigrationRequired) onUpdateToken?.(account);
+              else if (!account.initialized) onReinitialize?.(account);
+              else onConfigure(account);
+            }}
+          />
 
         </div>
 
@@ -520,6 +534,7 @@ export function AccountGridItem({
               ) : account.initialized && (
                 <button
                   onClick={e => { stop(e); onLaunch(account.id); }}
+                  disabled={runtimeStatus?.disabled || !!runtimeStatus?.mode || runtimeStatus?.uncertain || !!runtimeStatus?.issue || account.is_running}
                   className="primary-cta"
                 >
                   <Play size={12} />
@@ -528,7 +543,7 @@ export function AccountGridItem({
               )}
             <div className="spatial-tools account-card-tools tools">
               {account.initialized && account.auth_mode !== "token" && !tokenMigrationRequired && (
-                <button onClick={e => { stop(e); onBattleNetOnly(account.id); }} className="mini-action icon-btn" title="仅启动战网">
+                <button disabled={runtimeStatus?.disabled || !!runtimeStatus?.mode} onClick={e => { stop(e); onBattleNetOnly(account.id); }} className="mini-action icon-btn" title="仅启动战网">
                   <Globe2 size={12} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               )}

@@ -267,7 +267,6 @@ export interface LaunchProgress {
 export interface LaunchResult {
   account_id: string;
   success: boolean;
-  login_unconfirmed?: boolean;
   d2r_pid: number | null;
   error: string | null;
   mutex_killed: boolean;
