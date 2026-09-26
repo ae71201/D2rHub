@@ -348,7 +348,8 @@ function createGraphicsQualityPreset(preset: GraphicsQualityPreset): SettingsMap
   return {
     ...patch,
     "NVIDIA DLSS": selectedPreset.dlss,
-    ...(preset === "low" ? { "Resolution Scale": 50, "Dynamic Resolution Scaling": 0 } : {}),
+    "Resolution Scale": preset === "low" ? 50 : 100,
+    ...(preset === "low" ? { "Dynamic Resolution Scaling": 0 } : {}),
     "Graphic Presets": 7,
     "Anti Aliasing": 1,
     [FRAMERATE_CAP_KEY]: selectedPreset.framerateCap,
