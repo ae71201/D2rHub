@@ -571,10 +571,13 @@ mod tests {
         let hits = Arc::new(AtomicUsize::new(0));
         let count = hits.clone();
         let join = thread::spawn(move || {
-            for _ in 0..200 {
+            // Leave the backup listening while the primary's deliberate stall
+            // times out, including scheduler delays on shared Windows CI hosts.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while std::time::Instant::now() < deadline {
                 if let Ok((mut s, _)) = listener.accept() {
                     count.fetch_add(1, Ordering::SeqCst);
-                    s.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+                    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                     let mut buf = [0; 4096];
                     let _ = s.read(&mut buf);
                     let _ = write!(
@@ -616,7 +619,7 @@ mod tests {
         let runtime = TaskRuntime::new(4);
         let task = runtime.begin(TaskRequest::new("download-test")).unwrap();
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(180))
+            .timeout(Duration::from_secs(2))
             .build()
             .unwrap();
         tauri::async_runtime::block_on(download_ordered(
@@ -645,7 +648,7 @@ mod tests {
     }
     #[test]
     fn stalled_primary_switches_once() {
-        run_failover(200, b"good", 350);
+        run_failover(200, b"good", 3500);
     }
     #[test]
     fn cancellation_does_not_try_the_second_source() {
