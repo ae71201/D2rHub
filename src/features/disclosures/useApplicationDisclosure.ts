@@ -11,6 +11,8 @@ interface ApplicationDisclosureState {
   required: boolean;
   version: string | null;
   accepting: boolean;
+  error: { stage: "storage" | "runtime"; message: string } | null;
+  retry: () => void;
   accept: () => Promise<void>;
 }
 
@@ -22,41 +24,41 @@ export function useApplicationDisclosure(
   const [required, setRequired] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
-  const [acceptedInSession, setAcceptedInSession] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [error, setError] = useState<ApplicationDisclosureState["error"]>(null);
+
+  const retry = useCallback(() => {
+    setChecking(true);
+    setError(null);
+    setAttempt(value => value + 1);
+  }, []);
 
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
+    setChecking(true);
+    setError(null);
 
     void (async () => {
-      const currentVersion = await invokeCommand<string>("get_app_version").catch(() => "unknown");
-      if (cancelled) return;
-
-      const normalizedVersion = currentVersion.replace(/^v/i, "").trim() || "unknown";
-      setVersion(normalizedVersion);
-      const accepted = normalizedVersion === "unknown"
-        ? acceptedInSession
-        : hasAcceptedApplicationDisclosure(normalizedVersion);
-      if (!accepted) {
-        setRequired(true);
-        setChecking(false);
-        return;
-      }
-
-      if (!runtimeReady) {
-        setRequired(false);
-        setChecking(false);
-        return;
-      }
-
-      setChecking(true);
+      let stage: "storage" | "runtime" = "storage";
       try {
+        const currentVersion = await invokeCommand<string>("get_app_version").catch(() => "unknown");
+        if (cancelled) return;
+        setVersion(currentVersion.replace(/^v/i, "").trim() || "unknown");
+        const accepted = await hasAcceptedApplicationDisclosure();
+        if (cancelled) return;
+        setRequired(!accepted);
+        if (!accepted || !runtimeReady) return;
+
+        stage = "runtime";
         await invokeCommand<boolean>("activate_application_runtime");
+        if (cancelled) return;
         await useAccounts.getState().loadAccounts();
-        if (!cancelled) setRequired(false);
-      } catch (error) {
-        console.error("Failed to activate application runtime:", error);
-        if (!cancelled) setRequired(true);
+      } catch (cause) {
+        if (!cancelled) {
+          setRequired(false);
+          setError({ stage, message: String(cause) });
+        }
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -65,23 +67,20 @@ export function useApplicationDisclosure(
     return () => {
       cancelled = true;
     };
-  }, [acceptedInSession, ready, runtimeReady]);
+  }, [attempt, ready, runtimeReady]);
 
   const accept = useCallback(async () => {
-    if (!version || accepting) return;
+    if (!required || accepting) return;
     setAccepting(true);
     try {
-      if (runtimeReady) {
-        await invokeCommand<boolean>("activate_application_runtime");
-        await useAccounts.getState().loadAccounts();
-      }
-      if (version === "unknown") setAcceptedInSession(true);
-      else acceptApplicationDisclosure(version);
+      // Commit consent before starting services. A startup failure must not erase it.
+      await acceptApplicationDisclosure();
       setRequired(false);
+      retry();
     } finally {
       setAccepting(false);
     }
-  }, [accepting, runtimeReady, version]);
+  }, [accepting, required, retry]);
 
-  return { checking, required, version, accepting, accept };
+  return { checking, required, version, accepting, accept, error, retry };
 }

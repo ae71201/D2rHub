@@ -1,4 +1,8 @@
 import type { OptionalModuleTabId } from "../settings/settingsRegistry";
+import { invokeCommand } from "../../platform/tauri";
+
+// Independent of the app version. Bump together with the backend when the notice changes.
+export const APPLICATION_DISCLOSURE_REVISION = 1;
 
 const APPLICATION_DISCLOSURE_KEY = "d2rhub-disclosure-accepted-version";
 const MODULE_DISCLOSURE_KEY = "d2rhub-disclosure-accepted-modules";
@@ -18,21 +22,28 @@ function readAcceptedModules(): OptionalModuleTabId[] {
   }
 }
 
-export function hasAcceptedApplicationDisclosure(version: string): boolean {
+export async function hasAcceptedApplicationDisclosure(): Promise<boolean> {
+  const revision = await invokeCommand<number | null>("get_application_disclosure_acceptance");
+  if (revision !== null) return revision === APPLICATION_DISCLOSURE_REVISION;
+  // Import historical app-version receipts only for the first notice revision.
+  // Never let an old WebView receipt acknowledge a future notice change.
+  let legacyVersion: string | null = null;
   try {
-    return localStorage.getItem(APPLICATION_DISCLOSURE_KEY) === version;
+    legacyVersion = localStorage.getItem(APPLICATION_DISCLOSURE_KEY);
   } catch {
     return false;
   }
+  // The version-keyed notice shipped from 0.9.11 through 0.9.103.
+  const match = /^0\.9\.(\d+)$/.exec(legacyVersion ?? "");
+  if (!match || APPLICATION_DISCLOSURE_REVISION !== 1) return false;
+  const patch = Number(match[1]);
+  if (patch < 11 || patch > 103) return false;
+  await acceptApplicationDisclosure();
+  return true;
 }
 
-export function acceptApplicationDisclosure(version: string): void {
-  try {
-    localStorage.setItem(APPLICATION_DISCLOSURE_KEY, version);
-  } catch {
-    // Keep the in-memory acceptance for this session. If storage is unavailable,
-    // the disclosure intentionally appears again on the next launch.
-  }
+export async function acceptApplicationDisclosure(): Promise<void> {
+  await invokeCommand("accept_application_disclosure", { revision: APPLICATION_DISCLOSURE_REVISION });
 }
 
 export function hasAcceptedModuleDisclosure(module: OptionalModuleTabId): boolean {

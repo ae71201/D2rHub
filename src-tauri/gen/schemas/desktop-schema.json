@@ -387,6 +387,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the accept_application_disclosure command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-accept-application-disclosure",
+          "markdownDescription": "Enables the accept_application_disclosure command without any pre-configured scope."
+        },
+        {
           "description": "Enables the activate_application_runtime command without any pre-configured scope.",
           "type": "string",
           "const": "allow-activate-application-runtime",
@@ -453,6 +459,12 @@
           "markdownDescription": "Enables the check_cloud_version command without any pre-configured scope."
         },
         {
+          "description": "Enables the check_mod_resource_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-mod-resource-updates",
+          "markdownDescription": "Enables the check_mod_resource_updates command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_path_exists command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check-path-exists",
@@ -463,6 +475,12 @@
           "type": "string",
           "const": "allow-check-saved-games-settings",
           "markdownDescription": "Enables the check_saved_games_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-software-update",
+          "markdownDescription": "Enables the check_software_update command without any pre-configured scope."
         },
         {
           "description": "Enables the close_selected_accounts command without any pre-configured scope.",
@@ -531,6 +549,12 @@
           "markdownDescription": "Enables the detect_saved_games_path command without any pre-configured scope."
         },
         {
+          "description": "Enables the download_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-download-software-update",
+          "markdownDescription": "Enables the download_software_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the exit_app command without any pre-configured scope.",
           "type": "string",
           "const": "allow-exit-app",
@@ -583,6 +607,12 @@
           "type": "string",
           "const": "allow-get-app-version",
           "markdownDescription": "Enables the get_app_version command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_application_disclosure_acceptance command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-application-disclosure-acceptance",
+          "markdownDescription": "Enables the get_application_disclosure_acceptance command without any pre-configured scope."
         },
         {
           "description": "Enables the get_audio_mod_setup_state command without any pre-configured scope.",
@@ -793,6 +823,12 @@
           "type": "string",
           "const": "allow-launch-browser-for-account",
           "markdownDescription": "Enables the launch_browser_for_account command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the launch_downloaded_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-launch-downloaded-update",
+          "markdownDescription": "Enables the launch_downloaded_update command without any pre-configured scope."
         },
         {
           "description": "Enables the list_accounts command without any pre-configured scope.",
@@ -1233,6 +1269,12 @@
           "markdownDescription": "Enables the write_log command without any pre-configured scope."
         },
         {
+          "description": "Denies the accept_application_disclosure command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-accept-application-disclosure",
+          "markdownDescription": "Denies the accept_application_disclosure command without any pre-configured scope."
+        },
+        {
           "description": "Denies the activate_application_runtime command without any pre-configured scope.",
           "type": "string",
           "const": "deny-activate-application-runtime",
@@ -1299,6 +1341,12 @@
           "markdownDescription": "Denies the check_cloud_version command without any pre-configured scope."
         },
         {
+          "description": "Denies the check_mod_resource_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-mod-resource-updates",
+          "markdownDescription": "Denies the check_mod_resource_updates command without any pre-configured scope."
+        },
+        {
           "description": "Denies the check_path_exists command without any pre-configured scope.",
           "type": "string",
           "const": "deny-check-path-exists",
@@ -1309,6 +1357,12 @@
           "type": "string",
           "const": "deny-check-saved-games-settings",
           "markdownDescription": "Denies the check_saved_games_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-software-update",
+          "markdownDescription": "Denies the check_software_update command without any pre-configured scope."
         },
         {
           "description": "Denies the close_selected_accounts command without any pre-configured scope.",
@@ -1377,6 +1431,12 @@
           "markdownDescription": "Denies the detect_saved_games_path command without any pre-configured scope."
         },
         {
+          "description": "Denies the download_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-download-software-update",
+          "markdownDescription": "Denies the download_software_update command without any pre-configured scope."
+        },
+        {
           "description": "Denies the exit_app command without any pre-configured scope.",
           "type": "string",
           "const": "deny-exit-app",
@@ -1429,6 +1489,12 @@
           "type": "string",
           "const": "deny-get-app-version",
           "markdownDescription": "Denies the get_app_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_application_disclosure_acceptance command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-application-disclosure-acceptance",
+          "markdownDescription": "Denies the get_application_disclosure_acceptance command without any pre-configured scope."
         },
         {
           "description": "Denies the get_audio_mod_setup_state command without any pre-configured scope.",
@@ -1639,6 +1705,12 @@
           "type": "string",
           "const": "deny-launch-browser-for-account",
           "markdownDescription": "Denies the launch_browser_for_account command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the launch_downloaded_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-launch-downloaded-update",
+          "markdownDescription": "Denies the launch_downloaded_update command without any pre-configured scope."
         },
         {
           "description": "Denies the list_accounts command without any pre-configured scope.",

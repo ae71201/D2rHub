@@ -119,7 +119,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 
 D2RHub 通过 Windows 进程、句柄、注册表、文件、窗口和 WASAPI 管理本机环境，**不写入游戏内存、不注入 DLL**。独立 Mod 工具只在新输出目录生成文件，不覆盖源 Mod；两个程序通过版本化功能组清单约定声纹与 UI 布局产物。
 
-应用级说明按版本记录在当前 Windows 用户的本地存储中。确认前，D2RHub 只加载安全显示所需的配置与账号摘要，不启动全局输入监听、声纹监控、可选能力监督器或 Mod 启动扫描。Battle.net 认证账号以带客户端版本清单的 `runtime/` 快照为权威来源；若新版快照缺失或损坏，程序不会回退到可能过期的顶层旧认证文件，只有从未迁移且能由唯一产品键证明版区的纯旧账号才允许兼容恢复。
+应用级说明按独立修订号记录在用户数据目录的 `modules/application-disclosure/config.json` 中；普通应用升级或清空 WebView 存储不会重复要求确认。首次迁移兼容 0.9.11–0.9.103 的旧版确认记录。读取、迁移或服务启动失败会暂停启动并允许重试，已保存的确认记录会保留。确认前，D2RHub 只加载安全显示所需的配置与账号摘要，不启动全局输入监听、声纹监控、可选能力监督器或 Mod 启动扫描。Battle.net 认证账号以带客户端版本清单的 `runtime/` 快照为权威来源；若新版快照缺失或损坏，程序不会回退到可能过期的顶层旧认证文件，只有从未迁移且能由唯一产品键证明版区的纯旧账号才允许兼容恢复。
 
 运行数据保存在当前 Windows 用户的 `%APPDATA%\D2RHub` 目录；日志仍保存在程序同级 `logs` 目录：
 
@@ -164,7 +164,7 @@ D2RHub is maintained as one desktop distribution. The multi-instance core is alw
 - Bundled [d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod) is available as a separate MIT-licensed open-source project, with room-tools recipe r28, independently opt-in double-Esc Hell restart, permanently hidden buttons, and isolated lobby/in-game forms. Standalone downloads are available in its [Releases](https://github.com/gjy991229/d2r-audio-mod/releases).
 - Isolated CN and Global game, save, and Battle.net profiles.
 - Web Token launch or Battle.net authentication with local runtime snapshots and DPAPI-encrypted tokens.
-- A version-scoped application disclosure that must be accepted before global input hooks, audio monitoring, the optional-capability supervisor, or startup Mod scanning are activated. Risk-bearing optional modules have their own disclosures.
+- A revision-scoped application disclosure that must be accepted before global input hooks, audio monitoring, the optional-capability supervisor, or startup Mod scanning are activated. Risk-bearing optional modules have their own disclosures.
 - On-demand module management for desktop overlays, recognition and statistics, Bongo Cat, and room automation. Removing a module stops its runtime capability but retains its settings; Recognition & Stats automatically installs its overlay dependency.
 - Single, batch, and multi-select launch controls, mod arguments, window positions, and per-account game settings.
 - V7 audio-signature decoding, statistics, overlays, and all account-management features in the standard build.
@@ -177,7 +177,7 @@ D2RHub is maintained as one desktop distribution. The multi-instance core is alw
 ### Quick start
 
 1. Download an MSI / NSIS installer from [Releases](https://github.com/gjy991229/D2RHub/releases).
-2. Read the application disclosure shown on the first launch of this version. Runtime services are activated only after acceptance.
+2. Read the application disclosure when prompted for a new notice revision. Runtime services are activated only after acceptance.
 3. Configure at least one complete game-directory and save-directory pair, then initialize an account.
 4. If audio tracking is needed, add Recognition & Stats under Settings → Optional Features → Module Management, accept its module disclosure, and select an initialized monitoring account. Choose original gameplay or an existing Mod, then enter a name for the new Mod and click the single prepare action. Names may contain ASCII letters, numbers, hyphens, and underscores.
 5. D2RHub generates and validates the new Mod, preserves unrelated launch flags, and fixes the Mod-specific arguments to `-mod <name> -txt -assettestmode 1`. Restart an already-running game once for the change to take effect.
@@ -188,7 +188,7 @@ The v7 protocol uses isolated area/drop synchronization, a 127-chip Gold signatu
 
 D2RHub uses Windows process, handle, registry, filesystem, window, and WASAPI interfaces. It does **not** write to game memory or inject DLLs. The Mod generator writes to a new output Mod and never overwrites the selected source Mod.
 
-Application-disclosure acceptance is stored locally per app version. Before acceptance, D2RHub loads only the configuration and account summary needed to render safely; it does not activate global input hooks, audio monitoring, the optional-capability supervisor, or startup Mod scanning. A versioned `runtime/` snapshot is authoritative for Battle.net accounts. Missing or damaged modern snapshots never fall back to potentially stale top-level credentials; compatibility fallback is limited to unmigrated legacy accounts whose client edition can be proven from a unique product key.
+Application-disclosure acceptance is stored by notice revision in `modules/application-disclosure/config.json` under the user data directory. Routine upgrades and clearing WebView storage retain acceptance; historical receipts from 0.9.11–0.9.103 migrate on first use. Storage or service startup failures pause startup with a retry action and preserve saved acceptance. Before acceptance, D2RHub loads only the configuration and account summary needed to render safely; it does not activate global input hooks, audio monitoring, the optional-capability supervisor, or startup Mod scanning. A versioned `runtime/` snapshot is authoritative for Battle.net accounts. Missing or damaged modern snapshots never fall back to potentially stale top-level credentials; compatibility fallback is limited to unmigrated legacy accounts whose client edition can be proven from a unique product key.
 
 Runtime data is stored in `%APPDATA%\D2RHub`; launch logs remain in `logs/` beside the executable. An existing portable `config/` directory is migrated automatically with a recoverable fallback, and conflicting populated locations are never silently merged or overwritten. If a conflict is reported, back up both locations until they have been reconciled. The data includes global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account settings, and the SQLite statistics database. D2RHub does not intentionally upload account configuration or tokens. The separate Mod tool writes only to a new output Mod and does not read D2RHub data. See the [Security, permissions, antivirus false-positive, and vulnerability-reporting policy](SECURITY.md) for the complete Windows capability and trust-boundary disclosure.
 
