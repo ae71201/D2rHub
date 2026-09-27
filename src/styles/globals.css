@@ -736,18 +736,6 @@ html, body, #root {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .account-region-menu {
-    animation: none;
-  }
-
-  .account-region-trigger,
-  .account-region-chevron,
-  .account-region-option {
-    transition-duration: 0.01ms;
-  }
-}
-
 .share-report-menu {
   --share-report-menu-shift: -3px;
   position: fixed;
@@ -847,15 +835,6 @@ html, body, #root {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .share-report-menu {
-    animation: none;
-  }
-  .launch-group-panel {
-    animation: none;
   }
 }
 
@@ -1405,29 +1384,6 @@ html, body, #root {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .room-automation-quick-popover {
-    animation: none;
-  }
-
-  .room-automation-quick-trigger > svg:last-child {
-    transition: none;
-  }
-
-  .launch-group-menu {
-    animation: none;
-  }
-
-  .launch-group-trigger-chevron,
-  .launch-group-row {
-    transition-duration: 0.01ms;
-  }
-
-  .favorite-launch-picker {
-    animation: none;
   }
 }
 
@@ -2103,12 +2059,6 @@ html, body, #root {
   background: var(--cta-bg);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .preset-pill {
-    transition: none;
-  }
-}
-
 .combo-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 70px;
@@ -2519,11 +2469,6 @@ html, body, #root {
   box-shadow: var(--shadow-elevated);
 }
 
-:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) :is(.progress-pulse-glow, .btn-pulse, .btn-pulse:hover) {
-  animation: none;
-  box-shadow: none;
-}
-
 :is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) :is(.state-dot, .state-dot.warn, .account-state-dot, .account-state-dot.warn) {
   box-shadow: none;
 }
@@ -2759,27 +2704,4 @@ html, body, #root {
   width: 100%;
   height: 1px;
   background: var(--border-default);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .overlay-window,
-  .overlay-window *,
-  .overlay-dock-handle {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-  }
-
-  .overlay-drop-pill-flash {
-    animation: none !important;
-    background: color-mix(in srgb, currentColor 12%, transparent);
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 22%, transparent);
-    opacity: 1;
-    transform: none;
-  }
-
-  .overlay-drop-pill-flash::after {
-    display: none;
-  }
 }

@@ -17,7 +17,7 @@ export interface AccountStatusLightProps {
 }
 export function AccountStatusLight({ name, running, issue, selected, mode, disabled, uncertain, paused, onToggle, onRepair, activity }: AccountStatusLightProps) {
   // Align all selected lights to one clock without JS animation timers.
-  const phase = useMemo(() => -(performance.now() % 1800), [selected]);
+  const phase = useMemo(() => -performance.now(), [selected]);
   const action = running ? "关闭" : "启动";
   const mismatch = !!mode && mode !== (running ? "close" : "launch");
   const unknown = uncertain || issue === undefined;

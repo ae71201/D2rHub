@@ -604,13 +604,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .settings-navigation-item,
-  .optional-features-navigation-item {
-    transition: none;
-  }
-}
-
 .task-runtime-panel {
   max-width: 820px;
   margin: 0 auto;
@@ -837,12 +830,6 @@
   .task-runtime-title-line time { width: 100%; margin-left: 0; }
   .task-runtime-timeline-row { grid-template-columns: 62px minmax(0, 1fr); }
   .task-runtime-timeline-row p { grid-column: 2; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .task-runtime-progress > span { transition: none; }
-  .task-runtime-spin,
-  .task-runtime-loading span { animation: none; }
 }
 
 .recognition-layout {
@@ -2078,16 +2065,4 @@
   .mod-processing-actions > button { flex: 1 1 auto; }
   .module-management-header { align-items: stretch; flex-direction: column; }
   .module-management-count { justify-content: flex-start; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .room-automation-account-row,
-  .room-automation-follower-order-actions button,
-  .room-automation-mode-options > label,
-  .room-automation-advanced > summary svg {
-    transition: none;
-  }
-  .module-management-row { transition: none; }
-  .mod-capsule-pool-list > button { transition: none; }
-  .mod-processing-progress > div:last-child > span { transition: none; }
 }

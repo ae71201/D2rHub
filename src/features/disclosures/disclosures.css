@@ -118,12 +118,3 @@
     flex: 1 1 auto;
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .modal-backdrop:has(.disclosure-dialog),
-  .modal-backdrop-exit:has(.disclosure-dialog),
-  .modal-content:has(.disclosure-dialog),
-  .modal-content-exit:has(.disclosure-dialog) {
-    animation: none;
-  }
-}

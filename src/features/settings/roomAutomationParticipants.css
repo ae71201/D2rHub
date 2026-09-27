@@ -260,12 +260,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .room-automation-choice-buttons label > span {
-    transition: none;
-  }
-}
-
 .room-automation-capsules-heading {
   padding: 7px 0 6px;
 }

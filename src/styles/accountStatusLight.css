@@ -14,10 +14,10 @@
 .account-status-dot[data-selection] { background: var(--text-muted); opacity: 1; }
 .account-status-dot[data-selection]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--success, #66b88a); }
 .account-status-dot[data-error=true][data-selection]::after { background: var(--error, #df7474); }
-.account-status-dot[data-selection=launch]::after { animation: account-select-launch 1.8s ease-in-out infinite; }
-.account-status-dot[data-selection=close]::after { animation: account-select-close 1.8s ease-in-out infinite; }
+/* One smooth breath per second; animate opacity only to avoid layout work. */
+.account-status-dot[data-selection=launch]::after { animation: account-select-launch 1s ease-in-out infinite; }
+.account-status-dot[data-selection=close]::after { animation: account-select-close 1s ease-in-out infinite; }
 .account-status-dot[data-selection]::after { animation-delay: var(--status-phase, 0ms); }
-@keyframes account-select-launch { 0%, 55%, 100% { opacity: 0; } 72%, 85% { opacity: 1; } }
-@keyframes account-select-close { 0%, 55%, 100% { opacity: 1; } 72%, 85% { opacity: 0; } }
+@keyframes account-select-launch { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes account-select-close { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 .account-status-control[data-paused=true] .account-status-dot::after { animation-play-state: paused; }
-@media (prefers-reduced-motion: reduce) { .account-status-dot[data-selection]::after { animation: none; opacity: 1; } }
