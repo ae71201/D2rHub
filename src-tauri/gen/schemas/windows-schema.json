@@ -645,6 +645,12 @@
           "markdownDescription": "Enables the get_mod_capsule_pool command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_mod_resources command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-mod-resources",
+          "markdownDescription": "Enables the get_mod_resources command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_next_terror_zone command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-next-terror-zone",
@@ -741,6 +747,12 @@
           "markdownDescription": "Enables the inspect_account_launch_health command without any pre-configured scope."
         },
         {
+          "description": "Enables the install_mod_resource command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-mod-resource",
+          "markdownDescription": "Enables the install_mod_resource command without any pre-configured scope."
+        },
+        {
           "description": "Enables the install_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-install-update",
@@ -829,6 +841,12 @@
           "type": "string",
           "const": "allow-open-logs-dir",
           "markdownDescription": "Enables the open_logs_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_mod_processor_directory command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-mod-processor-directory",
+          "markdownDescription": "Enables the open_mod_processor_directory command without any pre-configured scope."
         },
         {
           "description": "Enables the open_mods_directory command without any pre-configured scope.",
@@ -1473,6 +1491,12 @@
           "markdownDescription": "Denies the get_mod_capsule_pool command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_mod_resources command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-mod-resources",
+          "markdownDescription": "Denies the get_mod_resources command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_next_terror_zone command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-next-terror-zone",
@@ -1569,6 +1593,12 @@
           "markdownDescription": "Denies the inspect_account_launch_health command without any pre-configured scope."
         },
         {
+          "description": "Denies the install_mod_resource command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-mod-resource",
+          "markdownDescription": "Denies the install_mod_resource command without any pre-configured scope."
+        },
+        {
           "description": "Denies the install_update command without any pre-configured scope.",
           "type": "string",
           "const": "deny-install-update",
@@ -1657,6 +1687,12 @@
           "type": "string",
           "const": "deny-open-logs-dir",
           "markdownDescription": "Denies the open_logs_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_mod_processor_directory command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-mod-processor-directory",
+          "markdownDescription": "Denies the open_mod_processor_directory command without any pre-configured scope."
         },
         {
           "description": "Denies the open_mods_directory command without any pre-configured scope.",

@@ -13,6 +13,7 @@ mod launch_context;
 mod lightweight_mod;
 pub mod logger;
 mod mod_catalog;
+mod mod_resources;
 mod rune_audio;
 mod rune_data;
 mod runtime_restart;
@@ -300,6 +301,9 @@ pub fn run() {
             audio_mod::get_audio_mod_setup_state,
             lightweight_mod::get_lightweight_mod_context,
             lightweight_mod::generate_lightweight_mod,
+            mod_resources::get_mod_resources,
+            mod_resources::install_mod_resource,
+            mod_resources::open_mod_processor_directory,
             mod_catalog::get_mod_capsule_pool,
             mod_catalog::scan_mod_capsule_pool,
             mod_catalog::open_mods_directory,

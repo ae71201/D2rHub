@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, FolderOpen, PackageOpen, PackagePlus, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 
 import { Button } from "../../../components/ui/Button";
-import { LightweightModDialog } from "./LightweightModDialog";
+import { ModResourceDialog } from "./ModResourceLibrary";
 import { LIGHTWEIGHT_PROFILES } from "../../modCapsules/lightweightModel";
 import { Modal } from "../../../components/ui/Modal";
 import { Toggle } from "../../../components/ui/Toggle";
@@ -77,7 +77,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
     (initialEdition ?? catalog.pool?.capsules[0]?.edition) === "Global" ? "Global" : "CN",
   );
   const [generateOpen, setGenerateOpen] = useState(false);
-  const [generatedName, setGeneratedName] = useState<string | null>(null);
+  const [generatedName] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [argumentDraft, setArgumentDraft] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -153,7 +153,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
         </div>
         <div className="mod-processing-header-actions">
           <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}>
-            <PackagePlus size={13} />{isEnglish ? "Generate lightweight Mod" : "生成轻量 Mod"}
+            <PackagePlus size={13} />{isEnglish ? "Download Mods & processor" : "下载 Mod 与加工器"}
           </Button>
           <Button
             size="sm"
@@ -336,15 +336,15 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             <PackageOpen size={22} />
             <strong>{copy.empty(edition)}</strong>
             <p>{isEnglish ? "Scan an existing Mod or generate one from original game resources." : "可以扫描已有 Mod，也可以使用原版资源生成轻量 Mod。"}</p>
-            <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}><PackagePlus size={13} />{isEnglish ? "Generate lightweight Mod" : "生成轻量 Mod"}</Button>
+            <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}><PackagePlus size={13} />{isEnglish ? "Download Mods & processor" : "下载 Mod 与加工器"}</Button>
           </div>
         )}
       </div>
       <footer className="mod-catalog-footnote">
         {copy.footnote}
       </footer>
-      <LightweightModDialog open={generateOpen} onClose={() => setGenerateOpen(false)} edition={edition}
-        isEnglish={isEnglish} catalog={catalog} accounts={accounts} onProcess={onProcess} onGenerated={setGeneratedName} />
+      <ModResourceDialog open={generateOpen} onClose={() => setGenerateOpen(false)} edition={edition}
+        en={isEnglish} catalog={catalog} />
       <Modal
         open={deleteTarget !== null}
         onClose={closeDeleteConfirmation}

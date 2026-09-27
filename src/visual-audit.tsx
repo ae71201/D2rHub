@@ -10,6 +10,7 @@ import "./styles/globals.css";
 import "./styles/visualAudit.css";
 
 type Surface =
+  | "mod-resources"
   | "main"
   | "setup"
   | "settings"
@@ -499,6 +500,15 @@ function installIpcMock() {
         return modCapsulePool;
       case "assign_mod_capsule_to_account":
         return null;
+      case "get_mod_resources":
+        return {
+          catalog: { release_url: "https://github.com/gjy991229/D2rHub/releases", assets: [
+            { id: "processor", version: "1.4.0-beta.17", size: 3098624, url: "https://github.com/gjy991229/D2rHub/releases", game_data_version: null },
+            ...["LiteHub", "BoHub", "NullHub"].map((id) => ({ id, version: "mod-resources-20260927.1", size: 24000000, url: "https://github.com/gjy991229/D2rHub/releases", game_data_version: "93854" })),
+          ] },
+          processor: { ready: false, installed_version: "1.3.3", recommended_version: "1.4.0-beta.17", installed_path: "C:\\Program Files\\D2RHub\\d2r-audio-mod.exe", install_directory: "C:\\Users\\Player\\AppData\\Local\\com.d2rhub.app\\tools\\d2r-audio-mod", legacy: true },
+          mods_directory: "C:\\Diablo II Resurrected\\mods", game_data_version: "93854", warning: null,
+        };
       case "get_audio_mod_setup_state":
         if (audioModState === "legacy") {
           return {
@@ -756,6 +766,11 @@ function AuditRuntime() {
     async function loadSurface() {
       try {
         const statsStore = await primeStores();
+        if (surface === "mod-resources") {
+          const { ModResourceDialog } = await import("./features/settings/panels/ModResourceLibrary");
+          if (!cancelled) setContent(<ModResourceDialog open onClose={() => {}} edition="CN" en={requestedLanguage === "en-US"} />);
+          return;
+        }
 
         if (surface === "overlay" || surface === "stats-overlay") {
           const { Overlay } = await import("./pages/Overlay");

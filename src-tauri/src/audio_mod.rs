@@ -2736,8 +2736,7 @@ async fn run_audio_mod_generator(
 
     let (mut receiver, child) = app
         .shell()
-        .sidecar("d2r-audio-mod")
-        .map_err(|error| format!("识别 Mod 生成器不可用: {error}"))?
+        .command(crate::mod_resources::resolve_processor(app)?)
         .args(arguments)
         .spawn()
         .map_err(|error| format!("无法启动识别 Mod 生成器: {error}"))?;

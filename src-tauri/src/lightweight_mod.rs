@@ -80,7 +80,7 @@ fn edition(value: &str) -> Result<&'static str, String> {
         _ => Err("请选择国服或国际服".into()),
     }
 }
-fn game_path(state: &SharedState, value: &str) -> Result<PathBuf, String> {
+pub(crate) fn game_path(state: &SharedState, value: &str) -> Result<PathBuf, String> {
     let config = state.configuration().snapshot().ok_or("尚未配置游戏目录")?;
     let path = if edition(value)? == "CN" {
         &config.cn_game_path
@@ -351,10 +351,8 @@ async fn generate_impl(
     }
     let stage = mods.join(format!(".d2rhub-lightweight-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&stage).map_err(|e| e.to_string())?;
-    let command = app
-        .shell()
-        .sidecar("d2r-audio-mod")
-        .map_err(|e| e.to_string());
+    let command =
+        crate::mod_resources::resolve_processor(app).map(|path| app.shell().command(path));
     let launched = command.and_then(|cmd| {
         cmd.args([
             "lightweight",
@@ -375,7 +373,7 @@ async fn generate_impl(
         Ok(pair) => pair,
         Err(e) => {
             let _ = cleanup(&stage, &mods);
-            return Err(format!("无法启动内置生成器，请检查安装：{e}"));
+            return Err(format!("无法启动独立加工器：{e}"));
         }
     };
     let mut child = Some(child);
@@ -526,8 +524,8 @@ mod tests {
         fs::create_dir(&parent).unwrap();
         for (profile, name) in [("main", "LiteHub"), ("filler", "BoHub"), ("min", "NullHub")] {
             let output = std::process::Command::new(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("binaries/d2r-audio-mod-x86_64-pc-windows-msvc.exe"),
+                std::env::var("D2RHUB_MOD_PROCESSOR")
+                    .expect("Set D2RHUB_MOD_PROCESSOR to the independent processor EXE"),
             )
             .args([
                 "lightweight",

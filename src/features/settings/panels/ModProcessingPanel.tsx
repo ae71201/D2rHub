@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
+import { ModResourceLibrary } from "./ModResourceLibrary";
 import { Button } from "../../../components/ui/Button";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
@@ -126,6 +127,7 @@ export function ModProcessingPanel({
   onAutoPrepareConsumed,
 }: ModProcessingPanelProps) {
   const [workspace, setWorkspace] = useState<"catalog" | "processing">(purpose === "manage" ? "catalog" : "processing");
+  const [processorReady, setProcessorReady] = useState(false);
   useEffect(() => {
     setWorkspace(purpose === "manage" ? "catalog" : "processing");
   }, [purpose]);
@@ -180,12 +182,12 @@ export function ModProcessingPanel({
     setAudioSetupName("");
   };
   useEffect(() => {
-    if (!autoPrepareRequest || audioModStateLoading || audioPreparing || audioPrepareBlockedReason
+    if (!processorReady || !autoPrepareRequest || audioModStateLoading || audioPreparing || audioPrepareBlockedReason
       || !trackingTarget.valid || audioModState?.account_id !== trackingTarget.account.id) return;
     onAutoPrepareConsumed?.();
     void onPrepare();
   }, [audioModState?.account_id, audioPrepareBlockedReason, audioModStateLoading, audioPreparing,
-    autoPrepareRequest, onAutoPrepareConsumed, onPrepare, trackingTarget]);
+    autoPrepareRequest, onAutoPrepareConsumed, onPrepare, trackingTarget, processorReady]);
 
   if (workspace === "catalog" && modCatalog) {
     return (
@@ -249,6 +251,7 @@ export function ModProcessingPanel({
         </div>
       </header>
 
+      <div className="mod-processing-processor"><ModResourceLibrary edition={initialEdition === "Global" ? "Global" : "CN"} en={isEnglish} processorOnly onReady={setProcessorReady} /></div>
       <section className="spatial-panel mod-processing-section mod-processing-target">
         <div className="mod-processing-section-heading">
           <div>
@@ -504,7 +507,7 @@ export function ModProcessingPanel({
                 variant="primary"
                 size="md"
                 loading={audioPreparing}
-                disabled={!!audioPrepareBlockedReason}
+                disabled={!!audioPrepareBlockedReason || !processorReady}
                 onClick={() => void onPrepare()}
               >
                 <PackageOpen size={14} />

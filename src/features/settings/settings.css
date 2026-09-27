@@ -1728,11 +1728,12 @@
   padding: 14px;
 }
 
-.mod-processing-target { grid-column: 1; grid-row: 2; }
+.mod-processing-processor { grid-column: 1 / -1; grid-row: 2; margin: 10px 0 14px; }
+.mod-processing-target { grid-column: 1; grid-row: 3; }
 .mod-processing-source { grid-column: 1; }
-.mod-processing-capabilities { grid-column: 2; grid-row: 2; }
+.mod-processing-capabilities { grid-column: 2; grid-row: 3; }
 .mod-processing-output { grid-column: 2; }
-.mod-processing-main-state { grid-column: 2; grid-row: 2 / span 2; }
+.mod-processing-main-state { grid-column: 2; grid-row: 3 / span 2; }
 
 .mod-processing-target,
 .mod-processing-capabilities {
@@ -2034,6 +2035,7 @@
   .room-automation-setup { grid-template-columns: minmax(0, 1fr); }
   .mod-processing-panel { grid-template-columns: minmax(0, 1fr); }
   .mod-processing-header,
+  .mod-processing-processor,
   .mod-processing-target,
   .mod-processing-source,
   .mod-processing-capabilities,

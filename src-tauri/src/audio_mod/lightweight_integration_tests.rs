@@ -1,4 +1,4 @@
-//! Opt-in integration matrix: real bundled sidecar, original game, Hub validators.
+//! Opt-in integration matrix: independent processor, original game, Hub validators.
 use super::*;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -33,8 +33,8 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, u64> {
     entries
 }
 fn invoke(args: &[String], log: &Path) -> Result<serde_json::Value, String> {
-    let executable = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries/d2r-audio-mod-x86_64-pc-windows-msvc.exe");
+    let executable = std::env::var("D2RHUB_MOD_PROCESSOR")
+        .expect("Set D2RHUB_MOD_PROCESSOR to the independent processor EXE");
     let output = std::process::Command::new(executable)
         .args(args)
         .output()
