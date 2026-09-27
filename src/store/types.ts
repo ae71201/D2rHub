@@ -333,6 +333,8 @@ export interface AudioModSetupState {
 }
 
 export interface ModCapsule {
+  lightweight_profile?: "main" | "filler" | "min" | null;
+  issue?: string | null;
   id: string;
   edition: "CN" | "Global" | string;
   name: string;

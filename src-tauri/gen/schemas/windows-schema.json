@@ -555,6 +555,12 @@
           "markdownDescription": "Enables the focus_game_window command without any pre-configured scope."
         },
         {
+          "description": "Enables the generate_lightweight_mod command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-generate-lightweight-mod",
+          "markdownDescription": "Enables the generate_lightweight_mod command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_account command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-account",
@@ -625,6 +631,12 @@
           "type": "string",
           "const": "allow-get-global-config",
           "markdownDescription": "Enables the get_global_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_lightweight_mod_context command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-lightweight-mod-context",
+          "markdownDescription": "Enables the get_lightweight_mod_context command without any pre-configured scope."
         },
         {
           "description": "Enables the get_mod_capsule_pool command without any pre-configured scope.",
@@ -1371,6 +1383,12 @@
           "markdownDescription": "Denies the focus_game_window command without any pre-configured scope."
         },
         {
+          "description": "Denies the generate_lightweight_mod command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-generate-lightweight-mod",
+          "markdownDescription": "Denies the generate_lightweight_mod command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_account command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-account",
@@ -1441,6 +1459,12 @@
           "type": "string",
           "const": "deny-get-global-config",
           "markdownDescription": "Denies the get_global_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_lightweight_mod_context command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-lightweight-mod-context",
+          "markdownDescription": "Denies the get_lightweight_mod_context command without any pre-configured scope."
         },
         {
           "description": "Denies the get_mod_capsule_pool command without any pre-configured scope.",

@@ -98,6 +98,8 @@ const APP_COMMANDS: &[&str] = &[
     "get_next_terror_zone",
     "get_audio_mod_setup_state",
     "get_mod_capsule_pool",
+    "get_lightweight_mod_context",
+    "generate_lightweight_mod",
     "scan_mod_capsule_pool",
     "open_mods_directory",
     "set_mod_auto_exit_on_death_enabled",

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, FolderOpen, PackageOpen, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, FolderOpen, PackageOpen, PackagePlus, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 
 import { Button } from "../../../components/ui/Button";
+import { LightweightModDialog } from "./LightweightModDialog";
+import { LIGHTWEIGHT_PROFILES } from "../../modCapsules/lightweightModel";
 import { Modal } from "../../../components/ui/Modal";
 import { Toggle } from "../../../components/ui/Toggle";
 import { showToast } from "../../../components/ui/Toast";
@@ -72,8 +74,10 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
   const isEnglish = language === "en-US";
   const copy = COPY[isEnglish ? "en-US" : "zh-CN"];
   const [edition, setEdition] = useState<"CN" | "Global">(
-    catalog.pool?.capsules[0]?.edition === "Global" ? "Global" : "CN",
+    (initialEdition ?? catalog.pool?.capsules[0]?.edition) === "Global" ? "Global" : "CN",
   );
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generatedName, setGeneratedName] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [argumentDraft, setArgumentDraft] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -97,6 +101,12 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
       setEdition(all.some((capsule) => capsule.edition === "CN") ? "CN" : "Global");
     }
   }, [catalog.pool, edition]);
+
+  useEffect(() => {
+    if (!generatedName || generateOpen) return;
+    const row = document.getElementById(`generated-mod-${edition}-${generatedName}`);
+    row?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [generatedName, generateOpen, edition, capsules]);
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     try {
@@ -142,6 +152,9 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             : copy.description}</p>
         </div>
         <div className="mod-processing-header-actions">
+          <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}>
+            <PackagePlus size={13} />{isEnglish ? "Generate lightweight Mod" : "生成轻量 Mod"}
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -218,10 +231,14 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             && capsule.feature_groups.includes("auto_exit_on_death");
           const autoExitDescriptionId = `mod-auto-exit-${capsule.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
           return (
-            <article key={capsule.id} className="mod-catalog-row" data-processed={capsule.processed ? "true" : undefined} data-assigned={assignedNames ? "true" : undefined}>
+            <article key={capsule.id} className="mod-catalog-row" id={`generated-mod-${edition}-${capsule.name}`} data-generated={generatedName === capsule.name ? "true" : undefined} data-processed={capsule.processed ? "true" : undefined} data-assigned={assignedNames ? "true" : undefined}>
               <div className="mod-catalog-identity">
                 <span className="mod-catalog-capsule"><PackageOpen size={13} /><b>{capsule.name}</b></span>
-                <small>{capsule.origin === "scanned" ? copy.scanned : copy.custom}</small>
+                <small>{capsule.lightweight_profile
+                  ? (isEnglish ? "Generated from original game resources" : "原版资源生成")
+                  : capsule.origin === "scanned" ? copy.scanned : copy.custom}</small>
+                {capsule.lightweight_profile && <div className="mod-catalog-badges"><span data-kind="feature">{LIGHTWEIGHT_PROFILES.find((p) => p.id === capsule.lightweight_profile)?.[isEnglish ? "en" : "label"]}</span></div>}
+                {capsule.issue && <small className="lightweight-error" role="status">{capsule.issue}</small>}
                 <div className="mod-catalog-state">
                   {capsule.processed && (
                     <div className="mod-catalog-capability-capsules">
@@ -318,13 +335,16 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           <div className="mod-catalog-empty">
             <PackageOpen size={22} />
             <strong>{copy.empty(edition)}</strong>
-            <p>{copy.emptyHelp}</p>
+            <p>{isEnglish ? "Scan an existing Mod or generate one from original game resources." : "可以扫描已有 Mod，也可以使用原版资源生成轻量 Mod。"}</p>
+            <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}><PackagePlus size={13} />{isEnglish ? "Generate lightweight Mod" : "生成轻量 Mod"}</Button>
           </div>
         )}
       </div>
       <footer className="mod-catalog-footnote">
         {copy.footnote}
       </footer>
+      <LightweightModDialog open={generateOpen} onClose={() => setGenerateOpen(false)} edition={edition}
+        isEnglish={isEnglish} catalog={catalog} accounts={accounts} onProcess={onProcess} onGenerated={setGeneratedName} />
       <Modal
         open={deleteTarget !== null}
         onClose={closeDeleteConfirmation}

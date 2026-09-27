@@ -105,6 +105,8 @@ pub struct ModCapsule {
     pub launch_arguments: String,
     pub default_launch_arguments: Option<String>,
     pub source_mod_name: Option<String>,
+    pub lightweight_profile: Option<String>,
+    pub issue: Option<String>,
     pub feature_groups: Vec<String>,
     pub auto_exit_on_death_enabled: bool,
     pub processed: bool,
@@ -139,6 +141,8 @@ struct ScannedMod {
     edition: String,
     installed: InstalledMod,
     default_arguments: String,
+    lightweight_profile: Option<String>,
+    issue: Option<String>,
 }
 
 fn catalog_store(state: &SharedState) -> Result<ModuleConfigStore, String> {
@@ -189,14 +193,30 @@ fn scan_installations(config: &GlobalConfig) -> Vec<ScannedMod> {
             continue;
         }
         for installed in installed_mods(&Path::new(game_directory).join("mods")) {
-            let Ok(default_arguments) = arguments_with_audio_mod("", &installed.name) else {
-                continue;
+            let light = if installed.feature_groups.is_empty() && !installed.update_required {
+                crate::lightweight_mod::inspect(
+                    &Path::new(game_directory).join("mods").join(&installed.name),
+                    &installed.name,
+                )
+            } else {
+                Ok(None)
+            };
+            let (lightweight_profile, issue, default_arguments) = match light {
+                Ok(Some(info)) => (Some(info.profile), None, info.arguments),
+                other => {
+                    let Ok(args) = arguments_with_audio_mod("", &installed.name) else {
+                        continue;
+                    };
+                    (None, other.err(), args)
+                }
             };
             scanned.push(ScannedMod {
                 id: scanned_capsule_id(edition, &installed.name),
                 edition: edition.to_string(),
                 installed,
                 default_arguments,
+                lightweight_profile,
+                issue,
             });
         }
     }
@@ -575,12 +595,14 @@ fn build_pool(
                 launch_arguments: effective_scanned_arguments(payload, entry),
                 default_launch_arguments: Some(entry.default_arguments.clone()),
                 source_mod_name: entry.installed.source_mod_name.clone(),
+                lightweight_profile: entry.lightweight_profile.clone(),
+                issue: entry.issue.clone(),
                 feature_groups: entry.installed.feature_groups.clone(),
                 auto_exit_on_death_enabled: entry.installed.auto_exit_on_death_enabled,
                 processed,
-                source_eligible: entry.installed.source_eligible,
+                source_eligible: entry.installed.source_eligible && entry.issue.is_none(),
                 update_required: entry.installed.update_required,
-                ready: true,
+                ready: entry.issue.is_none(),
                 deletable: true,
                 assigned_account_ids: Vec::new(),
             }
@@ -603,6 +625,8 @@ fn build_pool(
             launch_arguments: entry.launch_arguments.clone(),
             default_launch_arguments: None,
             source_mod_name,
+            lightweight_profile: None,
+            issue: None,
             feature_groups,
             auto_exit_on_death_enabled,
             processed,
@@ -1399,6 +1423,8 @@ mod tests {
                 auto_exit_on_death_enabled: false,
             },
             default_arguments: "-mod Sample -txt -assettestmode 1".to_string(),
+            lightweight_profile: None,
+            issue: None,
         };
         let mut payload = ModCatalogPayload::default();
         let known = effective_scanned_arguments(&payload, &scanned);

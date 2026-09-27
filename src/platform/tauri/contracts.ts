@@ -35,6 +35,8 @@ export const TAURI_COMMANDS = [
   "get_app_version",
   "get_audio_mod_setup_state",
   "get_mod_capsule_pool",
+  "get_lightweight_mod_context",
+  "generate_lightweight_mod",
   "get_capability_statuses",
   "get_capability_descriptors",
   "get_task",

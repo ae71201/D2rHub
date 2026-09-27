@@ -10,6 +10,7 @@ mod error;
 pub mod infrastructure;
 mod input_listener;
 mod launch_context;
+mod lightweight_mod;
 pub mod logger;
 mod mod_catalog;
 mod rune_audio;
@@ -297,6 +298,8 @@ pub fn run() {
             commands::terror_zone::get_next_terror_zone,
             // ── 声纹 Mod 一键准备 ──
             audio_mod::get_audio_mod_setup_state,
+            lightweight_mod::get_lightweight_mod_context,
+            lightweight_mod::generate_lightweight_mod,
             mod_catalog::get_mod_capsule_pool,
             mod_catalog::scan_mod_capsule_pool,
             mod_catalog::open_mods_directory,

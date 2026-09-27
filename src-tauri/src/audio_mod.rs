@@ -316,14 +316,14 @@ struct OfficialUpdateMetadata {
     source_mod_name: Option<String>,
 }
 
-struct BuildLease(SharedState);
+pub(crate) struct BuildLease(SharedState);
 
 impl BuildLease {
-    fn acquire(state: &SharedState) -> Result<Self, String> {
+    pub(crate) fn acquire(state: &SharedState) -> Result<Self, String> {
         state
             .audio_mod_build_busy
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .map_err(|_| "已有一个识别 Mod 正在准备，请稍候".to_string())?;
+            .map_err(|_| "已有一个 Mod 正在生成或加工，请稍候".to_string())?;
         Ok(Self(state.clone()))
     }
 }
@@ -4528,6 +4528,10 @@ pub(crate) fn emit_runtime_compatibility_warning(
         .instances()
         .record_launch_snapshot(&account.id, pid, launch_arguments);
 }
+
+#[cfg(test)]
+#[path = "audio_mod/lightweight_integration_tests.rs"]
+mod lightweight_integration_tests;
 
 #[cfg(test)]
 mod tests {
