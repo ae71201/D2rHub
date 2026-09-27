@@ -128,6 +128,7 @@ function App() {
   const batchLock = useRef(false);
   const disclosureBlockingStartup = initialLoading
     || applicationDisclosure.checking
+    || applicationDisclosure.error !== null
     || applicationDisclosure.required;
   const profileDecisionPending = !!config && !profileDecisionCurrent;
   const startupServicesBlocked = disclosureBlockingStartup || profileDecisionPending || restarting;
@@ -325,7 +326,7 @@ function App() {
     try {
       await applicationDisclosure.accept();
     } catch (error) {
-      showToast("error", `启动 D2RHub 运行服务失败：${error}`);
+      showToast("error", `${config?.app_language === "en-US" ? "Failed to save acceptance" : "保存使用须知确认记录失败"}：${error}`);
     }
   };
 
@@ -413,6 +414,33 @@ function App() {
             : "新模式已保存，正在运行的游戏会保持打开。"}</p>
         </div>
       </div>
+    </AppShell>
+  );
+
+  if (applicationDisclosure.error && !applicationDisclosure.checking) return (
+    <AppShell>
+      <div className="flex-1 flex items-center justify-center px-6">
+        <div className="w-[560px] account-line px-6 py-5" role="alert">
+          <p className="text-sm font-semibold text-text-primary">
+            {applicationDisclosure.error.stage === "storage"
+              ? (config?.app_language === "en-US" ? "Unable to read or migrate notice acceptance" : "无法读取或迁移使用须知确认记录")
+              : (config?.app_language === "en-US" ? "Unable to start D2RHub services" : "D2RHub 运行服务启动失败")}
+          </p>
+          <p className="text-sm text-text-secondary mt-2">
+            {config?.app_language === "en-US"
+              ? "Startup is paused. Retry after resolving the error. Your saved acceptance is retained."
+              : "启动已暂停，请处理错误后重试。已保存的确认记录会保留。"}
+          </p>
+          <p className="text-xs font-mono text-error mt-3 break-all">{applicationDisclosure.error.message}</p>
+          <div className="flex gap-3 mt-4">
+            <Button onClick={applicationDisclosure.retry}>{config?.app_language === "en-US" ? "Retry" : "重试"}</Button>
+            <Button variant="ghost" loading={exitingForDisclosure} onClick={() => void handleDisclosureExit()}>
+              {config?.app_language === "en-US" ? "Exit" : "退出"}
+            </Button>
+          </div>
+        </div>
+      </div>
+      <ToastContainer />
     </AppShell>
   );
 

@@ -94,6 +94,8 @@ const APP_COMMANDS: &[&str] = &[
     "open_logs_dir",
     "open_user_guide",
     "activate_application_runtime",
+    "get_application_disclosure_acceptance",
+    "accept_application_disclosure",
     "get_terror_zone_snapshot",
     "get_next_terror_zone",
     "get_audio_mod_setup_state",

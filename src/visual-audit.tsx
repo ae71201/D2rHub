@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
+import { APPLICATION_DISCLOSURE_REVISION } from "./features/disclosures/disclosureStorage";
 import type {
   RoomAutomationConfigSnapshot,
   RoomAutomationWorkflowStatus,
@@ -25,9 +26,8 @@ type SettingsMap = Record<string, unknown>;
 
 const params = new URLSearchParams(window.location.search);
 // Isolated browser-only fixture: start at the dashboard when reviewing batch controls.
-if (params.get("batch") === "1") {
-  localStorage.setItem("d2rhub-disclosure-accepted-version", "0.7.2");
-}
+let acceptedDisclosureRevision: number | null = params.get("batch") === "1"
+  ? APPLICATION_DISCLOSURE_REVISION : null;
 const surface = ((params.get("surface") as Surface | null) || "main") as Surface;
 const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
 const requestedLanguage = params.get("lang") === "en" ? "en-US" : "zh-CN";
@@ -698,6 +698,11 @@ function installIpcMock() {
         return false;
       case "get_app_version":
         return "0.7.2";
+      case "get_application_disclosure_acceptance":
+        return acceptedDisclosureRevision;
+      case "accept_application_disclosure":
+        acceptedDisclosureRevision = APPLICATION_DISCLOSURE_REVISION;
+        return null;
       case "check_cloud_version":
         return { has_update: false, version: "0.7.2", download_url: "" };
       case "create_account":

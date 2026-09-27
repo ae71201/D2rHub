@@ -387,6 +387,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the accept_application_disclosure command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-accept-application-disclosure",
+          "markdownDescription": "Enables the accept_application_disclosure command without any pre-configured scope."
+        },
+        {
           "description": "Enables the activate_application_runtime command without any pre-configured scope.",
           "type": "string",
           "const": "allow-activate-application-runtime",
@@ -601,6 +607,12 @@
           "type": "string",
           "const": "allow-get-app-version",
           "markdownDescription": "Enables the get_app_version command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_application_disclosure_acceptance command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-application-disclosure-acceptance",
+          "markdownDescription": "Enables the get_application_disclosure_acceptance command without any pre-configured scope."
         },
         {
           "description": "Enables the get_audio_mod_setup_state command without any pre-configured scope.",
@@ -1233,6 +1245,12 @@
           "markdownDescription": "Enables the write_log command without any pre-configured scope."
         },
         {
+          "description": "Denies the accept_application_disclosure command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-accept-application-disclosure",
+          "markdownDescription": "Denies the accept_application_disclosure command without any pre-configured scope."
+        },
+        {
           "description": "Denies the activate_application_runtime command without any pre-configured scope.",
           "type": "string",
           "const": "deny-activate-application-runtime",
@@ -1447,6 +1465,12 @@
           "type": "string",
           "const": "deny-get-app-version",
           "markdownDescription": "Denies the get_app_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_application_disclosure_acceptance command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-application-disclosure-acceptance",
+          "markdownDescription": "Denies the get_application_disclosure_acceptance command without any pre-configured scope."
         },
         {
           "description": "Denies the get_audio_mod_setup_state command without any pre-configured scope.",

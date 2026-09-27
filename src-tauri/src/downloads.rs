@@ -412,6 +412,23 @@ async fn cancelled(task: &TaskHandle) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
+async fn await_cancellable<T>(
+    task: &TaskHandle,
+    operation: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    if task.cancellation_requested() {
+        return Err("下载已取消".into());
+    }
+    // Keep polling one operation while the cancellation future waits independently.
+    let result = tokio::select! {
+        _ = cancelled(task) => Err("下载已取消".into()),
+        result = operation => result,
+    };
+    if task.cancellation_requested() {
+        return Err("下载已取消".into());
+    }
+    result
+}
 async fn attempt(
     client: &reqwest::Client,
     m: &Mirror,
@@ -422,7 +439,14 @@ async fn attempt(
     ceiling: u8,
 ) -> Result<(), String> {
     let send = tokio::time::timeout(Duration::from_secs(15), client.get(&m.url).send());
-    let mut response = tokio::select! {_=cancelled(task)=>return Err("下载已取消".into()),r=send=>r.map_err(|_|"连接下载源超时")?.map_err(|e|e.to_string())?.error_for_status().map_err(|e|e.to_string())?};
+    let mut response = await_cancellable(task, async {
+        send.await
+            .map_err(|_| "连接下载源超时")?
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())
+    })
+    .await?;
     let mut f = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -431,7 +455,13 @@ async fn attempt(
     let mut count = 0u64;
     loop {
         let pending = tokio::time::timeout(Duration::from_secs(20), response.chunk());
-        let chunk = tokio::select! {_=cancelled(task)=>return Err("下载已取消".into()),r=pending=>r.map_err(|_|"下载长时间无进度")?.map_err(|e|e.to_string())?};
+        let chunk = await_cancellable(task, async {
+            pending
+                .await
+                .map_err(|_| "下载长时间无进度")?
+                .map_err(|e| e.to_string())
+        })
+        .await?;
         let Some(chunk) = chunk else {
             break;
         };
@@ -725,6 +755,80 @@ mod tests {
                     assert_eq!(v["kind"], kind);
                 }
             }
+        });
+    }
+    #[test]
+    fn cancellation_drops_a_request_stalled_before_response_headers() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Dropped<'a>(&'a AtomicBool);
+        impl Drop for Dropped<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        executor.block_on(async {
+            let runtime = TaskRuntime::new(4);
+            let task = runtime
+                .begin(TaskRequest::new("mod-resource-install"))
+                .unwrap();
+            let dropped = AtomicBool::new(false);
+            let operation = async {
+                let _guard = Dropped(&dropped);
+                std::future::pending::<Result<(), String>>().await
+            };
+            let (result, ()) = tokio::join!(
+                tokio::time::timeout(Duration::from_secs(2), await_cancellable(&task, operation)),
+                async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    runtime.request_cancel(task.task_id()).unwrap();
+                }
+            );
+            assert_eq!(result.unwrap().unwrap_err(), "下载已取消");
+            assert!(dropped.load(Ordering::SeqCst));
+        });
+    }
+
+    #[test]
+    fn cancellable_wait_preserves_requests_and_errors_and_skips_cancelled_work() {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        executor.block_on(async {
+            let runtime = TaskRuntime::new(4);
+            let task = runtime
+                .begin(TaskRequest::new("mod-resource-install"))
+                .unwrap();
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                await_cancellable(&task, async {
+                    // Longer than a cancellation tick: restarting this future would never finish.
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    Ok(42)
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap(), 42);
+            assert_eq!(
+                await_cancellable::<()>(&task, async { Err("network error".into()) })
+                    .await
+                    .unwrap_err(),
+                "network error"
+            );
+            runtime.request_cancel(task.task_id()).unwrap();
+            let polled = std::cell::Cell::new(false);
+            let result = await_cancellable(&task, async {
+                polled.set(true);
+                Ok(())
+            })
+            .await;
+            assert_eq!(result.unwrap_err(), "下载已取消");
+            assert!(!polled.get());
         });
     }
 }

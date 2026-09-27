@@ -437,40 +437,21 @@ pub async fn get_mod_resources(
     edition: String,
     refresh: bool,
 ) -> Result<ResourceState, String> {
-    let mut c = catalog()?;
+    let cache_path = tools_root(&app)?.join("catalog.json");
+    let (mut c, _) = publish_catalog(&CATALOG, &cache_path, catalog()?, false)?;
     let mut warning = None;
     let mut checked_online = false;
-    // Preserve a previously checked catalog for offline restarts.
-    if let Ok(bytes) = fs::read(tools_root(&app)?.join("catalog.json")) {
-        if let Ok(saved) = serde_json::from_slice::<Catalog>(&bytes) {
-            if validate_catalog(&saved).is_ok() && saved.revision >= c.revision {
-                c = saved;
-            }
-        }
-    }
     if refresh {
         match remote_catalog(&app, state.inner(), &c).await {
-            Ok(remote) if remote.revision >= c.revision => {
+            Ok(remote) => {
                 checked_online = true;
-                validate_advance(&c, &remote)?;
-                c = remote;
-                let root = tools_root(&app)?;
-                fs::create_dir_all(&root).map_err(err)?;
-                if let Err(e) = save_catalog(&root.join("catalog.json"), &c) {
-                    warning = Some(format!("已检查更新，但无法缓存：{e}"));
-                }
+                (c, warning) = publish_catalog(&CATALOG, &cache_path, remote, true)?;
             }
-            Ok(_) => warning = Some("远端资源清单较旧，继续使用已验证版本".into()),
             Err(e) => warning = Some(format!("暂时无法检查更新，使用已知资源清单：{e}")),
         }
     }
-    {
-        let mut current = CATALOG.lock().map_err(err)?;
-        if let Some(newer) = current.as_ref().filter(|v| v.revision > c.revision) {
-            c = newer.clone();
-        }
-        *current = Some(c.clone());
-    }
+    // Another refresh may have completed while this request was awaiting the network.
+    (c, _) = publish_catalog(&CATALOG, &cache_path, c, false)?;
     let game = game_root(state.inner(), &edition);
     let (mods_directory, game_data_version) = match game {
         Ok(root) => (
@@ -500,6 +481,54 @@ pub async fn get_mod_resources(
         warning,
     })
 }
+fn publish_catalog(
+    cache: &Mutex<Option<Catalog>>,
+    path: &Path,
+    mut candidate: Catalog,
+    persist: bool,
+) -> Result<(Catalog, Option<String>), String> {
+    // Selection and durable publication share one lock. A late response must not
+    // overwrite a newer disk cache even if it started from an older snapshot.
+    let mut current = cache.lock().map_err(err)?;
+    let requested_revision = candidate.revision;
+    validate_catalog(&candidate)?;
+    if let Ok(bytes) = fs::read(path) {
+        if let Ok(saved) = serde_json::from_slice::<Catalog>(&bytes) {
+            if validate_catalog(&saved).is_ok() {
+                candidate = select_catalog(candidate, saved)?;
+            }
+        }
+    }
+    if let Some(known) = current.as_ref() {
+        candidate = select_catalog(candidate, known.clone())?;
+    }
+    let mut warning = (persist && requested_revision < candidate.revision)
+        .then(|| "远端资源清单较旧，继续使用已验证版本".to_string());
+    if persist {
+        let saved = (|| {
+            fs::create_dir_all(path.parent().ok_or("资源缓存目录无效")?).map_err(err)?;
+            save_catalog(path, &candidate)
+        })();
+        if let Err(e) = saved {
+            let message = format!("已检查更新，但无法缓存：{e}");
+            warning = Some(warning.map_or(message.clone(), |w| format!("{w}；{message}")));
+        }
+    }
+    *current = Some(candidate.clone());
+    Ok((candidate, warning))
+}
+fn select_catalog(current: Catalog, candidate: Catalog) -> Result<Catalog, String> {
+    let (current, candidate) = if current.revision > candidate.revision {
+        (candidate, current)
+    } else {
+        (current, candidate)
+    };
+    serde_json::from_value(crate::downloads::select_index(
+        Some(serde_json::to_value(current).map_err(err)?),
+        serde_json::to_value(candidate).map_err(err)?,
+    )?)
+    .map_err(err)
+}
 fn save_catalog(path: &Path, c: &Catalog) -> Result<(), String> {
     let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
@@ -528,6 +557,7 @@ fn cancelled(task: &TaskHandle) -> Result<(), String> {
         Ok(())
     }
 }
+
 fn archive_path(name: &str, expected_root: &str) -> Result<PathBuf, String> {
     // Reject Windows aliases, ADS, traversal, absolute paths and reserved names,
     // independently of the host platform used to run tests.
@@ -831,6 +861,85 @@ mod tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+    #[test]
+    fn catalog_publication_rejects_a_newer_revision_that_downgrades_resources() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("catalog.json");
+        let cache = Mutex::new(None);
+        let mut known: Catalog = serde_json::from_str(EMBEDDED).unwrap();
+        known.assets[0].sequence = 5;
+        publish_catalog(&cache, &path, known.clone(), true).unwrap();
+        let mut invalid = known.clone();
+        invalid.revision += 1;
+        invalid.assets[0].sequence = 4;
+        assert!(publish_catalog(&cache, &path, invalid, true).is_err());
+        let disk: Catalog = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(disk.revision, known.revision);
+        assert_eq!(
+            cache.lock().unwrap().as_ref().unwrap().revision,
+            known.revision
+        );
+    }
+
+    #[test]
+    fn late_refresh_cannot_downgrade_memory_or_restart_cache() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("catalog.json");
+        let cache = Mutex::new(None);
+        let base: Catalog = serde_json::from_str(EMBEDDED).unwrap();
+        let mut older = base.clone();
+        older.revision += 1;
+        let mut newer = base.clone();
+        newer.revision += 2;
+        // Both network requests start from base; the newer response completes first.
+        publish_catalog(&cache, &path, base.clone(), false).unwrap();
+        std::thread::scope(|scope| {
+            let (sent, received) = std::sync::mpsc::channel();
+            let cache = &cache;
+            let path = &path;
+            let newer = &newer;
+            scope.spawn(move || {
+                let (_, warning) = publish_catalog(cache, path, newer.clone(), true).unwrap();
+                assert!(warning.is_none());
+                sent.send(()).unwrap();
+            });
+            scope.spawn(move || {
+                received.recv().unwrap();
+                let (selected, warning) = publish_catalog(cache, path, older, true).unwrap();
+                assert_eq!(selected.revision, base.revision + 2);
+                assert!(warning.unwrap().contains("较旧"));
+            });
+        });
+        assert_eq!(
+            cache.lock().unwrap().as_ref().unwrap().revision,
+            newer.revision
+        );
+        let disk: Catalog = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk.revision, newer.revision);
+        let restarted = Mutex::new(None);
+        let (selected, _) = publish_catalog(&restarted, &path, base, false).unwrap();
+        assert_eq!(selected.revision, newer.revision);
+    }
+
+    #[test]
+    fn cache_failure_retains_newest_catalog_and_later_refresh_repairs_disk() {
+        let scratch = Scratch::new();
+        let parent = scratch.0.join("blocked");
+        fs::write(&parent, b"not a directory").unwrap();
+        let path = parent.join("catalog.json");
+        let cache = Mutex::new(None);
+        let older: Catalog = serde_json::from_str(EMBEDDED).unwrap();
+        let mut newer = older.clone();
+        newer.revision += 1;
+        let (selected, warning) = publish_catalog(&cache, &path, newer.clone(), true).unwrap();
+        assert_eq!(selected.revision, newer.revision);
+        assert!(warning.unwrap().contains("无法缓存"));
+        fs::remove_file(parent).unwrap();
+        publish_catalog(&cache, &path, older, true).unwrap();
+        let disk: Catalog = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(disk.revision, newer.revision);
+    }
+
     #[test]
     fn rejects_tampered_payload_and_cancelled_extraction() {
         let scratch = Scratch::new();

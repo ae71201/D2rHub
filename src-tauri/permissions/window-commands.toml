@@ -32,6 +32,7 @@ commands.allow = [
   "get_d2r_window_titles", "refresh_account_running_state", "send_keys_to_window",
   "snapshot_processes", "wait_for_new_process", "exit_app", "open_logs_dir", "open_user_guide",
   "activate_application_runtime",
+  "get_application_disclosure_acceptance", "accept_application_disclosure",
   "get_terror_zone_snapshot", "get_next_terror_zone",
   "get_audio_mod_setup_state", "get_mod_capsule_pool", "get_lightweight_mod_context", "generate_lightweight_mod", "scan_mod_capsule_pool", "open_mods_directory",
   "set_mod_auto_exit_on_death_enabled",

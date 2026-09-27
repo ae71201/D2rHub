@@ -299,6 +299,8 @@ pub fn run() {
             commands::system::open_logs_dir,
             commands::system::open_user_guide,
             commands::system::activate_application_runtime,
+            commands::disclosure::get_application_disclosure_acceptance,
+            commands::disclosure::accept_application_disclosure,
             commands::terror_zone::get_terror_zone_snapshot,
             commands::terror_zone::get_next_terror_zone,
             // ── 声纹 Mod 一键准备 ──
