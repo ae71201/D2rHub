@@ -141,6 +141,23 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(workflow.processor_version_matches('d2r-audio-mod 1.4.0-beta.16 (protocol v7)', '1.4.0-beta.17'))
         self.assertFalse(workflow.processor_version_matches('other-tool 1.4.0-beta.17', '1.4.0-beta.17'))
 
+    def test_build_snapshot_excludes_stale_ignored_permissions(self):
+        repo = self.root / 'repo'
+        repo.mkdir()
+        (repo / '.gitignore').write_text('permissions/\n')
+        (repo / 'source.txt').write_text('committed source')
+        workflow.run(['git', 'init', '--quiet'], repo)
+        workflow.run(['git', 'add', '.'], repo)
+        workflow.run(['git', '-c', 'user.name=Workflow test', '-c', 'user.email=test@example.invalid',
+                      'commit', '--quiet', '-m', 'fixture'], repo)
+        (repo / 'permissions').mkdir()
+        (repo / 'permissions/removed-command.toml').write_text('stale generated command')
+        commit = workflow.source_commit(repo)
+        snapshot = workflow.source_snapshot(repo, self.root, 'hub', commit)
+        self.assertEqual((snapshot / 'source.txt').read_text(), 'committed source')
+        self.assertFalse((snapshot / 'permissions').exists())
+        self.assertTrue((repo / 'permissions/removed-command.toml').exists())
+
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')

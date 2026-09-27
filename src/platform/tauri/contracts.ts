@@ -7,6 +7,8 @@
  */
 export const TAURI_COMMANDS = [
   "activate_application_runtime",
+  "get_application_disclosure_acceptance",
+  "accept_application_disclosure",
   "add_mod_capsule",
   "apply_audio_mod_to_account",
   "assign_mod_capsule_to_account",

@@ -5,6 +5,7 @@ pub mod browser;
 pub mod capability;
 pub mod crypto;
 pub mod diagnostics;
+pub mod disclosure;
 pub mod global_config;
 pub mod launch;
 pub mod pet;
