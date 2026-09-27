@@ -61,6 +61,22 @@ def source_commit(root):
     return run(['git', 'rev-parse', 'HEAD'], root, capture=True)
 
 
+def source_snapshot(repo, destination, name, commit):
+    """Build tracked source only; old ignored generated permissions are not inputs."""
+    archive = destination / f'{name}-source.zip'
+    source = destination / f'source-{name}'
+    run(['git', 'archive', '--format=zip', '--output', archive, commit], repo)
+    source.mkdir()
+    with zipfile.ZipFile(archive) as files:
+        for item in files.infolist():
+            target = (source / item.filename).resolve()
+            if (not target.is_relative_to(source.resolve()) or '\\' in item.filename
+                    or (item.external_attr >> 16) & 0o170000 == 0o120000):
+                raise RuntimeError('源码快照包含不支持的路径或链接。')
+        files.extractall(source)
+    return source
+
+
 def configuration(path):
     if not path.exists():
         common = Path(run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture=True))
@@ -148,10 +164,11 @@ def build_software(destination):
     if not re.fullmatch(r'\d+\.\d+\.\d+', version) or any(v != version for v in versions):
         raise RuntimeError('Hub 版本号必须为正式版本，并在 npm、Cargo、Tauri 配置中一致。')
     target = destination / 'build-hub'
+    source = source_snapshot(ROOT, destination, 'hub', commit)
     environment = os.environ.copy()
     environment['CARGO_TARGET_DIR'] = str(target)
-    run(['npm', 'ci'])
-    run(['npm', 'run', 'build:nsis'], env=environment)
+    run(['npm', 'ci'], source)
+    run(['npm', 'run', 'build:nsis'], source, env=environment)
     candidates = list((target / 'release/bundle/nsis').glob('*-setup.exe'))
     if len(candidates) != 1:
         raise RuntimeError('未得到唯一的 NSIS 安装包。')
@@ -172,8 +189,9 @@ def build_processor(repo, destination):
     with (repo / 'Cargo.toml').open('rb') as stream:
         version = tomllib.load(stream)['package']['version']
     target = destination / 'build-processor'
+    source = source_snapshot(repo, destination, 'processor', commit)
     run(['cargo', 'build', '--locked', '--release', '--bin', 'd2r-audio-mod',
-         '--target-dir', target], repo)
+         '--target-dir', target], source)
     executable = target / 'release/d2r-audio-mod.exe'
     actual = run([executable, '--version'], repo, capture=True)
     if not processor_version_matches(actual, version):
