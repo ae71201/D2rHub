@@ -267,7 +267,6 @@ export interface LaunchProgress {
 export interface LaunchResult {
   account_id: string;
   success: boolean;
-  login_unconfirmed?: boolean;
   d2r_pid: number | null;
   error: string | null;
   mutex_killed: boolean;
@@ -334,6 +333,8 @@ export interface AudioModSetupState {
 }
 
 export interface ModCapsule {
+  lightweight_profile?: "main" | "filler" | "min" | null;
+  issue?: string | null;
   id: string;
   edition: "CN" | "Global" | string;
   name: string;

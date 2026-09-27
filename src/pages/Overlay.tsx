@@ -604,102 +604,91 @@ export function Overlay() {
     programmaticDockMoveRef.current = true;
     updateDockState({ ...state, phase: "moving" });
 
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      try {
-        await win.setPosition(new PhysicalPosition(target.x, target.y));
-      } catch (err) {
-        reportOverlayIssue("WARN", "reduced-motion dock move failed", err);
-        programmaticDockMoveRef.current = false;
-        return;
-      }
-    } else {
-      const motion = finalPhase === "hidden" ? "hide" : "reveal";
-      const duration = calculateOverlayDockAnimationDuration(pointDistance(start, target), motion);
-      let animationFailed = false;
+    const motion = finalPhase === "hidden" ? "hide" : "reveal";
+    const duration = calculateOverlayDockAnimationDuration(pointDistance(start, target), motion);
+    let animationFailed = false;
 
-      await new Promise<void>((resolve) => {
-        let startedAt: number | null = null;
-        let pendingPosition: PhysicalPoint | null = null;
-        let moveInFlight = false;
-        let animationFinished = false;
-        let resolved = false;
-        let lastRequestedPosition: PhysicalPoint | null = null;
+    await new Promise<void>((resolve) => {
+      let startedAt: number | null = null;
+      let pendingPosition: PhysicalPoint | null = null;
+      let moveInFlight = false;
+      let animationFinished = false;
+      let resolved = false;
+      let lastRequestedPosition: PhysicalPoint | null = null;
 
-        const finish = () => {
-          if (resolved) return;
-          resolved = true;
-          resolve();
-        };
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
 
-        const flushLatestPosition = () => {
-          if (resolved || moveInFlight || !pendingPosition) return;
-          const nextPosition = pendingPosition;
-          pendingPosition = null;
-          moveInFlight = true;
+      const flushLatestPosition = () => {
+        if (resolved || moveInFlight || !pendingPosition) return;
+        const nextPosition = pendingPosition;
+        pendingPosition = null;
+        moveInFlight = true;
 
-          void win.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y)).then(() => {
-            moveInFlight = false;
-            if (dockAnimationTokenRef.current !== token) {
-              pendingPosition = null;
-              finish();
-              return;
-            }
-            flushLatestPosition();
-            if (animationFinished && !moveInFlight && !pendingPosition) finish();
-          }).catch((err) => {
-            animationFailed = true;
-            moveInFlight = false;
-            pendingPosition = null;
-            reportOverlayIssue("WARN", "dock animation move failed", err);
-            finish();
-          });
-        };
-
-        const queueLatestPosition = (position: PhysicalPoint) => {
-          if (
-            lastRequestedPosition
-            && lastRequestedPosition.x === position.x
-            && lastRequestedPosition.y === position.y
-          ) {
-            return;
-          }
-          lastRequestedPosition = position;
-          pendingPosition = position;
-          flushLatestPosition();
-        };
-
-        const step = (now: number) => {
-          if (resolved) return;
+        void win.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y)).then(() => {
+          moveInFlight = false;
           if (dockAnimationTokenRef.current !== token) {
             pendingPosition = null;
-            if (!moveInFlight) finish();
+            finish();
             return;
           }
-          if (startedAt === null) startedAt = now;
-          const progress = Math.min(1, (now - startedAt) / duration);
-          const eased = easeOverlayDockProgress(progress, motion);
-          queueLatestPosition({
-            x: Math.round(start.x + (target.x - start.x) * eased),
-            y: Math.round(start.y + (target.y - start.y) * eased),
-          });
+          flushLatestPosition();
+          if (animationFinished && !moveInFlight && !pendingPosition) finish();
+        }).catch((err) => {
+          animationFailed = true;
+          moveInFlight = false;
+          pendingPosition = null;
+          reportOverlayIssue("WARN", "dock animation move failed", err);
+          finish();
+        });
+      };
 
-          if (progress >= 1) {
-            animationFinished = true;
-            queueLatestPosition({ x: target.x, y: target.y });
-            if (!moveInFlight && !pendingPosition) finish();
-          } else {
-            window.requestAnimationFrame(step);
-          }
-        };
+      const queueLatestPosition = (position: PhysicalPoint) => {
+        if (
+          lastRequestedPosition
+          && lastRequestedPosition.x === position.x
+          && lastRequestedPosition.y === position.y
+        ) {
+          return;
+        }
+        lastRequestedPosition = position;
+        pendingPosition = position;
+        flushLatestPosition();
+      };
 
-        window.requestAnimationFrame(step);
-      });
+      const step = (now: number) => {
+        if (resolved) return;
+        if (dockAnimationTokenRef.current !== token) {
+          pendingPosition = null;
+          if (!moveInFlight) finish();
+          return;
+        }
+        if (startedAt === null) startedAt = now;
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = easeOverlayDockProgress(progress, motion);
+        queueLatestPosition({
+          x: Math.round(start.x + (target.x - start.x) * eased),
+          y: Math.round(start.y + (target.y - start.y) * eased),
+        });
 
-      if (animationFailed) {
-        programmaticDockMoveRef.current = false;
-        return;
-      }
+        if (progress >= 1) {
+          animationFinished = true;
+          queueLatestPosition({ x: target.x, y: target.y });
+          if (!moveInFlight && !pendingPosition) finish();
+        } else {
+          window.requestAnimationFrame(step);
+        }
+      };
+
+      window.requestAnimationFrame(step);
+    });
+
+    if (animationFailed) {
+      programmaticDockMoveRef.current = false;
+      return;
     }
 
     if (dockAnimationTokenRef.current !== token) return;
@@ -1932,8 +1921,7 @@ export function Overlay() {
       const centeredLeft = pill.offsetLeft - (container.clientWidth - pill.offsetWidth) / 2;
       const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
       const left = Math.max(0, Math.min(maxScrollLeft, centeredLeft));
-      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      container.scrollTo({ left, behavior: reduceMotion ? "auto" : "smooth" });
+      container.scrollTo({ left, behavior: "smooth" });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [activeAccountIdsKey, displayMode, focusedAccountId]);

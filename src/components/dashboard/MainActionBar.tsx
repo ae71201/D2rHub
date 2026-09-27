@@ -9,8 +9,13 @@ import { LaunchButton } from "./LaunchButton";
 import { LaunchGroupMenu } from "./LaunchGroupMenu";
 import { RoomAutomationQuickEdit } from "./RoomAutomationQuickEdit";
 import type { ModCapsulePool } from "../../store/types";
+import type { BatchSelection } from "../../hooks/useAccountBatch";
 
 interface MainActionBarProps {
+  batchSelection?: BatchSelection;
+  batchBusy?: boolean;
+  batchUncertain?: boolean;
+  onClearBatch?: () => void;
   launching: boolean;
   launchableAccountIds: string[];
   launchGroups: LaunchGroupController;
@@ -27,6 +32,7 @@ interface MainActionBarProps {
 }
 
 export function MainActionBar({
+  batchSelection, batchBusy, batchUncertain, onClearBatch,
   launching,
   launchableAccountIds,
   launchGroups,
@@ -118,9 +124,10 @@ export function MainActionBar({
         <>
         <div className="flex min-w-0 items-center gap-2">
           <LaunchButton
-            count={launchableAccountIds.length}
-            loading={launching}
-            onClick={() => onStartLaunch(launchableAccountIds)}
+            count={batchSelection?.mode === "launch" ? batchSelection.ids.length : launchableAccountIds.length}
+            selected={batchSelection?.mode === "launch"}
+            loading={launching || !!batchBusy || !!batchUncertain || saving || batchSelection?.mode === "close"}
+            onClick={() => onStartLaunch(batchSelection?.mode === "launch" ? batchSelection.ids : launchableAccountIds)}
           />
           <FavoriteLaunchGroups
             groups={config?.launch_groups ?? []}
@@ -128,17 +135,20 @@ export function MainActionBar({
             accounts={accounts}
             config={config}
             modCapsulePool={modCapsulePool}
-            disabled={launching || saving}
+            disabled={launching || saving || !!batchSelection?.mode || !!batchBusy}
             onLaunch={launchGroups.launch}
             onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
           />
           <button
             onClick={onRequestKillAll}
-            title="一键关闭所有暗黑2进程"
+            disabled={!!batchBusy || batchSelection?.mode === "launch" || (batchSelection?.mode === "close" && batchUncertain)}
+            title={batchSelection?.mode === "close" ? "仅关闭选中账号的游戏进程" : "一键关闭所有暗黑2进程"}
             className="control-btn danger-control ml-1 min-w-[72px]"
           >
-            一键关闭
+            {batchBusy ? "处理中…" : batchSelection?.mode === "close" ? `关闭选中 (${batchSelection.ids.length})` : "一键关闭"}
           </button>
+          {batchSelection?.mode && <button type="button" className="control-btn" disabled={batchBusy} onClick={onClearBatch}>取消选择</button>}
+          {batchUncertain && <span className="micro-meta" role="status">状态待确认</span>}
           {showOptionalFeatures && (
             <RoomAutomationQuickEdit
               active={config?.installed_optional_modules?.includes("room-automation") === true}
@@ -155,7 +165,7 @@ export function MainActionBar({
         <LaunchGroupMenu
           count={config?.launch_groups.length ?? 0}
           open={launchGroupPanelOpen}
-          disabled={launching || saving}
+          disabled={launching || saving || !!batchBusy}
           onToggle={onToggleLaunchGroupPanel}
         />
         </>

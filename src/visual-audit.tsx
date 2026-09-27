@@ -22,6 +22,10 @@ type Surface =
 type SettingsMap = Record<string, unknown>;
 
 const params = new URLSearchParams(window.location.search);
+// Isolated browser-only fixture: start at the dashboard when reviewing batch controls.
+if (params.get("batch") === "1") {
+  localStorage.setItem("d2rhub-disclosure-accepted-version", "0.7.2");
+}
 const surface = ((params.get("surface") as Surface | null) || "main") as Surface;
 const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
 const requestedLanguage = params.get("lang") === "en" ? "en-US" : "zh-CN";
@@ -211,6 +215,14 @@ if (seedManyAccounts) {
       position_presets: [],
     });
   }
+}
+if (params.get("batch") === "1") {
+  accounts.slice(0, 3).forEach((account, index) => {
+    account.auth_mode = "token";
+    account.region = "KR";
+    account.is_running = index < 2;
+  });
+  accounts.push({ ...accounts[2], id: "batch-idle", display_name: "Idle Druid", order: 5, is_running: false });
 }
 
 const baseConfig: GlobalConfig = {
@@ -454,6 +466,13 @@ function installIpcMock() {
         return accounts;
       case "refresh_account_running_state":
         return accounts.filter((account) => account.is_running).map((account) => account.id);
+      case "inspect_account_launch_health":
+        return accounts.map(account => ({ account_id: account.id, error: account.initialized ? null : "账号尚未初始化" }));
+      case "close_selected_accounts": {
+        const ids = (payload as { accountIds: string[] }).accountIds;
+        for (const account of accounts) if (ids.includes(account.id)) account.is_running = false;
+        return ids.map(account_id => ({ account_id, error: null }));
+      }
       case "get_d2r_window_titles":
         return ["D2R - Ladder Sorc", "D2R - Trav Barb"];
       case "get_foreground_window_title":

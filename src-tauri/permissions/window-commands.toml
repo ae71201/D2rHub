@@ -2,6 +2,7 @@
 identifier = "main-window-commands"
 description = "Allows the main application window to invoke the complete D2RHub command surface."
 commands.allow = [
+  "inspect_account_launch_health", "close_selected_accounts",
   "get_global_config", "get_capability_statuses", "get_capability_descriptors",
   "get_tasks", "get_task", "get_task_timeline", "get_task_retry_descriptor", "cancel_task", "retry_task",
   "export_diagnostic_bundle",
@@ -26,11 +27,11 @@ commands.allow = [
   "launch_browser_for_account", "open_token_login_url", "open_url_in_browser", "check_browser_running", "kill_browser_processes",
   "is_admin", "get_d2r_pids", "kill_all_d2r_processes", "bring_bnet_to_foreground",
   "bring_self_to_foreground", "hide_main_window", "bring_window_by_title_to_front", "get_foreground_window_title",
-  "get_d2r_window_titles", "refresh_account_running_state", "check_game_connected", "send_keys_to_window",
+  "get_d2r_window_titles", "refresh_account_running_state", "send_keys_to_window",
   "snapshot_processes", "wait_for_new_process", "exit_app", "open_logs_dir", "open_user_guide",
   "activate_application_runtime",
   "get_terror_zone_snapshot", "get_next_terror_zone",
-  "get_audio_mod_setup_state", "get_mod_capsule_pool", "scan_mod_capsule_pool", "open_mods_directory",
+  "get_audio_mod_setup_state", "get_mod_capsule_pool", "get_lightweight_mod_context", "generate_lightweight_mod", "scan_mod_capsule_pool", "open_mods_directory",
   "set_mod_auto_exit_on_death_enabled",
   "add_mod_capsule", "update_mod_capsule", "delete_mod_capsule",
   "assign_mod_capsule_to_account", "prepare_audio_mod", "upgrade_audio_mod", "apply_audio_mod_to_account",

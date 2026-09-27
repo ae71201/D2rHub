@@ -44,4 +44,3 @@
 .mini-notice svg { flex-shrink: 0; }
 .mini-dashboard button:focus-visible, .mini-dashboard select:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .mini-dashboard button:disabled, .mini-dashboard select:disabled { opacity: .45; cursor: not-allowed; }
-@media (prefers-reduced-motion: reduce) { .mini-dashboard .animate-spin { animation: none; } }

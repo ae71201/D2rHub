@@ -1,4 +1,5 @@
 pub mod account;
+pub mod account_batch;
 pub mod account_transfer;
 pub mod browser;
 pub mod capability;

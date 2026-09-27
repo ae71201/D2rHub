@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useAccountBatch, refreshBatchRunning } from "./hooks/useAccountBatch";
+import { flushAccountQuickSettings } from "./hooks/useAccountQuickSettings";
 import { invokeCommand, listenEvent } from "./platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertTriangle } from "lucide-react";
@@ -121,6 +123,9 @@ function App() {
   // Kill confirm modal states
   const [showKillConfirm, setShowKillConfirm] = useState(false);
   const [killing, setKilling] = useState(false);
+  const [dispatchingBatch, setDispatchingBatch] = useState(false);
+  const [killTargets, setKillTargets] = useState<string[] | null>(null);
+  const batchLock = useRef(false);
   const disclosureBlockingStartup = initialLoading
     || applicationDisclosure.checking
     || applicationDisclosure.required;
@@ -129,15 +134,29 @@ function App() {
   const optionalFeaturesAvailable = !restarting && optionalFeaturesAreAvailable(config);
 
   const handleKillAllD2R = async () => {
+    if (batchLock.current || launching) return;
+    batchLock.current = true;
     setKilling(true);
     try {
-      await invokeCommand("kill_all_d2r_processes");
-      showToast("success", "清理完成，所有暗黑2进程已关闭。");
+      if (killTargets !== null) {
+        const running = await refreshBatchRunning();
+        const ids = killTargets.filter(id => running.has(id));
+        const results = ids.length ? await invokeCommand<{ account_id: string; error: string | null }[]>("close_selected_accounts", { accountIds: ids }) : [];
+        const failures = results.filter(result => result.error);
+        batch.setSelection(failures.length ? { mode: "close", ids: failures.map(result => result.account_id) } : { mode: null, ids: [] });
+        if (failures.length) showToast("error", failures.map(result => `${accounts.find(a => a.id === result.account_id)?.display_name || result.account_id}：${result.error}`).join("；"));
+        else showToast("success", `已关闭选中的 ${killTargets.length} 个账号（已退出的账号自动跳过）`);
+      } else {
+        await invokeCommand("kill_all_d2r_processes");
+        showToast("success", "清理完成，所有暗黑2进程已关闭。");
+      }
       setShowKillConfirm(false);
+      await batch.refresh();
     } catch (e) {
       showToast("error", `关闭进程失败: ${e}`);
     } finally {
       setKilling(false);
+      batchLock.current = false;
     }
   };
 
@@ -187,6 +206,39 @@ function App() {
     showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount
       || showAbout || showAutoUpdateConfirm || !!launchGroupDraft || startupServicesBlocked || view.type !== "main",
   );
+  const batch = useAccountBatch(
+    view.type === "main" && !startupServicesBlocked && !miniMode.mini && accounts.length > 0,
+    !!launchGroupDraft || showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount,
+    config, launching || killing || dispatchingBatch,
+  );
+  const startDashboardLaunch = async (requestedIds: string[]) => {
+    if (batchLock.current || launching || configSaving) return;
+    batchLock.current = true;
+    setDispatchingBatch(true);
+    try {
+      await flushAccountQuickSettings(requestedIds);
+      const running = await refreshBatchRunning();
+      const requested = new Set(requestedIds);
+      const ids = sortAccountsByCardOrder(useAccounts.getState().accounts)
+        .filter(account => requested.has(account.id) && !running.has(account.id)).map(account => account.id);
+      if (!ids.length) { batch.clear(); showToast("info", "所选账号已经运行或已移除"); return; }
+      const health = await invokeCommand<{ account_id: string; error: string | null }[]>("inspect_account_launch_health");
+      const invalid = ids.filter(id => !health.some(row => row.account_id === id && row.error === null));
+      if (invalid.length) throw new Error(invalid.map(id => `${accounts.find(a => a.id === id)?.display_name || id}：${health.find(row => row.account_id === id)?.error || "账号状态待确认"}`).join("；"));
+      batch.clear();
+      await startLaunch(ids);
+    } catch (error) { showToast("error", `未启动：${error}`); }
+    finally {
+      setDispatchingBatch(false);
+      batchLock.current = false;
+      await batch.refresh();
+    }
+  };
+  const requestDashboardClose = () => {
+    if (batchLock.current || launching) return;
+    setKillTargets(batch.selection.mode === "close" ? [...batch.selection.ids] : null);
+    setShowKillConfirm(true);
+  };
   usePreventDragRegionDoubleClick();
 
   // 等待 DOM 渲染完成后显示窗口（避免白屏闪烁）
@@ -428,6 +480,7 @@ function App() {
   const sortedAccounts = sortAccountsByCardOrder(accounts);
   const launchableAccountIds = sortedAccounts.filter(
     account => account.initialized
+      && !account.is_running && batch.issue(account) === null
       && !requiresTokenMigration(account.auth_mode, account.region, config),
   ).map(account => account.id);
 
@@ -463,7 +516,7 @@ function App() {
           }}
           onRoomAutomation={() => { setSettingsTab("room-automation"); setSettingsAccountId(null); setShowSettings(true); }}
           onAddAccount={() => setShowInit(true)}
-          onKillAll={() => setShowKillConfirm(true)}
+          onKillAll={() => { setKillTargets(null); setShowKillConfirm(true); }}
         /> : null}
         <div className="flex-1 flex-col min-w-0 min-h-0" style={{ display: miniMode.mini ? "none" : "flex" }}>
         <Dashboard
@@ -500,13 +553,17 @@ function App() {
           }}
         >
           <MainActionBar
+            batchSelection={batch.selection}
+            batchBusy={killing || dispatchingBatch}
+            batchUncertain={accounts.length > 0 && batch.uncertain}
+            onClearBatch={batch.clear}
             launching={launching}
             launchableAccountIds={launchableAccountIds}
             launchGroups={launchGroups}
             onCancelLaunch={cancelLaunch}
-            onStartLaunch={startLaunch}
+            onStartLaunch={ids => { void startDashboardLaunch(ids); }}
             onAddAccount={() => setShowInit(true)}
-            onRequestKillAll={() => setShowKillConfirm(true)}
+            onRequestKillAll={requestDashboardClose}
             launchGroupPanelOpen={launchGroupPanelOpen}
             onToggleLaunchGroupPanel={() => setLaunchGroupPanelOpen((open) => !open)}
             onOpenModManager={openModManager}
@@ -566,12 +623,22 @@ function App() {
                   const schemeMember = launchGroupDraft?.members.find(member => member.account_id === a.id);
                   return <SortableAccountCard
                     key={a.id}
+                    runtimeStatus={{
+                      issue: batch.issue(a),
+                      mode: batch.selection.mode,
+                      selected: batch.selection.ids.includes(a.id),
+                      uncertain: batch.uncertain,
+                      paused: batch.motionPaused,
+                      activity: killing && killTargets?.includes(a.id) ? "关闭中" : undefined,
+                      disabled: launching || killing || dispatchingBatch || showKillConfirm,
+                      onToggle: () => batch.toggle(a),
+                    }}
                     account={a}
                     onRename={renameAccount}
                     onDelete={deleteAccount}
                     onConfigure={a => { setShowSettings(true); setSettingsTab("accounts"); setSettingsAccountId(a.id); }}
-                    onLaunch={id => startLaunch([id])}
-                    onBattleNetOnly={id => startBattleNetOnly([id])}
+                    onLaunch={id => { if (!batch.selection.mode) void startDashboardLaunch([id]); }}
+                    onBattleNetOnly={id => { if (!batch.selection.mode && !batchLock.current) void startBattleNetOnly([id]); }}
                     isSelectionMode={!!launchGroupDraft}
                     selected={!!schemeMember}
                     onToggleSelect={launchGroups.toggleAccount}
@@ -606,7 +673,7 @@ function App() {
                 config={config}
                 modCapsulePool={modCapsules.pool}
                 favoriteGroupIds={config?.favorite_launch_group_ids}
-                disabled={launching || configSaving}
+                disabled={launching || configSaving || killing || dispatchingBatch || !!batch.selection.mode}
                 onClose={() => setLaunchGroupPanelOpen(false)}
                 onLaunch={group => {
                   setLaunchGroupPanelOpen(false);
@@ -653,11 +720,11 @@ function App() {
       </Modal>
       <Modal
         open={showKillConfirm}
-        onClose={() => setShowKillConfirm(false)}
+        onClose={() => { if (!killing) setShowKillConfirm(false); }}
         title="确认关闭进程"
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setShowKillConfirm(false)}>
+            <Button variant="ghost" disabled={killing} onClick={() => setShowKillConfirm(false)}>
               取消
             </Button>
             <Button variant="danger" onClick={handleKillAllD2R} loading={killing}>
@@ -667,7 +734,10 @@ function App() {
         }
       >
         <div className="text-sm text-text-secondary py-2">
-          确定要强制关闭当前系统内运行的所有暗黑破坏神II：重制版（D2R.exe）进程吗？此操作可能会导致未保存的游戏进度丢失。
+          {killTargets !== null
+            ? `确定要关闭选中的 ${killTargets.length} 个账号：${killTargets.map(id => accounts.find(a => a.id === id)?.display_name || id).join("、")}？仅关闭这些账号的游戏进程。`
+            : "确定要强制关闭当前系统内运行的所有暗黑破坏神II：重制版（D2R.exe）进程吗？"}
+          此操作可能会导致未保存的游戏进度丢失。
         </div>
       </Modal>
       <Modal
