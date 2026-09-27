@@ -327,37 +327,19 @@ pub async fn get_mod_resources(
     edition: String,
     refresh: bool,
 ) -> Result<ResourceState, String> {
-    let mut c = catalog()?;
+    let cache_path = tools_root(&app)?.join("catalog.json");
+    let (mut c, _) = publish_catalog(&CATALOG, &cache_path, catalog()?, false)?;
     let mut warning = None;
-    // Preserve a previously checked catalog for offline restarts.
-    if let Ok(bytes) = fs::read(tools_root(&app)?.join("catalog.json")) {
-        if let Ok(saved) = serde_json::from_slice::<Catalog>(&bytes) {
-            if validate_catalog(&saved).is_ok() && saved.revision >= c.revision {
-                c = saved;
-            }
-        }
-    }
     if refresh {
         match remote_catalog().await {
-            Ok(remote) if remote.revision >= c.revision => {
-                c = remote;
-                let root = tools_root(&app)?;
-                fs::create_dir_all(&root).map_err(err)?;
-                if let Err(e) = save_catalog(&root.join("catalog.json"), &c) {
-                    warning = Some(format!("已检查更新，但无法缓存：{e}"));
-                }
+            Ok(remote) => {
+                (c, warning) = publish_catalog(&CATALOG, &cache_path, remote, true)?;
             }
-            Ok(_) => warning = Some("远端资源清单较旧，继续使用已验证版本".into()),
             Err(e) => warning = Some(format!("暂时无法检查更新，使用已知资源清单：{e}")),
         }
     }
-    {
-        let mut current = CATALOG.lock().map_err(err)?;
-        if let Some(newer) = current.as_ref().filter(|v| v.revision > c.revision) {
-            c = newer.clone();
-        }
-        *current = Some(c.clone());
-    }
+    // Another refresh may have completed while this request was awaiting the network.
+    (c, _) = publish_catalog(&CATALOG, &cache_path, c, false)?;
     let game = game_root(state.inner(), &edition);
     let (mods_directory, game_data_version) = match game {
         Ok(root) => (
@@ -376,6 +358,44 @@ pub async fn get_mod_resources(
         game_data_version,
         warning,
     })
+}
+fn publish_catalog(
+    cache: &Mutex<Option<Catalog>>,
+    path: &Path,
+    mut candidate: Catalog,
+    persist: bool,
+) -> Result<(Catalog, Option<String>), String> {
+    // Selection and durable publication share one lock. A late response must not
+    // overwrite a newer disk cache even if it started from an older snapshot.
+    let mut current = cache.lock().map_err(err)?;
+    let requested_revision = candidate.revision;
+    if let Ok(bytes) = fs::read(path) {
+        if let Ok(saved) = serde_json::from_slice::<Catalog>(&bytes) {
+            if validate_catalog(&saved).is_ok() && saved.revision >= candidate.revision {
+                candidate = saved;
+            }
+        }
+    }
+    if let Some(newer) = current
+        .as_ref()
+        .filter(|c| c.revision >= candidate.revision)
+    {
+        candidate = newer.clone();
+    }
+    let mut warning = (persist && requested_revision < candidate.revision)
+        .then(|| "远端资源清单较旧，继续使用已验证版本".to_string());
+    if persist {
+        let saved = (|| {
+            fs::create_dir_all(path.parent().ok_or("资源缓存目录无效")?).map_err(err)?;
+            save_catalog(path, &candidate)
+        })();
+        if let Err(e) = saved {
+            let message = format!("已检查更新，但无法缓存：{e}");
+            warning = Some(warning.map_or(message.clone(), |w| format!("{w}；{message}")));
+        }
+    }
+    *current = Some(candidate.clone());
+    Ok((candidate, warning))
 }
 fn save_catalog(path: &Path, c: &Catalog) -> Result<(), String> {
     let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
@@ -405,14 +425,30 @@ fn cancelled(task: &TaskHandle) -> Result<(), String> {
         Ok(())
     }
 }
+async fn await_cancellable<T>(
+    task: &TaskHandle,
+    operation: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    // Keep polling the same request; do not restart it at each cancellation check.
+    tokio::pin!(operation);
+    loop {
+        cancelled(task)?;
+        tokio::select! {
+            result = &mut operation => {
+                cancelled(task)?;
+                return result;
+            }
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+        }
+    }
+}
 async fn download(asset: &Asset, target: &Path, task: &TaskHandle) -> Result<(), String> {
-    let mut response = client()?
-        .get(&asset.url)
-        .send()
-        .await
-        .map_err(err)?
-        .error_for_status()
-        .map_err(err)?;
+    let mut response = await_cancellable(task, async {
+        client()?.get(&asset.url).send().await.map_err(err)
+    })
+    .await?
+    .error_for_status()
+    .map_err(err)?;
     let mut file = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -420,11 +456,7 @@ async fn download(asset: &Asset, target: &Path, task: &TaskHandle) -> Result<(),
         .map_err(err)?;
     let mut size = 0;
     loop {
-        cancelled(task)?;
-        let chunk = tokio::select! {
-            result = response.chunk() => result.map_err(err)?,
-            _ = tokio::time::sleep(Duration::from_millis(200)) => { continue; }
-        };
+        let chunk = await_cancellable(task, async { response.chunk().await.map_err(err) }).await?;
         let Some(chunk) = chunk else {
             break;
         };
@@ -681,6 +713,140 @@ mod tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+    #[test]
+    fn late_refresh_cannot_downgrade_memory_or_restart_cache() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("catalog.json");
+        let cache = Mutex::new(None);
+        let base: Catalog = serde_json::from_str(EMBEDDED).unwrap();
+        let mut older = base.clone();
+        older.revision += 1;
+        let mut newer = base.clone();
+        newer.revision += 2;
+        // Both network requests start from base; the newer response completes first.
+        publish_catalog(&cache, &path, base.clone(), false).unwrap();
+        std::thread::scope(|scope| {
+            let (sent, received) = std::sync::mpsc::channel();
+            let cache = &cache;
+            let path = &path;
+            let newer = &newer;
+            scope.spawn(move || {
+                let (_, warning) = publish_catalog(cache, path, newer.clone(), true).unwrap();
+                assert!(warning.is_none());
+                sent.send(()).unwrap();
+            });
+            scope.spawn(move || {
+                received.recv().unwrap();
+                let (selected, warning) = publish_catalog(cache, path, older, true).unwrap();
+                assert_eq!(selected.revision, base.revision + 2);
+                assert!(warning.unwrap().contains("较旧"));
+            });
+        });
+        assert_eq!(
+            cache.lock().unwrap().as_ref().unwrap().revision,
+            newer.revision
+        );
+        let disk: Catalog = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk.revision, newer.revision);
+        let restarted = Mutex::new(None);
+        let (selected, _) = publish_catalog(&restarted, &path, base, false).unwrap();
+        assert_eq!(selected.revision, newer.revision);
+    }
+
+    #[test]
+    fn cache_failure_retains_newest_catalog_and_later_refresh_repairs_disk() {
+        let scratch = Scratch::new();
+        let parent = scratch.0.join("blocked");
+        fs::write(&parent, b"not a directory").unwrap();
+        let path = parent.join("catalog.json");
+        let cache = Mutex::new(None);
+        let older: Catalog = serde_json::from_str(EMBEDDED).unwrap();
+        let mut newer = older.clone();
+        newer.revision += 1;
+        let (selected, warning) = publish_catalog(&cache, &path, newer.clone(), true).unwrap();
+        assert_eq!(selected.revision, newer.revision);
+        assert!(warning.unwrap().contains("无法缓存"));
+        fs::remove_file(parent).unwrap();
+        publish_catalog(&cache, &path, older, true).unwrap();
+        let disk: Catalog = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(disk.revision, newer.revision);
+    }
+
+    #[test]
+    fn cancellation_drops_a_request_stalled_before_response_headers() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Dropped<'a>(&'a AtomicBool);
+        impl Drop for Dropped<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        executor.block_on(async {
+            let runtime = TaskRuntime::new(4);
+            let task = runtime
+                .begin(TaskRequest::new("mod-resource-install"))
+                .unwrap();
+            let dropped = AtomicBool::new(false);
+            let operation = async {
+                let _guard = Dropped(&dropped);
+                std::future::pending::<Result<(), String>>().await
+            };
+            let (result, ()) = tokio::join!(
+                tokio::time::timeout(Duration::from_secs(2), await_cancellable(&task, operation)),
+                async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    runtime.request_cancel(task.task_id()).unwrap();
+                }
+            );
+            assert_eq!(result.unwrap().unwrap_err(), "下载或安装已取消");
+            assert!(dropped.load(Ordering::SeqCst));
+        });
+    }
+
+    #[test]
+    fn cancellable_wait_preserves_requests_and_errors_and_skips_cancelled_work() {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        executor.block_on(async {
+            let runtime = TaskRuntime::new(4);
+            let task = runtime
+                .begin(TaskRequest::new("mod-resource-install"))
+                .unwrap();
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                await_cancellable(&task, async {
+                    // Longer than a cancellation tick: restarting this future would never finish.
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    Ok(42)
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap(), 42);
+            assert_eq!(
+                await_cancellable::<()>(&task, async { Err("network error".into()) })
+                    .await
+                    .unwrap_err(),
+                "network error"
+            );
+            runtime.request_cancel(task.task_id()).unwrap();
+            let polled = std::cell::Cell::new(false);
+            let result = await_cancellable(&task, async {
+                polled.set(true);
+                Ok(())
+            })
+            .await;
+            assert_eq!(result.unwrap_err(), "下载或安装已取消");
+            assert!(!polled.get());
+        });
+    }
+
     #[test]
     fn rejects_tampered_payload_and_cancelled_extraction() {
         let scratch = Scratch::new();
