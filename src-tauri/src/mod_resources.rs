@@ -1303,6 +1303,47 @@ mod tests {
                 metadata.arguments,
                 format!("-mod {} -txt -assettestmode 1", a.id)
             );
+            let root = scratch.0.join(&a.id);
+            assert_eq!(
+                mod_status(&root, a, true).reason_code,
+                Some("legacy_unverified")
+            );
+            preflight_mod_install(&root, a).unwrap();
+            let tree = crate::resource_install::tree_hash(&root).unwrap();
+            if let Some(sources) = std::env::var_os("D2RHUB_RESOURCE_SOURCES") {
+                assert_eq!(
+                    crate::resource_install::tree_hash(&PathBuf::from(sources).join(&a.id))
+                        .unwrap(),
+                    tree,
+                    "{} local product differs from published package",
+                    a.id
+                );
+            }
+            let mut receipt = crate::resource_install::Receipt {
+                id: a.id.clone(),
+                version: a.version.clone(),
+                sequence: a.sequence,
+                sha256: a.sha256.clone(),
+                tree_sha256: tree,
+            };
+            crate::downloads::save_json(&root.join(crate::resource_install::RECEIPT), &receipt)
+                .unwrap();
+            assert_eq!(mod_status(&root, a, true).reason_code, Some("current"));
+            receipt.version = "previous-release".into();
+            receipt.sequence = a.sequence.saturating_sub(1);
+            receipt.sha256 = "a".repeat(64);
+            crate::downloads::save_json(&root.join(crate::resource_install::RECEIPT), &receipt)
+                .unwrap();
+            assert_eq!(
+                mod_status(&root, a, true).reason_code,
+                Some("update_available")
+            );
+            fs::write(root.join("user-added.txt"), b"preserve me").unwrap();
+            assert_eq!(
+                mod_status(&root, a, true).reason_code,
+                Some("locally_modified")
+            );
+            assert!(preflight_mod_install(&root, a).is_err());
         }
     }
     #[test]

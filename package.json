@@ -1,7 +1,7 @@
 {
   "name": "d2rhub",
   "private": true,
-  "version": "0.9.107",
+  "version": "0.9.108",
   "description": "Windows multi-account manager and audio telemetry run tracker for Diablo II: Resurrected",
   "license": "MIT",
   "repository": {
@@ -28,7 +28,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "publish:downloads": "python scripts/publish-downloads.py",
-    "test:publisher": "python scripts/test_publish_downloads.py && python scripts/test_release_workflow.py && python scripts/test_release_platforms.py",
+    "test:publisher": "python scripts/test_publish_downloads.py && python scripts/test_release_workflow.py && python scripts/test_release_platforms.py && python scripts/test_repair_update_cache.py",
     "release": "python scripts/release-workflow.py"
   },
   "dependencies": {

@@ -721,6 +721,18 @@ mod tests {
         assert!(!version_newer("0.9.105", "0.99.106"));
     }
     #[test]
+    fn older_software_indices_upgrade_to_current_release() {
+        for version in ["0.9.104", "0.9.105", "0.99.106", "0.9.107"] {
+            let old = serde_json::json!({"revision":1,"assets":[{"id":"hub","version":version,"sequence":1,"sha256":"a","size":4}]});
+            let new = serde_json::json!({"revision":2,"assets":[{"id":"hub","version":env!("CARGO_PKG_VERSION"),"sequence":2,"sha256":"b","size":4}]});
+            assert!(version_newer(env!("CARGO_PKG_VERSION"), version));
+            assert_eq!(
+                choose_indices(Some(old.clone()), [Ok(old), Ok(new.clone())], |_| Ok(())).unwrap(),
+                new
+            );
+        }
+    }
+    #[test]
     fn corrected_release_replaces_mistyped_cached_version_without_allowing_rollback() {
         let old = serde_json::json!({"revision":1,"assets":[{"id":"hub","version":"0.99.106","sequence":1,"sha256":"a","size":4}]});
         let new = serde_json::json!({"revision":2,"assets":[{"id":"hub","version":"0.9.107","sequence":2,"sha256":"b","size":4}]});

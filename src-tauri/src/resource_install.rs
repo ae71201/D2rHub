@@ -90,11 +90,18 @@ pub fn tree_hash(root: &Path) -> Result<String, String> {
             .replace('\\', "/");
         h.update((name.len() as u64).to_le_bytes());
         h.update(name.as_bytes());
-        let hash = if name == "generation-manifest.json" {
+        let hash = if matches!(
+            name.as_str(),
+            "generation-manifest.json" | "enhancement-manifest.json"
+        ) {
             let mut v: serde_json::Value =
                 serde_json::from_slice(&fs::read(&p).map_err(err)?).map_err(err)?;
-            if let Some(o) = v.as_object_mut() {
-                o.remove("mod_directory");
+            if name == "generation-manifest.json" {
+                if let Some(o) = v.as_object_mut() {
+                    o.remove("mod_directory");
+                }
+            } else {
+                v.sort_all_objects();
             }
             format!("{:x}", Sha256::digest(serde_json::to_vec(&v).map_err(err)?))
         } else {
@@ -321,6 +328,22 @@ mod tests {
         fs::write(old.join("file"), b"keep").unwrap();
         assert!(replace(&r.0, &r.0.join("missing"), &old).is_err());
         assert_eq!(fs::read(old.join("file")).unwrap(), b"keep");
+    }
+    #[test]
+    fn enhanced_manifest_formatting_is_normalized_but_content_is_protected() {
+        let r = Scratch::new();
+        let path = r.0.join("enhancement-manifest.json");
+        fs::write(&path, br#"{"profile":"main","files":{"a":"original"}}"#).unwrap();
+        let before = tree_hash(&r.0).unwrap();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        assert_eq!(before, tree_hash(&r.0).unwrap());
+        fs::write(&path, br#"{"files":{"a":"original"},"profile":"main"}"#).unwrap();
+        assert_eq!(before, tree_hash(&r.0).unwrap());
+        value["files"]["a"] = "edited".into();
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_ne!(before, tree_hash(&r.0).unwrap());
     }
     #[test]
     fn generated_bins_do_not_block_updates_but_modified_text_still_does() {

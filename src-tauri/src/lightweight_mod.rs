@@ -7,6 +7,7 @@ use std::{
 };
 
 const MANIFEST: &str = "generation-manifest.json";
+const ENHANCED_MANIFEST: &str = "enhancement-manifest.json";
 const PRODUCER: &str = "d2r-native-bundled-generator";
 #[derive(Clone, Debug)]
 pub(crate) struct Metadata {
@@ -81,9 +82,9 @@ fn regular(path: &Path) -> Result<fs::Metadata, String> {
     }
     Ok(metadata)
 }
-fn read_report(root: &Path) -> Result<Value, String> {
+fn read_report(root: &Path, filename: &str) -> Result<Value, String> {
     regular(root)?;
-    let path = root.join(MANIFEST);
+    let path = root.join(filename);
     let m = regular(&path)?;
     if !m.is_file() || m.len() > 32 * 1024 * 1024 {
         return Err("生成清单大小或类型无效".into());
@@ -96,8 +97,19 @@ fn metadata(report: &Value, root: &Path, name: &str) -> Result<Metadata, String>
     let profile = report["profile"].as_str().ok_or("生成清单缺少方案")?;
     let args = arguments(profile, name)?;
     let legacy_args = generator_arguments(profile, name)?;
-    if report["producer"] != PRODUCER
-        || report["mode"] != "bundled_rebuild"
+    let enhanced = matches!(
+        report["producer"].as_str(),
+        Some("d2r-litehub-plus-personal-builder" | "d2rhub-local-mod-builder")
+    );
+    let valid_source = if enhanced {
+        matches!(
+            (name, profile),
+            ("LiteHub", "main") | ("BoHub", "filler") | ("NullHub", "min")
+        )
+    } else {
+        report["producer"] == PRODUCER && report["mode"] == "bundled_rebuild"
+    };
+    if !valid_source
         || report["mod_name"] != name
         || (report["launch_arguments"] != args
             && report["launch_arguments"] != legacy_args
@@ -105,6 +117,16 @@ fn metadata(report: &Value, root: &Path, name: &str) -> Result<Metadata, String>
         || report["verified_output_integrity"] != true
     {
         return Err("轻量 Mod 清单与名称或启动参数不一致".into());
+    }
+    if enhanced {
+        let version = read_report(root, "mod-version.json")?;
+        if report["mod_version"].as_str().is_none_or(str::is_empty)
+            || version["mod_name"] != name
+            || version["mod_version"] != report["mod_version"]
+            || version["game_data_version"] != report["game_data_version"]
+        {
+            return Err("成品版本记录与身份清单不一致".into());
+        }
     }
     let mpq = root.join(format!("{name}.mpq"));
     regular(&mpq)?;
@@ -138,11 +160,23 @@ fn metadata(report: &Value, root: &Path, name: &str) -> Result<Metadata, String>
     })
 }
 pub(crate) fn inspect(root: &Path, name: &str) -> Result<Option<Metadata>, String> {
-    if !root.join(MANIFEST).exists() {
+    let filename = if root.join(MANIFEST).exists() {
+        MANIFEST
+    } else if root.join(ENHANCED_MANIFEST).exists() {
+        ENHANCED_MANIFEST
+    } else {
         return Ok(None);
-    }
-    let report = read_report(root)?;
-    if report["producer"] != PRODUCER {
+    };
+    let report = read_report(root, filename)?;
+    let known_source = if filename == MANIFEST {
+        report["producer"] == PRODUCER
+    } else {
+        matches!(
+            report["producer"].as_str(),
+            Some("d2r-litehub-plus-personal-builder" | "d2rhub-local-mod-builder")
+        )
+    };
+    if !known_source {
         return Ok(None);
     }
     metadata(&report, root, name).map(Some)
@@ -215,6 +249,49 @@ mod tests {
     fn names_alone_are_not_profile_identity() {
         let (root, _) = fixture();
         fs::remove_file(root.join(MANIFEST)).unwrap();
+        assert!(inspect(&root, "NullHub").unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn enhanced_products_require_matching_identity_version_and_profile() {
+        let (root, mut report) = fixture();
+        fs::remove_file(root.join(MANIFEST)).unwrap();
+        report["producer"] = "d2rhub-local-mod-builder".into();
+        report["mod_version"] = "2026.09.28.3".into();
+        let version = serde_json::json!({"mod_name":"NullHub", "mod_version":"2026.09.28.3", "game_data_version":"93854"});
+        fs::write(
+            root.join("mod-version.json"),
+            serde_json::to_vec(&version).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            root.join(ENHANCED_MANIFEST),
+            serde_json::to_vec(&report).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inspect(&root, "NullHub").unwrap().unwrap().profile, "min");
+        for (field, value) in [
+            ("profile", "main"),
+            ("mod_name", "BoHub"),
+            ("mod_version", "wrong"),
+            ("game_data_version", "99999"),
+        ] {
+            let mut bad = report.clone();
+            bad[field] = value.into();
+            fs::write(
+                root.join(ENHANCED_MANIFEST),
+                serde_json::to_vec(&bad).unwrap(),
+            )
+            .unwrap();
+            assert!(inspect(&root, "NullHub").is_err(), "{field}");
+        }
+        report["producer"] = "unknown".into();
+        fs::write(
+            root.join(ENHANCED_MANIFEST),
+            serde_json::to_vec(&report).unwrap(),
+        )
+        .unwrap();
         assert!(inspect(&root, "NullHub").unwrap().is_none());
         fs::remove_dir_all(root).unwrap();
     }
