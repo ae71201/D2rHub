@@ -2,12 +2,17 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 import subprocess
 import requests
 
 CONFIG = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'D2RHub-Publisher' / 'config.json'
+
+
+class SourceCommitMismatch(RuntimeError):
+    """A software release cannot be tied to its prepared source snapshot."""
 
 def windows_file_version(path):
     import ctypes
@@ -75,17 +80,47 @@ class Platform:
         if not r.ok: raise RuntimeError(f'{self.name}: {method} {suffix}: HTTP {r.status_code}')
         return r.json() if r.content else None
 
-    def release(self, tag, create=True):
+    def release(self, tag, create=True, source_commit=None):
+        tagged = None
+        if source_commit is not None:
+            if self.name != 'github' or not re.fullmatch(r'[0-9a-f]{40}', source_commit):
+                raise SourceCommitMismatch('Software source must be a full GitHub commit SHA')
+            source = self.call('GET', '/commits/' + source_commit, missing=True)
+            if not source or source.get('sha') != source_commit:
+                raise SourceCommitMismatch('Prepared source commit is unavailable on GitHub; push the verified source first')
+            # target_commitish is ignored by GitHub when the tag already exists.
+            # Resolve the actual tag, including annotated tags, before any upload.
+            # The refs endpoint returns 404 for an absent tag; /commits/<tag>
+            # can return 422 for a ref that has not been created yet.
+            reference = self.call('GET', '/git/ref/tags/' + tag, missing=True)
+            tagged = self.call('GET', '/commits/' + tag) if reference else None
+            if tagged and tagged.get('sha') != source_commit:
+                raise SourceCommitMismatch('Existing software tag points to a different source commit')
         r = self.call('GET', '/releases/tags/' + tag, missing=True)
+        if r is not None and source_commit is not None and tagged is None:
+            raise SourceCommitMismatch('Existing software release has no verifiable source tag')
         if r is None and create:
-            data = dict(tag_name=tag, name=tag, body='D2RHub public download assets. Availability is controlled by the verified update manifests.', target_commitish='main', prerelease=True)
+            body = 'D2RHub public download assets. Availability is controlled by the verified update manifests.'
+            if source_commit:
+                body += f'\n\nSource commit: {source_commit}'
+            data = dict(tag_name=tag, name=tag, body=body, target_commitish=source_commit or 'main', prerelease=True)
             if self.name == 'github': data.update(make_latest='false')
             r = self.call('POST', '/releases', json=data)
         return r
 
     def assets(self, release):
-        endpoint = f"/releases/{release['id']}/" + ('assets?per_page=100' if self.name == 'github' else 'attach_files?page=1&per_page=100')
-        return self.call('GET', endpoint)
+        # Index releases retain one immutable snapshot per publication. They can
+        # exceed a single API page even when software releases have few assets.
+        collection = 'assets' if self.name == 'github' else 'attach_files'
+        assets = []
+        page = 1
+        while True:
+            endpoint = f"/releases/{release['id']}/{collection}?page={page}&per_page=100"
+            batch = self.call('GET', endpoint)
+            assets.extend(batch)
+            if len(batch) < 100:
+                return assets
+            page += 1
 
     def upload(self, release, path):
         path = Path(path)

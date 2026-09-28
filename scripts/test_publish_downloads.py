@@ -12,7 +12,7 @@ publisher=importlib.util.module_from_spec(spec);spec.loader.exec_module(publishe
 class FakePlatform:
     stores={}; uploads=[]; fail_gitee=False
     def __init__(self,name,repo,token):self.name=name;self.repo=repo;self.base='https://'+name;self.stores.setdefault(name,{})
-    def release(self,tag,create=True):
+    def release(self,tag,create=True,source_commit=None):
         if self.name=='gitee' and self.fail_gitee:raise RuntimeError('mirror offline')
         store=self.stores[self.name]
         if tag not in store and create:store[tag]={'id':tag,'tag_name':tag,'name':tag,'body':'pending','files':{}}
@@ -33,7 +33,7 @@ class PublishingTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.file=self.root/'Hub-1.0.0-setup.exe';self.file.write_bytes(b'stable bytes')
         FakePlatform.stores={};FakePlatform.uploads=[];FakePlatform.fail_gitee=False
-        self.spec={'kind':'software','product':'D2RHub','platform':'windows-x86_64','assets':[{'id':'hub','version':'1.0.0','file':str(self.file),'release_tag':'v1.0.0'}]}
+        self.spec={'kind':'software','product':'D2RHub','platform':'windows-x86_64','assets':[{'id':'hub','version':'1.0.0','file':str(self.file),'release_tag':'v1.0.0','source_commit':'a'*40}]}
         self.patches=[patch.object(publisher,'Platform',FakePlatform),patch.object(publisher,'credentials',return_value=({'github_repo':'a/b','gitee_repo':'a/b'},'not-a-real-token')),patch.object(publisher,'anonymous_verify',return_value=True),patch.object(publisher,'anonymous_json',side_effect=anonymous_json),patch.object(publisher,'windows_file_version',return_value='1.0.0')]
         for p in self.patches:p.start()
     def tearDown(self):
@@ -61,6 +61,14 @@ class PublishingTests(unittest.TestCase):
     def test_mislabeled_installer_is_rejected_before_upload(self):
         self.spec['assets'][0]['version']='2.0.0'
         with self.assertRaises(RuntimeError):self.publish(1)
+        self.assertEqual(FakePlatform.uploads,[])
+    def test_missing_source_is_rejected_before_upload(self):
+        del self.spec['assets'][0]['source_commit']
+        with self.assertRaises(publisher.SourceCommitMismatch):self.publish(1)
+        self.assertEqual(FakePlatform.uploads,[])
+    def test_wrong_source_tag_stops_both_mirrors_before_upload(self):
+        with patch.object(FakePlatform,'release',side_effect=publisher.SourceCommitMismatch('wrong source')):
+            with self.assertRaises(publisher.SourceCommitMismatch):self.publish(1)
         self.assertEqual(FakePlatform.uploads,[])
     def test_workflow_skips_identical_mods_even_with_new_generated_tag(self):
         self.spec={'kind':'resources','skip_unchanged':True,'assets':[

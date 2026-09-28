@@ -22,6 +22,72 @@ LOCAL = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'D2RHub-Publish
 DEFAULT_CONFIG = LOCAL / 'workflow.json'
 PROFILES = {'LiteHub': 'main', 'BoHub': 'filler', 'NullHub': 'min'}
 MARKERS = {'d2rhub-mod-manifest.json', 'audio-telemetry-manifest.json'}
+QUALITY_POLICY = 'release-quality-v1'
+RUST_CHECKS = (
+    ('rust-format', ('cargo', 'fmt', '--all', '--', '--check')),
+    ('rust-lint', ('cargo', 'clippy', '--locked', '--all-targets', '--all-features', '--', '-D', 'warnings')),
+    ('rust-tests', ('cargo', 'test', '--locked')),
+)
+
+
+def quality_commands(product):
+    """Versioned policy; do not change v1 when adding a future release policy."""
+    if product == 'hub':
+        return [
+            ('frontend-dependencies', ('npm', 'ci'), '.'),
+            ('frontend-check', ('npm', 'run', 'check'), '.'),
+            *((name, command, 'src-tauri') for name, command in RUST_CHECKS),
+        ]
+    if product == 'processor':
+        return [(name, command, '.') for name, command in RUST_CHECKS]
+    raise RuntimeError(f'未知源码质量检查目标：{product}')
+
+
+def utc_timestamp():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def verify_source_snapshot(product, source, commit, destination, environment):
+    """Check precisely the archived tree that will be passed to the packager.
+
+    Failure evidence stays in the preparation directory for diagnosis. No
+    resumable job is created until every required gate and build has succeeded.
+    """
+    if not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise RuntimeError('质量检查需要完整的来源提交。')
+    snapshot = source.relative_to(destination).as_posix()
+    archive = destination / f'{product}-source.zip'
+    report_path = destination / f'verification-{product}.json'
+    report = {
+        'schema': 1, 'policy': QUALITY_POLICY, 'product': product,
+        'source_commit': commit, 'snapshot': snapshot,
+        'source_archive': {'file': archive.name, 'sha256': digest(archive)},
+        'status': 'running', 'started_at': utc_timestamp(), 'commands': [],
+    }
+    write_json(report_path, report)
+    for name, command, relative in quality_commands(product):
+        working_directory = source if relative == '.' else source / relative
+        step = {
+            'id': name, 'command': list(command),
+            'working_directory': working_directory.relative_to(destination).as_posix(),
+            'source_commit': commit, 'started_at': utc_timestamp(), 'status': 'running',
+        }
+        report['commands'].append(step)
+        write_json(report_path, report)
+        print(f'质量检查 [{product}/{name}]：{" ".join(command)}', flush=True)
+        try:
+            run(command, working_directory, env=environment)
+        except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+            step.update(status='failed', exit_code=getattr(error, 'returncode', None),
+                        completed_at=utc_timestamp(), error=str(error))
+            report.update(status='failed', completed_at=utc_timestamp())
+            write_json(report_path, report)
+            raise RuntimeError(f'{product} 质量检查 {name} 未通过，已停止打包；记录：{report_path}') from error
+        step.update(status='passed', exit_code=0, completed_at=utc_timestamp())
+        write_json(report_path, report)
+    report.update(status='passed', completed_at=utc_timestamp())
+    write_json(report_path, report)
+    return report_path.name
 
 
 def read_json(path):
@@ -155,20 +221,21 @@ def package_mod(root, name, target):
 
 def build_software(destination):
     commit = source_commit(ROOT)
-    version = read_json(ROOT / 'package.json')['version']
-    with (ROOT / 'src-tauri/Cargo.toml').open('rb') as stream:
+    source = source_snapshot(ROOT, destination, 'hub', commit)
+    version = read_json(source / 'package.json')['version']
+    with (source / 'src-tauri/Cargo.toml').open('rb') as stream:
         rust_version = tomllib.load(stream)['package']['version']
-    lock = read_json(ROOT / 'package-lock.json')
-    versions = [rust_version, read_json(ROOT / 'src-tauri/tauri.conf.json')['version'],
+    lock = read_json(source / 'package-lock.json')
+    versions = [rust_version, read_json(source / 'src-tauri/tauri.conf.json')['version'],
                 lock['version'], lock['packages']['']['version']]
     if not re.fullmatch(r'\d+\.\d+\.\d+', version) or any(v != version for v in versions):
         raise RuntimeError('Hub 版本号必须为正式版本，并在 npm、Cargo、Tauri 配置中一致。')
     target = destination / 'build-hub'
-    source = source_snapshot(ROOT, destination, 'hub', commit)
     environment = os.environ.copy()
     environment['CARGO_TARGET_DIR'] = str(target)
-    run(['npm', 'ci'], source)
-    run(['npm', 'run', 'build:nsis'], source, env=environment)
+    verify_source_snapshot('hub', source, commit, destination, environment)
+    # npm consumes the first separator; Tauri forwards the second to Cargo.
+    run(['npm', 'run', 'build:nsis', '--', '--', '--locked'], source, env=environment)
     candidates = list((target / 'release/bundle/nsis').glob('*-setup.exe'))
     if len(candidates) != 1:
         raise RuntimeError('未得到唯一的 NSIS 安装包。')
@@ -180,20 +247,24 @@ def build_software(destination):
     if source_commit(ROOT) != commit:
         raise RuntimeError('构建过程中 Hub 源码发生变化，请重新准备。')
     return {'kind': 'software', 'product': 'D2RHub', 'platform': 'windows-x86_64',
-            'assets': [{'id': 'hub', 'version': version, 'file': str(path), 'release_tag': 'v' + version}]}, commit
+            'assets': [{'id': 'hub', 'version': version, 'file': str(path),
+                        'release_tag': 'v' + version, 'source_commit': commit}]}, commit
 
 
 def build_processor(repo, destination):
     repo = Path(repo)
     commit = source_commit(repo)
-    with (repo / 'Cargo.toml').open('rb') as stream:
+    source = source_snapshot(repo, destination, 'processor', commit)
+    with (source / 'Cargo.toml').open('rb') as stream:
         version = tomllib.load(stream)['package']['version']
     target = destination / 'build-processor'
-    source = source_snapshot(repo, destination, 'processor', commit)
+    environment = os.environ.copy()
+    environment['CARGO_TARGET_DIR'] = str(target)
+    verify_source_snapshot('processor', source, commit, destination, environment)
     run(['cargo', 'build', '--locked', '--release', '--bin', 'd2r-audio-mod',
-         '--target-dir', target], source)
+         '--target-dir', target], source, env=environment)
     executable = target / 'release/d2r-audio-mod.exe'
-    actual = run([executable, '--version'], repo, capture=True)
+    actual = run([executable, '--version'], source, capture=True)
     if not processor_version_matches(actual, version):
         raise RuntimeError('加工器实际版本与 Cargo.toml 不符。')
     path = destination / f'd2r-audio-mod-{version}-windows-x64.exe'
@@ -215,10 +286,11 @@ def prepare(target, cfg):
     folder = Path(cfg['output_root']) / (stamp + '-' + uuid.uuid4().hex[:8])
     folder.mkdir(parents=True, exist_ok=False)
     print(f'准备目录：{folder}', flush=True)
-    job = {'schema': 1, 'target': target, 'sources': {}, 'specs': [], 'files': {}}
+    job = {'schema': 2, 'target': target, 'sources': {}, 'specs': [], 'files': {}, 'verification': {}}
     if target in ('software', 'all'):
         spec, commit = build_software(folder)
         job['sources']['hub_commit'] = commit
+        job['verification']['hub'] = 'verification-hub.json'
         write_json(folder / 'software.json', spec)
         job['specs'].append('software.json')
     if target in ('processor', 'mods', 'all'):
@@ -230,6 +302,7 @@ def prepare(target, cfg):
             asset, commit = build_processor(cfg['processor_repo'], folder)
             spec['assets'].append(asset)
             job['sources']['processor_commit'] = commit
+            job['verification']['processor'] = 'verification-processor.json'
         if target in ('mods', 'all'):
             tag = 'mod-resources-' + stamp
             for name, profile in PROFILES.items():
@@ -256,7 +329,7 @@ def prepare(target, cfg):
 def verify_job(folder):
     folder = Path(folder).resolve()
     job = read_json(folder / 'job.json')
-    if job.get('schema') != 1 or not job.get('specs'):
+    if job.get('schema') not in (1, 2) or not job.get('specs'):
         raise RuntimeError('无效的发布任务。')
     for name, identity in job['files'].items():
         path = folder / name
@@ -264,14 +337,57 @@ def verify_job(folder):
             raise RuntimeError('发布任务包含非法文件路径。')
         if path.stat().st_size != identity['size'] or digest(path) != identity['sha256']:
             raise RuntimeError(f'准备后的文件已改变，禁止继续发布：{name}')
+    required_verification = set()
     for name in job['specs']:
         if name not in job['files']:
             raise RuntimeError('发布配置没有完整性记录。')
-        for asset in read_json(folder / name)['assets']:
+        spec = read_json(folder / name)
+        for asset in spec['assets']:
             path = Path(asset['file'])
             if path.resolve().parent != folder or path.name not in job['files']:
                 raise RuntimeError('发布文件不在本次准备目录中。')
+            if spec['kind'] == 'software':
+                required_verification.add('hub')
+                source = job.get('sources', {}).get('hub_commit', '')
+                if (not re.fullmatch(r'[0-9a-f]{40}', source)
+                        or asset.get('source_commit', source) != source):
+                    raise RuntimeError('软件发布配置与任务来源提交不一致。')
+            elif asset.get('id') == 'processor':
+                required_verification.add('processor')
+    if job['schema'] == 2:
+        verify_quality_evidence(folder, job, required_verification)
     return job
+
+
+def verify_quality_evidence(folder, job, required):
+    """Resume validates saved evidence, never reruns commands or reads source trees."""
+    if not isinstance(job.get('verification'), dict) or set(job['verification']) != required:
+        raise RuntimeError('发布任务缺少完整的质量检查记录。')
+    for product in sorted(required):
+        name = f'verification-{product}.json'
+        if job['verification'][product] != name or name not in job['files']:
+            raise RuntimeError('质量检查记录没有完整性保护。')
+        report = read_json(folder / name)
+        commit = job.get('sources', {}).get(f'{product}_commit', '')
+        archive = f'{product}-source.zip'
+        expected_commands = quality_commands(product)
+        if (report.get('schema') != 1 or report.get('policy') != QUALITY_POLICY
+                or report.get('product') != product or report.get('status') != 'passed'
+                or not re.fullmatch(r'[0-9a-f]{40}', commit)
+                or report.get('source_commit') != commit
+                or report.get('snapshot') != f'source-{product}'
+                or archive not in job['files']
+                or report.get('source_archive') != {'file': archive, 'sha256': job['files'][archive]['sha256']}
+                or len(report.get('commands', [])) != len(expected_commands)):
+            raise RuntimeError('质量检查结果与本次发布源码不一致。')
+        for step, (identifier, command, relative) in zip(report['commands'], expected_commands):
+            working_directory = f'source-{product}' + (f'/{relative}' if relative != '.' else '')
+            if (step.get('id') != identifier or step.get('command') != list(command)
+                    or step.get('working_directory') != working_directory
+                    or step.get('source_commit') != commit or step.get('status') != 'passed'
+                    or step.get('exit_code') != 0
+                    or not step.get('started_at') or not step.get('completed_at')):
+                raise RuntimeError('质量检查命令未完整通过，禁止继续发布。')
 
 
 def describe(folder, job):
@@ -308,6 +424,14 @@ def publish_job(folder, cfg, promote=False):
     software = None
     for name in job['specs']:
         spec = read_json(folder / name)
+        if spec['kind'] == 'software':
+            # Older prepared jobs already recorded hub_commit in job.json. Use
+            # it without rebuilding or modifying their integrity-checked files.
+            source = job.get('sources', {}).get('hub_commit')
+            for asset in spec['assets']:
+                if asset.get('source_commit', source) != source:
+                    raise RuntimeError('软件发布配置与任务来源提交不一致。')
+                asset['source_commit'] = source
         output = attempt / spec['kind']
         publisher.publish(spec, revision, output, Path(cfg['publisher_config']))
         report = read_json(output / 'publish-report.json')
@@ -336,8 +460,13 @@ def promote_software(asset, cfg):
         current = latest['tag_name'].removeprefix('v')
         if re.fullmatch(r'\d+\.\d+\.\d+', current) and tuple(map(int, current.split('.'))) > version:
             raise RuntimeError('已有更高正式软件版本，拒绝降低 latest。')
+    source = asset.get('source_commit', '')
+    if not re.fullmatch(r'[0-9a-f]{40}', source):
+        raise RuntimeError('正式发布需要完整的软件来源提交。')
+    github.release(asset['release_tag'], create=False, source_commit=source)
     for platform in (Platform('gitee', settings['gitee_repo'], token), github):
-        release = platform.release(asset['release_tag'], create=False)
+        source = asset.get('source_commit') if platform.name == 'github' else None
+        release = platform.release(asset['release_tag'], create=False, source_commit=source)
         if not release:
             raise RuntimeError('缺少已验证的软件 Release。')
         body = {'tag_name': release['tag_name'], 'name': release['name'],
