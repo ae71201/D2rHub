@@ -28,7 +28,6 @@
 
 以下是有日期或阶段边界的历史证据，不能代替当前实现与验证：
 
-- [2026-08-31 代码审查](code-review-2026-08-31.md)。
 - [音频遥测 v4](AUDIO_TELEMETRY_V4.md)：旧协议，当前使用 v7。
 - [桌宠开发记录](pet-progress.md)与[桌宠视觉验收](pet-visual-review/README.md)。
 - [手册截图来源](guide-images/README.md)：包含截图日期、模拟状态和更新限制。
