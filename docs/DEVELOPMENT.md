@@ -1,168 +1,104 @@
-# D2RHub 开发指南
+# 开发指南
 
-本文档面向希望在本地构建、测试或贡献 D2RHub 的开发者。D2RHub 目前只支持
-Windows 桌面环境。
+D2RHub 是 React / TypeScript + Tauri / Rust 的 Windows 桌面应用。先阅读 [架构说明](architecture.md) 和 [贡献指南](../CONTRIBUTING.md)，领域术语见 [CONTEXT.md](../CONTEXT.md)。
 
-## 环境要求
+## 环境
 
-- Windows 10 或 Windows 11（64 位）
-- Node.js 20 或更高版本，以及随 Node.js 安装的 npm
-- Rust stable 的 `x86_64-pc-windows-msvc` 工具链
-- Visual Studio Build Tools，包含“使用 C++ 的桌面开发”和 Windows SDK
-- Microsoft Edge WebView2 Runtime
-- Git
+- Windows 10 / 11 x64；进程音频识别需要较新的 Windows 11。
+- Node.js 20 或更新版本、npm。
+- Rust stable，`x86_64-pc-windows-msvc` 工具链。
+- Visual Studio Build Tools 的 C++ 桌面开发与 Windows SDK。
+- Microsoft Edge WebView2 Runtime、Git。
+- 运行发布器测试另需 Python 3.10+ 及 `scripts/publisher-requirements.txt`。
 
-Tauri 的 Windows 前置条件以
-[Tauri 官方文档](https://v2.tauri.app/start/prerequisites/#windows)为准。
+Windows 构建前置条件详见 [Tauri 文档](https://v2.tauri.app/start/prerequisites/#windows)。
 
-## 获取源码与安装依赖
+## 本地运行
 
 ```powershell
 git clone https://github.com/gjy991229/D2RHub.git
 Set-Location D2RHub
 npm ci
+npm run tauri dev
 ```
 
-`npm ci` 会严格按照 `package-lock.json` 安装前端与 Tauri CLI 依赖。Rust 依赖在
-首次运行 Cargo 命令时按照 `src-tauri/Cargo.lock` 下载并编译。
+`npm run dev` 只启动 Vite；实际账号、Mod 和进程操作需要 Tauri。仅检查页面时使用 [开发预览](../dev/README.md)，其中的数据是模拟状态，不代表真实账号或游戏验收。
 
-## 常用命令
+## 验证与构建
 
 ```powershell
-# 启动 Vite 前端开发服务器
-npm run dev
-
-# 运行前端快捷键规范化测试
-npm test
-
-# TypeScript 检查并生成前端生产构建
+# 一次运行 TypeScript、前端测试、手册和发布器检查
+python -m pip install -r scripts/publisher-requirements.txt
+npm run check
+# 单独生成前端生产产物
 npm run build
 
-# 运行 Rust 库测试与严格静态检查
-Set-Location src-tauri
-cargo test --lib --all-features
-cargo clippy --all-targets --all-features -- -D warnings
-Set-Location ..
+# Rust 规则、兼容迁移和平台适配
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 
-# 从相邻的独立仓库构建并更新随安装包分发的生成器 sidecar
-npm run sync:audio-mod
-
-# 构建桌面安装包（正式 RC 命令）
-npm run tauri build
-
-# 仅构建 NSIS 安装包
+# 本地桌面安装器
 npm run build:nsis
-
-# 验证说明书全部路线、图库引用与安装包资源清单
-npm run check:guide
+# 同时生成配置中启用的 MSI 与 NSIS
+npm run build:desktop
 ```
 
-打包前会自动执行说明书资源检查，遍历分步上手路线及图库，阻止漏打包或未使用的图示资源。
-Windows 桌面仅需要 Rust `lib` 链接进主程序，不生成独立 `cdylib` / `staticlib`。
-旧构建目录若残留 `DirectML.dll` 或 `d2rhub_lib.dll`，需先移出再打包；它们不是当前程序的
-运行依赖，却可能被 MSI 收集。发布前检查 MSI/NSIS 文件清单，确保不包含这两个 DLL。
+构建安装器前自动检查离线手册的路由、截图和资源清单。普通界面修改验证前端测试与生产构建；Rust 修改还需 Rust 测试、格式和严格 Clippy；发布链修改需发布器测试。真实 D2R 启动、自动跟房、音频识别和旧数据升级仍需 [实机验收](REFACTOR_ACCEPTANCE.md)。
 
-桌面程序始终包含 SQLite、WAV 诊断录音和 Windows WASAPI 声纹识别依赖。普通前端修改通常只需
-运行 `npm test` 和 `npm run build`；涉及 Rust 代码时还必须运行完整 Rust 测试和严格 Clippy。
+桌面程序只链接 Rust `lib`，不分发独立 `cdylib` / `staticlib`。旧目录残留的 `DirectML.dll` 或 `d2rhub_lib.dll` 不是运行依赖；正式发布使用独立源码快照和构建目录，避免收集旧产物。
 
-`npm test` 不只运行组件测试，也会执行架构边界检查。不要通过放宽这些规则来绕过模块依赖错误；
-如果边界确实需要变化，应先更新架构决策和对应测试。
+## 目录归属
 
-## 架构分层
+| 路径 | 责任 |
+| --- | --- |
+| `src/features/` | 功能界面、控制器、文案与前端用例 |
+| `src/platform/tauri/` | 唯一的前端 Tauri command/event 网关 |
+| `src/components/` | 通用组件及待迁移的旧组件 |
+| `src-tauri/src/domain/` | 稳定模型与领域规则 |
+| `src-tauri/src/application/` | 应用用例、核心编排和配置事务 |
+| `src-tauri/src/infrastructure/` | 文件、配置、Windows 适配 |
+| `src-tauri/src/capabilities/` | 第一方扩展及运行生命周期 |
+| `src-tauri/src/commands/` | IPC 适配 |
+| `src-tauri/src/rune_audio/` | 音频协议、捕获、解码和掉落跟踪 |
+| `public/`、`src-tauri/icons/` | 前端静态素材与安装器图标 |
+| `docs/` | 文档、手册截图、离线手册与统计页 |
+| `dev/` | 开发预览与历史设计稿；不进入发行构建 |
+| `resources/` | 版本化分发清单，不存放二进制资源 |
+| `scripts/` | 验证、打包、发布与性能测量 |
+| `.github/workflows/` | 公开 CI 验证 |
 
-D2RHub 是模块化单体，不在提权进程中加载第三方 DLL 或脚本。产品和代码都遵循同一分层：
+Mod 的功能协议、参数与目录模型、完整性验证、文件事务、加工器执行已分别归属领域或适配模块；设置使用编辑会话及独立加工控制器。具体依赖和生命周期以 [架构说明](architecture.md) 为准。
 
-1. **多开核心（始终启用）**：账号身份、启动上下文、账号/主机租约、实例注册、启动与退出。
-2. **平台服务（必需）**：配置事务、文件恢复、Windows 适配、IPC、日志和生命周期监督。
-3. **可选能力（可开关）**：桌宠、悬浮窗、统计、声纹以及自动跟房等独立功能。
-4. **控制界面**：主界面操作多开核心；设置中心组合各核心区域和模块面板。
+### 新增扩展与设置
 
-依赖只能由界面指向应用/领域，由基础设施实现应用层定义的端口。可选能力只能使用公开核心端口，
-不能直接访问其他模块的命令实现或私有状态。完整约束及取舍见
-[ADR 0002](adr/0002-core-and-capability-module-architecture.md)。
+应用是统一发布的模块化单体，不动态加载第三方 DLL 或脚本。多开核心始终可用，扩展通过静态注册表添加。新能力必须有稳定 ID、类型化配置、幂等迁移、可回收的 worker/listener/window、健康状态、薄 IPC 和前端网关。停用后必须释放对应资源。
 
-辅助 WebView 在 `tauri.conf.json` 中保留完整窗口规格，但使用 `create: false`，避免未启用模块在
-启动时创建 renderer。启动阶段只为已启用功能创建对应窗口；运行期间第一次启用时通过统一窗口
-工厂创建，停用时销毁 renderer 和原生窗口，再次启用时按静态规格重建。窗口位置保存在独立的
-版本化文件中。窗口创建、位置恢复和 capability worker 的生命周期
-必须保持独立，不能由前端绕过原生可见性服务直接创建窗口。
+设置按“游戏、扩展、应用”组织；新增面板注册到 `settingsRegistry.ts`，不要向设置壳组件堆叠业务。扩展功能是 Hub 运行服务，Mod 是游戏目录内的内容，二者不共享启停语义。
 
-## 项目结构
+模块配置保存在 `%APPDATA%\D2RHub\modules\<module-id>\config.json`。使用 `ModuleConfigStore` 的 generation/CAS、staging、backup 与恢复能力，不向全局配置继续堆叠模块字段。旧配置只迁移一次，保留兼容且重复运行幂等。
 
-- `src/features/`：按功能组织的 React 面板、类型化文案、验证和前端用例。
-- `src/platform/tauri/`：前端唯一的 Tauri command/event 网关与契约。
-- `src/components/`：跨功能复用的界面组件和仍在渐进迁移的旧组件。
-- `src-tauri/src/domain/`：不依赖 Tauri 或 Windows 的稳定领域模型与规则。
-- `src-tauri/src/application/`：多开核心、配置事务、能力注册表与应用用例。
-- `src-tauri/src/infrastructure/`：文件事务、模块配置和其他平台适配。
-- `src-tauri/src/capabilities/`：静态注册、可独立启停的第一方能力模块。
-- `src-tauri/src/commands/`：薄 Tauri IPC 适配；不应承载新的业务状态机。
-- `src-tauri/src/rune_audio/`：v7 协议解码、WASAPI 实时识别和掉落生命周期跟踪。
-- `src-tauri/binaries/`：随安装包分发的独立生成器编译产物；其源码不在本仓库。
-- `public/`：Vite 直接复制的运行时图片和 SVG。
-- `docs/`：用户文档、开发文档及应用内离线页面。
-- `.github/workflows/`：公开仓库的 Pull Request 验证 CI。
+辅助 WebView 在 Tauri 配置中保留规格并设置 `create: false`；只在扩展需要时创建，停用时销毁。通过统一窗口工厂恢复位置，界面不得绕过原生可见性服务。
 
-### 新增可选能力
+### 自动跟房边界
 
-一个新能力至少应同时提供：稳定 ID、类型化配置与 schema 迁移、幂等 `start`/`stop`、健康状态、
-自己拥有并可回收的 worker/listener/window、薄 IPC 命令、前端 gateway，以及注册式设置面板。
-停用后不得遗留线程、快捷键、窗口或机器资源。
+当前使用后台按键与同步粘贴。主号和本轮小号预填表单，主号先提交，小号在跟随时提交 Enter。物理 Ctrl、剪贴板、热键暂停与按键释放仍需协调。房名和密码完成后保留在剪贴板；不恢复旧内容。配置保留必要旧字段供迁移，新增行为需真实游戏验证，不能由模拟页面推断成功。
 
-模块专属配置写入 `%APPDATA%\D2RHub\modules\<module-id>\config.json`。必须使用共享
-`ModuleConfigStore` 的 generation/CAS、staging、backup 和自动恢复能力；不要把新模块字段塞回
-全局 v9 envelope。迁移旧字段时应只导入一次、保留旧值供降级使用，并保证重复启动幂等。
+## 资源与生成文件
 
-策略 v25 统一采用后台按键与同步粘贴，删除前台鼠标适配器、坐标布局解析器及其独立时序。
-旧配置中的 `input_method` 和 `foreground_timing` 由 Serde 忽略，版本迁移通过原有
-CAS 流程持久化，其他设置保留。后台同步预填继续使用 `physical_input.rs` 管理物理
-Ctrl、剪贴板、热键暂停及输入释放；桌面输入锁由后台适配器持有，不再依赖鼠标模块。
+资源来源、授权和打包边界见 [资源目录说明](../resources/README.md)。加工器属于独立的 [d2r-audio-mod 仓库](https://github.com/gjy991229/d2r-audio-mod)，按需下载安装，不在 Hub 中提交或内置 EXE；不需要同步 sidecar 才能构建 Hub。
 
-## 本地数据与调试文件
+`node_modules/`、`dist/`、`src-tauri/target/`、`artifacts/`、本地配置、账号 Token、数据库、日志和凭据不提交。`src-tauri/gen/schemas/` 是 Tauri 生成的 IPC/权限描述，变更时需与命令和 capability 一起核对；不要手工改生成文件以绕过约束。
 
-后台跟房改为同步预填：创建快捷键先为主号及本轮可用小号并发呼出创建 / 加入表单，
-主号保持前台，通过物理 Ctrl+A / Ctrl+V 配合后台窗口按键消息整段填写。
-填写期间复用桌面输入互斥、快捷键暂停和按键释放机制。房名与密码直接写入剪贴板，
-不备份或恢复此前内容，完成后保留最后写入的文本；粘贴前仍检查是否被其他程序替换。
-任一参与进程缺少当前密码缓存时整组重新填写密码，否则只更新房名。
-主号先提交；小号保留预填表单，手动跟随或自动延时结束后只投递 Enter，仍遵循
-同时 / 间隔派发设置。预填记录绑定进程创建时间、窗口和房名，未预填或重启的
-小号拒绝直接提交；手动等待期间再次创建会先关闭记录中的旧表单再重新准备。
-跟随阶段不会自动补填。后台逐字符间隔配置保留兼容，但不再用于新粘贴流程，
-设置页隐藏该输入项。前台鼠标流程保持原行为。
-物理 Ctrl 与后台消息协作仍依赖游戏实际输入处理，没有文本读取或粘贴确认；
-本次变更未执行测试或游戏内验证。
+构建会清理 `permissions/autogenerated/` 中完整匹配 Tauri 模板、但命令已被移除的旧文件，使增量构建与干净源码的权限描述一致。修改过的文件、自定义权限、链接目录和子目录不自动清理；不要在生成目录内维护手写权限。
 
-应用运行时可能在用户数据目录保存账号配置、加密 Token、注册表快照、日志、统计
-数据库。这些内容可能包含账号或个人路径，绝不能复制进仓库或附在
-公开 Issue/PR 中。提交日志或截图前必须脱敏。
+## 发布
 
-不要提交：
+唯一维护者入口是根目录 `release.cmd` / `release.ps1`，操作见 [发布指南](release-workflow.md)。公开 CI 使用只读权限运行验证；不会发布安装器。发布脚本源码公开，凭据和本机路径配置留在 Git 外。版本由维护者更新，发布工具不擅自递增。
 
-- `.env`、私钥、Token 或其他凭据；
-- `node_modules/`、`dist/`、`src-tauri/target/`；
-- 本地日志、注册表导出、声纹处理清单和统计数据库；
-- 安装包、个人发布配置或其他临时可执行文件。`src-tauri/binaries/` 中由
-  `npm run sync:audio-mod` 更新的固定 sidecar 是发布所需的例外。
+## 排障
 
-## CI 与发布
-
-公开仓库 CI 仅验证测试和构建，使用只读权限。项目维护者的 Release 自动化不属于
-公开仓库；外部贡献者无需也不能通过公开 CI 发布 D2RHub 安装包。
-
-## 常见问题
-
-### Rust 第一次编译很慢
-
-Tauri、SQLite 和 Windows API 依赖量较大，冷编译可能需要数分钟。后续编译会复用
-`src-tauri/target/` 缓存。
-
-### WebView 窗口无法打开
-
-确认系统已安装 Microsoft Edge WebView2 Runtime，并重新运行 Tauri 开发命令。
-
-### 符文声纹监控无法启动
-
-确认使用 64 位 MSVC Rust 工具链和较新的 Windows 11，目标账号的 D2R 进程已经运行，
-并在“设置中心 → 自动化”选择了相同账号。首次开启时按界面提示一键准备识别 Mod；
-若游戏已经运行，需要重启该账号一次。
+- 首次 Rust 编译较慢，后续复用 `src-tauri/target/`；正式发布使用独立任务目录。
+- WebView 无法打开时检查 WebView2，使用 `npm run tauri dev`，而不是只有 Vite 的 `npm run dev`。
+- 识别无法启动时，在“设置 → 扩展功能”添加“识别与统计”，选择正在运行的账号，准备有声纹功能的 Mod 并重启游戏；检查较新 Windows 11 和游戏声音输出。
+- 分享日志和截图前脱敏，不上传 `%APPDATA%\D2RHub\accounts`。

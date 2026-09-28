@@ -7,6 +7,9 @@ mod commands;
 mod domain;
 mod downloads;
 mod error;
+#[cfg(test)]
+#[path = "../build_support/generated_permissions.rs"]
+mod generated_permission_lifecycle_tests;
 #[doc(hidden)]
 pub mod infrastructure;
 mod input_listener;
@@ -15,6 +18,8 @@ mod lightweight_mod;
 pub mod logger;
 mod mod_catalog;
 mod mod_resources;
+mod mod_waypoints;
+mod mpq_mod;
 mod resource_install;
 mod rune_audio;
 mod rune_data;
@@ -305,8 +310,6 @@ pub fn run() {
             commands::terror_zone::get_next_terror_zone,
             // ── 声纹 Mod 一键准备 ──
             audio_mod::get_audio_mod_setup_state,
-            lightweight_mod::get_lightweight_mod_context,
-            lightweight_mod::generate_lightweight_mod,
             mod_resources::get_mod_resources,
             mod_resources::install_mod_resource,
             mod_resources::open_mod_processor_directory,
@@ -316,8 +319,11 @@ pub fn run() {
             software_update::launch_downloaded_update,
             mod_catalog::get_mod_capsule_pool,
             mod_catalog::scan_mod_capsule_pool,
+            mpq_mod::unpack_mod_capsule,
             mod_catalog::open_mods_directory,
             mod_catalog::set_mod_auto_exit_on_death_enabled,
+            mod_waypoints::get_mod_waypoints,
+            mod_waypoints::save_mod_waypoints,
             mod_catalog::add_mod_capsule,
             mod_catalog::update_mod_capsule,
             mod_catalog::delete_mod_capsule,

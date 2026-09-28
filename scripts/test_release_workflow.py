@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 import sys
+import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -95,6 +97,54 @@ class WorkflowTests(unittest.TestCase):
                 workflow.publish_job(self.root, {}, promote=True)
             load.assert_not_called()
 
+    def test_legacy_software_job_reuses_recorded_source_without_rebuild(self):
+        self.job()
+        source = 'a' * 40
+        spec = workflow.read_json(self.root / 'resources.json')
+        spec['kind'] = 'software'
+        spec['assets'][0]['id'] = 'hub'
+        workflow.write_json(self.root / 'resources.json', spec)
+        job = workflow.read_json(self.root / 'job.json')
+        job['sources'] = {'hub_commit': source}
+        job['files']['resources.json'] = {'size': (self.root / 'resources.json').stat().st_size,
+                                           'sha256': workflow.digest(self.root / 'resources.json')}
+        workflow.write_json(self.root / 'job.json', job)
+        original_job = (self.root / 'job.json').read_bytes()
+        seen = []
+        class Publisher:
+            @staticmethod
+            def publish(spec, revision, output, config):
+                seen.append(spec['assets'][0]['source_commit'])
+                workflow.write_json(output / 'publish-report.json', {'published': ['github', 'gitee']})
+        with patch.object(workflow, 'load_publisher', return_value=Publisher), \
+                patch.object(workflow, 'prepare') as build, \
+                patch.object(workflow, 'verify_source_snapshot') as gate, \
+                patch.object(workflow, 'run') as command:
+            self.assertEqual(workflow.publish_job(self.root, {'publisher_config': 'unused'}), 0)
+            build.assert_not_called()
+            gate.assert_not_called()
+            command.assert_not_called()
+        self.assertEqual(seen, [source])
+        self.assertNotIn('source_commit', workflow.read_json(self.root / 'resources.json')['assets'][0])
+        self.assertEqual((self.root / 'job.json').read_bytes(), original_job)
+        self.assertNotIn('verification', workflow.read_json(self.root / 'job.json'))
+
+    def test_software_job_with_conflicting_source_stops_before_publisher(self):
+        self.job()
+        spec = workflow.read_json(self.root / 'resources.json')
+        spec['kind'] = 'software'
+        spec['assets'][0].update(id='hub', source_commit='b' * 40)
+        workflow.write_json(self.root / 'resources.json', spec)
+        job = workflow.read_json(self.root / 'job.json')
+        job['sources'] = {'hub_commit': 'a' * 40}
+        job['files']['resources.json'] = {'size': (self.root / 'resources.json').stat().st_size,
+                                           'sha256': workflow.digest(self.root / 'resources.json')}
+        workflow.write_json(self.root / 'job.json', job)
+        with patch.object(workflow, 'load_publisher') as load:
+            with self.assertRaisesRegex(RuntimeError, '来源提交'):
+                workflow.publish_job(self.root, {})
+            load.assert_not_called()
+
     def test_partial_mirror_exit_code_and_resume_without_rebuild(self):
         self.job()
         revisions = []
@@ -130,10 +180,192 @@ class WorkflowTests(unittest.TestCase):
         workflow.write_json(source / 'package-lock.json', {'version': '1.0.0', 'packages': {'': {'version': '1.0.0'}}})
         workflow.write_json(source / 'src-tauri/tauri.conf.json', {'version': '1.0.1'})
         (source / 'src-tauri/Cargo.toml').write_text('[package]\nversion = "1.0.0"\n')
-        with patch.object(workflow, 'ROOT', source), patch.object(workflow, 'source_commit', return_value='commit'), patch.object(workflow, 'run') as run:
+        with patch.object(workflow, 'ROOT', source), patch.object(workflow, 'source_commit', return_value='a' * 40), patch.object(workflow, 'source_snapshot', return_value=source), patch.object(workflow, 'run') as run:
             with self.assertRaisesRegex(RuntimeError, '版本号'):
                 workflow.build_software(self.root / 'output')
             run.assert_not_called()
+
+    def software_repo(self):
+        repo = self.root / 'hub-repo'
+        workflow.write_json(repo / 'package.json', {'version': '1.0.0'})
+        workflow.write_json(repo / 'package-lock.json', {'version': '1.0.0', 'packages': {'': {'version': '1.0.0'}}})
+        workflow.write_json(repo / 'src-tauri/tauri.conf.json', {'version': '1.0.0'})
+        (repo / 'src-tauri/Cargo.toml').write_text('[package]\nversion = "1.0.0"\n')
+        (repo / 'src-tauri/Cargo.lock').write_text('# fixture lockfile\n')
+        return repo
+
+    def mocked_snapshot(self, repo, destination, product, commit):
+        self.assertEqual(commit, 'a' * 40)
+        source = destination / f'source-{product}'
+        shutil.copytree(repo, source)
+        (destination / f'{product}-source.zip').write_bytes(b'archived tracked source')
+        return source
+
+    def mocked_build_command(self, args, cwd=workflow.ROOT, env=None, capture=False):
+        command = list(map(str, args))
+        if command[:3] == ['npm', 'run', 'build:nsis']:
+            self.assertEqual(command[3:], ['--', '--', '--locked'])
+            executable = Path(env['CARGO_TARGET_DIR']) / 'release/bundle/nsis/hub-setup.exe'
+        elif command[:2] == ['cargo', 'build']:
+            self.assertIn('--locked', command)
+            executable = Path(env['CARGO_TARGET_DIR']) / 'release/d2r-audio-mod.exe'
+        elif command[-1] == '--version':
+            return 'd2r-audio-mod 1.4.0-beta.17 (protocol v7)'
+        else:
+            return None
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_bytes(b'verified build bytes')
+        return None
+
+    def prepare_mock_software(self):
+        repo = self.software_repo()
+        cfg = {'output_root': str(self.root / 'jobs')}
+        with patch.object(workflow, 'ROOT', repo), \
+                patch.object(workflow, 'source_commit', return_value='a' * 40), \
+                patch.object(workflow, 'source_snapshot', side_effect=self.mocked_snapshot), \
+                patch.object(workflow, 'run', side_effect=self.mocked_build_command) as command, \
+                patch('release_platforms.windows_file_version', return_value='1.0.0'):
+            folder = workflow.prepare('software', cfg)
+        return folder, command.call_args_list
+
+    def test_software_snapshot_passes_every_gate_before_packaging_and_records_its_sha(self):
+        folder, commands = self.prepare_mock_software()
+        job = workflow.verify_job(folder)
+        self.assertEqual(job['schema'], 2)
+        report = workflow.read_json(folder / job['verification']['hub'])
+        self.assertEqual(report['source_commit'], job['sources']['hub_commit'])
+        self.assertEqual(report['status'], 'passed')
+        self.assertEqual(report['source_archive']['sha256'], workflow.digest(folder / 'hub-source.zip'))
+        expected = workflow.quality_commands('hub')
+        self.assertEqual([list(call.args[0]) for call in commands[:-1]], [list(cmd) for _, cmd, _ in expected])
+        self.assertEqual(list(commands[-1].args[0])[:3], ['npm', 'run', 'build:nsis'])
+        for step, call, (_, command, relative) in zip(report['commands'], commands, expected):
+            self.assertEqual(step['source_commit'], 'a' * 40)
+            self.assertEqual(step['command'], list(command))
+            self.assertEqual(step['status'], 'passed')
+            self.assertEqual(step['exit_code'], 0)
+            self.assertEqual(Path(call.args[1]), folder / step['working_directory'])
+            self.assertEqual(call.kwargs['env']['CARGO_TARGET_DIR'], str(folder / 'build-hub'))
+        self.assertEqual(Path(commands[-1].args[1]), folder / 'source-hub')
+
+    def test_each_failed_software_gate_stops_bundle_and_leaves_no_publishable_job(self):
+        repo = self.software_repo()
+        for name, failed_command, _ in workflow.quality_commands('hub'):
+            with self.subTest(gate=name):
+                cfg = {'output_root': str(self.root / name)}
+                def fail(args, cwd=repo, env=None, capture=False):
+                    if list(args) == list(failed_command):
+                        raise subprocess.CalledProcessError(17, args)
+                    return self.mocked_build_command(args, cwd, env, capture)
+                with patch.object(workflow, 'ROOT', repo), \
+                        patch.object(workflow, 'source_commit', return_value='a' * 40), \
+                        patch.object(workflow, 'source_snapshot', side_effect=self.mocked_snapshot), \
+                        patch.object(workflow, 'run', side_effect=fail) as command, \
+                        patch.object(workflow, 'publish_job') as publish:
+                    with self.assertRaisesRegex(RuntimeError, name):
+                        workflow.prepare('software', cfg)
+                    publish.assert_not_called()
+                self.assertFalse(any(list(call.args[0])[:3] == ['npm', 'run', 'build:nsis'] for call in command.call_args_list))
+                folder = next(Path(cfg['output_root']).iterdir())
+                self.assertFalse((folder / 'job.json').exists())
+                self.assertFalse((folder / 'software.json').exists())
+                report = workflow.read_json(folder / 'verification-hub.json')
+                self.assertEqual(report['status'], 'failed')
+                self.assertEqual(report['commands'][-1]['id'], name)
+                self.assertEqual(report['commands'][-1]['exit_code'], 17)
+
+    def test_failed_gate_in_publish_mode_never_calls_publisher(self):
+        repo = self.software_repo()
+        cfg = {'output_root': str(self.root / 'jobs')}
+        with patch.object(workflow, 'ROOT', repo), \
+                patch.object(workflow, 'configuration', return_value=cfg), \
+                patch.object(workflow, 'source_commit', return_value='a' * 40), \
+                patch.object(workflow, 'source_snapshot', side_effect=self.mocked_snapshot), \
+                patch.object(workflow, 'run', side_effect=RuntimeError('check failed')), \
+                patch.object(workflow, 'publish_job') as publish, \
+                patch.object(sys, 'argv', ['release-workflow.py', '--target', 'software', '--publish']):
+            with self.assertRaisesRegex(RuntimeError, '质量检查'):
+                workflow.main()
+            publish.assert_not_called()
+
+    def test_processor_locked_checks_precede_release_build_in_the_same_snapshot(self):
+        repo = self.root / 'processor-repo'
+        repo.mkdir()
+        (repo / 'Cargo.toml').write_text('[package]\nname = "d2r-audio-mod"\nversion = "1.4.0-beta.17"\n')
+        (repo / 'Cargo.lock').write_text('# fixture lockfile\n')
+        destination = self.root / 'processor-job'
+        destination.mkdir()
+        with patch.object(workflow, 'source_commit', return_value='a' * 40), \
+                patch.object(workflow, 'source_snapshot', side_effect=self.mocked_snapshot), \
+                patch.object(workflow, 'run', side_effect=self.mocked_build_command) as command:
+            asset, commit = workflow.build_processor(repo, destination)
+        self.assertEqual(commit, 'a' * 40)
+        self.assertEqual(asset['version'], '1.4.0-beta.17')
+        calls = command.call_args_list
+        self.assertEqual([list(call.args[0]) for call in calls[:3]], [list(cmd) for _, cmd, _ in workflow.quality_commands('processor')])
+        self.assertEqual(list(calls[3].args[0])[:3], ['cargo', 'build', '--locked'])
+        self.assertTrue(all(Path(call.args[1]) == destination / 'source-processor' for call in calls))
+        self.assertEqual(workflow.read_json(destination / 'verification-processor.json')['status'], 'passed')
+
+    def test_processor_gate_failure_never_builds_release(self):
+        repo = self.root / 'processor-repo'
+        repo.mkdir()
+        (repo / 'Cargo.toml').write_text('[package]\nversion = "1.4.0-beta.17"\n')
+        destination = self.root / 'processor-job'
+        destination.mkdir()
+        def fail_tests(args, cwd, env=None, capture=False):
+            if list(args)[:2] == ['cargo', 'test']:
+                raise subprocess.CalledProcessError(1, args)
+        with patch.object(workflow, 'source_commit', return_value='a' * 40), \
+                patch.object(workflow, 'source_snapshot', side_effect=self.mocked_snapshot), \
+                patch.object(workflow, 'run', side_effect=fail_tests) as command:
+            with self.assertRaisesRegex(RuntimeError, 'rust-tests'):
+                workflow.build_processor(repo, destination)
+        self.assertFalse(any(list(call.args[0])[:2] == ['cargo', 'build'] for call in command.call_args_list))
+        self.assertFalse(list(destination.glob('*.exe')))
+
+    def test_verified_resume_uses_original_bytes_without_source_or_gate_execution(self):
+        folder, _ = self.prepare_mock_software()
+        original = {path.name: path.read_bytes() for path in folder.iterdir() if path.is_file()}
+        shutil.rmtree(folder / 'source-hub')
+        shutil.rmtree(folder / 'build-hub')
+        class Publisher:
+            @staticmethod
+            def publish(spec, revision, output, config):
+                workflow.write_json(output / 'publish-report.json', {'published': ['github', 'gitee']})
+        with patch.object(workflow, 'load_publisher', return_value=Publisher), \
+                patch.object(workflow, 'verify_source_snapshot') as gates, \
+                patch.object(workflow, 'source_commit') as source, \
+                patch.object(workflow, 'run') as command, \
+                patch.object(workflow, 'prepare') as prepare:
+            self.assertEqual(workflow.publish_job(folder, {'publisher_config': 'unused'}), 0)
+            gates.assert_not_called()
+            source.assert_not_called()
+            command.assert_not_called()
+            prepare.assert_not_called()
+        self.assertEqual(original, {name: (folder / name).read_bytes() for name in original})
+
+    def test_schema_two_requires_matching_complete_quality_evidence_before_network(self):
+        folder, _ = self.prepare_mock_software()
+        report_path = folder / 'verification-hub.json'
+        original = workflow.read_json(report_path)
+        for mutation in ('source', 'failed', 'missing-command'):
+            with self.subTest(mutation=mutation):
+                report = json.loads(json.dumps(original))
+                if mutation == 'source':
+                    report['source_commit'] = 'b' * 40
+                elif mutation == 'failed':
+                    report['commands'][0]['status'] = 'failed'
+                else:
+                    report['commands'].pop()
+                workflow.write_json(report_path, report)
+                job = workflow.read_json(folder / 'job.json')
+                job['files'][report_path.name] = {'size': report_path.stat().st_size, 'sha256': workflow.digest(report_path)}
+                workflow.write_json(folder / 'job.json', job)
+                with patch.object(workflow, 'load_publisher') as load:
+                    with self.assertRaisesRegex(RuntimeError, '质量检查'):
+                        workflow.publish_job(folder, {})
+                    load.assert_not_called()
 
     def test_processor_version_includes_protocol_suffix(self):
         self.assertTrue(workflow.processor_version_matches('d2r-audio-mod 1.4.0-beta.17 (protocol v7)', '1.4.0-beta.17'))

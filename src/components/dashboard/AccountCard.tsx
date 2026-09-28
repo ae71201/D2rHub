@@ -427,7 +427,7 @@ export function AccountGridItem({
                   {selected && <span className="scheme-context-label">方案配置</span>}
                 </>
               ) : (
-                <span className="tile-index index">{String(account.order + 1).padStart(2, "0")} / {account.initialized ? "READY" : "ATTENTION"}</span>
+                <span className="tile-index index">{String(account.order + 1).padStart(2, "0")}</span>
               )}
             </div>
 

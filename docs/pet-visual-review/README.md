@@ -49,6 +49,6 @@
 - `group-4.png`：幽灵、星光披风、四套混搭。
 - `outfits-dark.png`、`outfits-small.png`：深色和半倍缩放复核。
 
-根目录 `pet-visual-review.html` 是只供本地开发查看的预览入口；启动 Vite 后访问 `/pet-visual-review.html`。该页面及文档截图不是发行构建的入口或运行时贴图。
+`dev/previews/pet-visual-review.html` 是只供本地开发查看的预览入口；启动 Vite 后访问 `/dev/previews/pet-visual-review.html`。该页面及文档截图不是发行构建的入口或运行时贴图。
 
 原生 Windows 窗口的 DPI、点击穿透、拖动及真实输入节奏未在本轮浏览器审核中验证；命中区域已按新的展示位置调整，仍需原生窗口验证。

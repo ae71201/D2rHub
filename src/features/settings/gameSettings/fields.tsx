@@ -1,19 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Save, Monitor, Volume2, Gamepad2, Map, Image, X } from "lucide-react";
-import { emitEvent, invokeCommand } from "../platform/tauri";
-import { Button } from "../components/ui/Button";
-import { RangeSlider } from "../components/ui/RangeSlider";
-import { Toggle } from "../components/ui/Toggle";
-import { showToast } from "../components/ui/Toast";
-import type { AccountMeta } from "../store/types";
-import { useAccounts } from "../store/accounts";
-import { FRAMERATE_CAP_KEY, writeFramerateCap } from "../utils/gameSettings";
-
-interface Props {
-  account: AccountMeta;
-  onClose: () => void;
-}
-
+import React, { useMemo } from "react";
+import { Monitor, Volume2, Gamepad2, Map, Image } from "lucide-react";
+import { RangeSlider } from "../../../components/ui/RangeSlider";
+import { Toggle } from "../../../components/ui/Toggle";
+import { FRAMERATE_CAP_KEY } from "../../../utils/gameSettings";
 type Tab = "display" | "graphics" | "audio" | "gameplay" | "automap";
 type FieldType = "toggle" | "select" | "range" | "number" | "resolution";
 type GraphicsQualityPreset = "low" | "medium" | "high";
@@ -364,8 +353,6 @@ function matchesGraphicsQualityPreset(settings: SettingsMap, preset: GraphicsQua
   );
 }
 
-const tabs = settingsSections.map(({ id, label, icon }) => ({ id, label, icon }));
-
 const baseResolutionOptions = [
   "1280x720",
   "1280x768",
@@ -421,184 +408,6 @@ function normalizeResolution(value: string, options: string[]) {
   const width = clamp(parsed.width, first.width, last.width);
   const height = clamp(parsed.height, first.height, last.height);
   return `${Math.round(width)}x${Math.round(height)}`;
-}
-
-export function SettingsEditor({ account, onClose }: Props) {
-  const [settings, setSettings] = useState<SettingsMap>({});
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>("display");
-  const [hasChanges, setHasChanges] = useState(false);
-  const { markSettingsCustomized } = useAccounts();
-
-  useEffect(() => {
-    loadSettings();
-  }, [account.id]);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (hasChanges) {
-          if (confirm("有未保存的更改，确定关闭吗？")) onClose();
-        } else {
-          onClose();
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose, hasChanges]);
-
-  const loadSettings = async () => {
-    setLoading(true);
-    try {
-      const data = await invokeCommand<SettingsMap>("get_account_settings", {
-        accountId: account.id,
-      });
-      setSettings(data);
-    } catch (e) {
-      showToast("error", `加载设置失败: ${e}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const update = (key: string, value: unknown) => {
-    setSettings((prev) => key === FRAMERATE_CAP_KEY
-      ? writeFramerateCap(prev, Number(value))
-      : ({ ...prev, [key]: value }));
-    setHasChanges(true);
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await invokeCommand("save_account_settings", {
-        accountId: account.id,
-        settings,
-      });
-      await markSettingsCustomized(account.id);
-      setHasChanges(false);
-      showToast("success", "设置已保存");
-      await emitEvent("account-settings-updated", { accountId: account.id });
-    } catch (e) {
-      showToast("error", `保存失败: ${e}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const snapshotSystemSettings = async () => {
-    try {
-      const data = await invokeCommand<SettingsMap>("snapshot_system_settings_to_account", {
-        accountId: account.id,
-      });
-      setSettings(data);
-      setHasChanges(false);
-      showToast("success", "已快照系统配置");
-      await emitEvent("account-settings-updated", { accountId: account.id });
-    } catch (e) {
-      showToast("error", `快照系统配置失败: ${e}`);
-    }
-  };
-
-  const activeSection = settingsSections.find((section) => section.id === activeTab) ?? settingsSections[0];
-  const displayName = account.display_name || account.id;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
-      style={{ backgroundColor: "rgba(18,24,34,0.10)" }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="modal-content rounded-2xl w-[90vw] max-w-[860px] max-h-[95vh] flex overflow-hidden"
-        style={{
-          background: "linear-gradient(180deg, var(--surface-modal, var(--surface-glass)), var(--surface-card))",
-          backdropFilter: "blur(16px) saturate(1.04)",
-          WebkitBackdropFilter: "blur(16px) saturate(1.04)",
-          border: "1px solid var(--border-default)",
-          boxShadow: "var(--shadow-elevated)",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          className="w-[160px] shrink-0 flex flex-col py-3 px-2"
-          style={{ borderRight: "1px solid var(--border-default)", background: "var(--surface-tile-soft, var(--surface-glass))" }}
-        >
-          <div className="px-3 mb-3">
-            <p className="text-md font-semibold text-text-primary truncate">{displayName}</p>
-            <p className="text-xs text-text-muted">{account.id}</p>
-          </div>
-
-          <div className="flex-1 space-y-0.5">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id)}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-md font-medium transition-all duration-150 text-left"
-                style={activeTab === t.id ? {
-                  color: "var(--text-primary)",
-                  background: "var(--surface-hover)",
-                } : {
-                  color: "var(--text-muted)",
-                }}
-              >
-                <span className={activeTab === t.id ? "text-accent" : ""}>{t.icon}</span>
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="px-2 pt-3 mt-auto" style={{ borderTop: "1px solid var(--border-default)" }}>
-            <button
-              onClick={snapshotSystemSettings}
-              className="w-full py-1.5 rounded-md text-xs font-medium text-text-muted hover:text-text-primary hover:bg-surface-hover transition-all text-center"
-            >
-              快照系统配置
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col min-h-0">
-          <div
-            className="flex items-center justify-between px-5 py-3.5 shrink-0"
-            style={{ borderBottom: "1px solid var(--border-default)" }}
-          >
-            <h2 className="text-lg font-semibold text-text-primary flex items-center gap-2">
-              {activeSection.icon}
-              {activeSection.label}
-            </h2>
-            <div className="flex items-center gap-2">
-              <Button variant="primary" size="sm" loading={saving} disabled={!hasChanges} onClick={handleSave}>
-                <Save size={12} />
-                保存
-              </Button>
-              <button onClick={onClose} className="icon-btn w-7 h-7 rounded-full">
-                <X size={14} />
-              </button>
-            </div>
-          </div>
-
-          {loading ? (
-            <div className="flex-1 p-5 space-y-3 overflow-auto">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-10 skeleton rounded-lg" />
-              ))}
-            </div>
-          ) : (
-            <div className="flex-1 overflow-auto p-5">
-              <div className="max-w-xl space-y-4">
-                <SettingsSection section={activeSection} settings={settings} update={update} />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {

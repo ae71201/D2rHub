@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::application::capability::CapabilityRegistry;
 use crate::application::configuration::ConfigurationRuntime;
+use crate::application::mod_mutation::ModMutationCoordinator;
 use crate::application::multi_instance::{AccountOperationLease, MultiInstanceRuntime};
 use crate::application::task_runtime::TaskRuntime;
 use crate::error::AppError;
@@ -44,8 +45,8 @@ pub struct AppState {
     /// 本进程内已经逻辑删除的稳定账号 ID。配置策略用它阻止排队中的陈旧
     /// 全量保存重新引入已删除账号；不扫描目录，避免与账号目录替换窗口竞争。
     retired_account_ids: RwLock<HashSet<String>>,
-    /// 同一时间只允许一个 Mod 加工任务，避免两个生成器写入同一个 mods 目录。
-    pub audio_mod_build_busy: AtomicBool,
+    /// Shared reservation for all Mod filesystem changes and restart handoff.
+    mod_mutations: ModMutationCoordinator,
     /// 快捷键内存映射缓存：lowercase_shortcut -> 核心动作。
     pub shortcut_map: RwLock<HashMap<String, CoreShortcutAction>>,
     /// 串行化窗口位置文件的迁移和写入，避免多个 WebView 同时读改写导致配置丢失。
@@ -80,7 +81,7 @@ impl AppState {
             optional_features_suspended: AtomicBool::new(false),
             optional_window_operations: Mutex::new(()),
             retired_account_ids: RwLock::new(HashSet::new()),
-            audio_mod_build_busy: AtomicBool::new(false),
+            mod_mutations: ModMutationCoordinator::default(),
             shortcut_map: RwLock::new(HashMap::new()),
             window_placement_io: Mutex::new(()),
             window_writes_suspended: AtomicBool::new(false),
@@ -107,6 +108,10 @@ impl AppState {
 
     pub fn tasks(&self) -> &TaskRuntime {
         &self.tasks
+    }
+
+    pub(crate) fn mod_mutations(&self) -> &ModMutationCoordinator {
+        &self.mod_mutations
     }
 
     pub fn retire_account_id(&self, account_id: &str) {

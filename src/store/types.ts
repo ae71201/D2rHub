@@ -297,6 +297,8 @@ export interface InstalledAudioMod {
   audio_ready: boolean;
   update_required: boolean;
   source_eligible: boolean;
+  requires_unpack?: boolean;
+  unpack_recovery_required?: boolean;
   feature_groups: string[];
   audio_reusable: boolean;
   auto_exit_on_death_enabled: boolean;
@@ -347,6 +349,8 @@ export interface ModCapsule {
   auto_exit_on_death_enabled?: boolean;
   processed: boolean;
   source_eligible: boolean;
+  requires_unpack?: boolean;
+  unpack_recovery_required?: boolean;
   update_required: boolean;
   ready: boolean;
   deletable: boolean;
@@ -360,6 +364,18 @@ export interface ModCapsuleAccountSelection {
   selected_capsule_id: string | null;
   legacy_mod_arguments: string;
   issue: string | null;
+}
+
+export interface ModUnpackProgress {
+  capsule_id: string;
+  task_id: number;
+  percent: number;
+  message: string;
+}
+export interface ModUnpackResult {
+  pool: ModCapsulePool;
+  backup_path: string | null;
+  escaped_name_count: number;
 }
 
 export interface ModCapsulePool {

@@ -1,0 +1,40 @@
+.mod-catalog-manager.mod-library { width: 100%; min-width: 0; display: grid; gap: 20px; }
+.mod-library .mod-catalog-list { overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.mod-library .mod-processing-header { flex-wrap: wrap; gap: 12px; }
+.mod-library .mod-processing-header h2 { font-size: 20px; font-weight: 650; }
+.mod-library .mod-processing-header p { max-width: 56ch; line-height: 1.7; }
+.mod-library .mod-processing-header-actions { gap: 4px; }
+.mod-library-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border-default); padding-bottom: 10px; }
+.mod-library-views { display: flex; gap: 4px; }
+.mod-library-views button { padding: 8px 12px; font-size: 13px; border-radius: 6px; color: var(--text-muted); }
+.mod-library-views button[aria-pressed="true"] { color: var(--text-primary); font-weight: 650; background: var(--surface-hover); }
+.mod-library button:focus-visible, .mod-library summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mod-library-entry { border-bottom: 1px solid var(--border-default); padding: 16px 0; min-width: 0; }
+.mod-library-entry:first-child { padding-top: 4px; }
+.mod-library-entry-summary { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.mod-library-entry-summary > svg { margin-top: 3px; color: var(--text-muted); }
+.mod-library-entry-copy h3 { margin: 0 0 5px; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.mod-library-entry-copy p, .mod-library-entry-details p { margin: 3px 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.mod-library-entry-copy small { display: block; margin-top: 7px; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.mod-library-entry-copy .mod-library-feature-list { color: var(--text-primary); }
+.mod-library-entry-copy .mod-library-update { color: var(--warning); }
+.mod-library-entry-summary .is-expanded { transform: rotate(180deg); }
+.mod-library-entry-details { display: grid; gap: 8px; margin: 16px 0 0 34px; padding: 16px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--surface-hover); min-width: 0; }
+.mod-library-arguments-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-secondary); font-size: 12px; }
+.mod-library-arguments { font-size: 12px; overflow-wrap: anywhere; color: var(--text-secondary); }
+.mod-library-argument-editor { display: flex; flex-wrap: wrap; gap: 8px; }
+.mod-library-argument-editor input { min-width: 150px; flex: 1; }
+.mod-library-entry-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
+.mod-waypoint-settings { border-bottom: 1px solid var(--border-default); padding-bottom: 16px; margin-bottom: 8px; }
+.mod-waypoint-settings h4 { margin: 0 0 6px; font-size: 13px; }
+.mod-waypoint-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 12px; }
+.mod-waypoint-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+.mod-waypoint-grid select { width: 100%; min-width: 0; }
+.mod-library-advanced { color: var(--text-muted); font-size: 12px; padding-top: 4px; }
+.mod-library-advanced summary { cursor: pointer; padding: 8px 0; width: fit-content; }
+.mod-library-advanced p { line-height: 1.6; margin: 5px 0; }
+@media (max-width: 640px) {
+  .mod-library-entry-details { margin-left: 0; padding: 12px; }
+  .mod-library-entry-summary { gap: 8px; }
+  .mod-library .mod-processing-header-actions { flex-wrap: wrap; }
+}

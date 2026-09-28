@@ -37,7 +37,7 @@ parking_lot = "0.12"
 sysinfo = "0.31"
 dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "1", features = ["time", "macros"] }
+tokio = { version = "1", features = ["time", "macros", "process", "io-util"] }
 windows = { version = "0.58", features = [
     "Foundation",
     "Win32_Foundation",

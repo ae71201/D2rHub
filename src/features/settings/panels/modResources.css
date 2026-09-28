@@ -9,7 +9,7 @@
 .mod-resources small { font-size: 11px; opacity: .75; }
 .resource-card > small { display: block; margin: 4px 0; }
 .resource-cards { display: grid; gap: 12px; }
-.resource-card { border: 1px solid var(--border-default); border-radius: 12px; padding: 16px; background: var(--surface-hover); }
+.resource-card { border: 1px solid var(--border-default); border-radius: 8px; padding: 16px; background: var(--surface-card); }
 .resource-card[aria-busy="true"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-default)); }
 .resource-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .resource-title strong { font-size: 13px; }
@@ -25,4 +25,7 @@
 .resource-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-secondary); }
 .resource-progress-heading > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .processor-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 10px; color: var(--text-secondary); font-size: 12px; }
+.resource-details { margin-top: 12px; color: var(--text-muted); font-size: 12px; }
+.resource-details summary { cursor: pointer; width: fit-content; padding: 4px 0; }
+.resource-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 600px) { .mod-resources header { flex-wrap: wrap; } .resource-card { padding: 12px; } .resource-progress-heading { flex-wrap: wrap; } }

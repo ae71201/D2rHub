@@ -5,13 +5,13 @@ import {
   hasAudioTelemetry,
   hasSelectedAudioModFeature,
   selectedAudioModFeatureAddsCapability,
-} from "./audioModuleModel";
+} from "./featureContract";
 
 describe("audio feature group truth", () => {
   it("chooses feature defaults from the processing entry point", () => {
     expect(audioModFeatureDefaultsForPurpose("recognition")).toEqual({
       includeAudioTelemetry: true,
-      includeRoomTools: true,
+      includeRoomTools: false,
       includeEscNextGame: false,
       includeAutoExitOnDeath: false,
     });

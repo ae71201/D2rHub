@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
-from release_platforms import CONFIG, Platform, credentials, anonymous_verify, anonymous_json, sha256, windows_file_version
+from release_platforms import CONFIG, Platform, SourceCommitMismatch, credentials, anonymous_verify, anonymous_json, sha256, windows_file_version
 
 def identity(a):
     return {k:a.get(k) for k in ('id','version','size','sha256','game_data_version','profile')}
@@ -41,6 +41,16 @@ def publish(spec, revision, output, config_path, previous=None):
     if token: platforms.append(Platform('gitee',cfg['gitee_repo'],token))
     kind = spec['kind']; tag = 'hub-update-index-v2' if kind == 'software' else 'mod-update-index-v2'
     if kind not in ('software','resources'): raise RuntimeError('Invalid release kind')
+    if kind == 'software':
+        if len(spec['assets']) != 1 or spec['assets'][0].get('id') != 'hub':
+            raise RuntimeError('Software publication requires exactly one Hub artifact')
+        software = spec['assets'][0]
+        source = software.get('source_commit', '')
+        if not re.fullmatch(r'[0-9a-f]{40}', source):
+            raise SourceCommitMismatch('Software publication requires its prepared source_commit SHA')
+        # A wrong source tag is fatal for both mirrors, before uploading anything.
+        # Gitee is an asset-only mirror; the source lives in the GitHub repository.
+        platforms[0].release(software['release_tag'], create=False, source_commit=source)
     # Read the current pointers before any upload, even when --previous is omitted.
     for platform in platforms:
         try:
@@ -86,7 +96,8 @@ def publish(spec, revision, output, config_path, previous=None):
         for p in platforms:
             existing = None
             try:
-                release = p.release(definition['release_tag'])
+                source = definition.get('source_commit') if asset['id'] == 'hub' and p.name == 'github' else None
+                release = p.release(definition['release_tag'], source_commit=source)
                 attachments = p.assets(release)
                 reserved = next((a for a in attachments if a['name'] == reservation.name), None)
                 if reserved and anonymous_json(reserved['browser_download_url']) != record:
@@ -106,6 +117,8 @@ def publish(spec, revision, output, config_path, previous=None):
                 if p.name == 'github': asset['url'] = url
                 print(f"{p.name}: {asset['id']} {'verified existing' if existing else 'uploaded and anonymously verified'}",flush=True)
             except Exception as e:
+                if isinstance(e, SourceCommitMismatch):
+                    raise
                 # Different existing bytes are fatal; never publish a version split.
                 if 'reservation mismatch' in str(e) or (existing is not None and ('mismatch' in str(e) or 'different size' in str(e))):
                     raise RuntimeError(f"{p.name}: existing immutable asset differs; choose a new version") from None

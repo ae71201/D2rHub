@@ -7,7 +7,7 @@ import {
   GameplaySection,
   GraphicsSection,
   type SettingsMap,
-} from "../../../pages/SettingsEditor";
+} from "../gameSettings/fields";
 import type { AccountMeta } from "../../../store/types";
 import { FRAMERATE_CAP_KEY, readFramerateCap } from "../../../utils/gameSettings";
 
@@ -115,7 +115,7 @@ export function AccountsPanel({
     ? describeGameSettingsLoadError(gameSettingsLoadError)
     : null;
   return (
-<div className="space-y-3">
+<div className="space-y-3 p-1">
   {accounts.length === 0 ? (
     <div className="spatial-panel py-10 text-center text-sm text-text-muted">请先在主界面点击“添加账号”创建新账号</div>
   ) : (

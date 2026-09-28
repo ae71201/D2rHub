@@ -1,170 +1,105 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig } from "../../store/types";
 import { SettingsNavigation } from "./SettingsNavigation";
-import { OptionalFeaturesNavigation } from "./OptionalFeaturesNavigation";
-import {
-  getSettingsFeaturesByKind,
-  SETTINGS_FEATURES,
-  type SettingsTabId,
-} from "./settingsRegistry";
+import { SETTINGS_FEATURES, type SettingsTabId } from "./settingsRegistry";
 
 function Harness() {
   const [active, setActive] = useState<SettingsTabId>("accounts");
-  return <SettingsNavigation activeTab={active} onSelect={setActive} />;
+  return <SettingsNavigation activeTab={active} onSelect={setActive} installedModules={["automation", "overlays", "room-automation", "pet"]} />;
 }
 
 afterEach(cleanup);
 
 describe("settings feature registry", () => {
-  it("keeps the multi-instance core separate from optional capabilities", () => {
-    expect(getSettingsFeaturesByKind("core").map((feature) => feature.id)).toEqual([
-      "accounts",
-      "shortcuts",
-    ]);
-    expect(getSettingsFeaturesByKind("platform").map((feature) => feature.id)).toEqual([
-      "paths",
-      "agent",
-      "appearance",
-      "tasks",
-      "advanced",
-      "mod-processing",
-    ]);
-    expect(getSettingsFeaturesByKind("optional").map((feature) => feature.id)).toEqual([
-      "module-management",
-      "overlays",
-      "pet",
-      "automation",
-      "room-automation",
-    ]);
-    expect(new Set(SETTINGS_FEATURES.map((feature) => feature.id)).size).toBe(SETTINGS_FEATURES.length);
-  });
-
-  it("maps supervised optional modules to backend capability ids", () => {
-    const shortcuts = SETTINGS_FEATURES.find((feature) => feature.id === "shortcuts");
-    const overlays = SETTINGS_FEATURES.find((feature) => feature.id === "overlays");
-
-    expect(shortcuts?.isConfigured?.({ shortcut_bindings_json: '{"1":" Ctrl+1 ","2":""}' } as GlobalConfig)).toBe(true);
-    expect(shortcuts?.isConfigured?.({ shortcut_bindings_json: '{"1":"   "}' } as GlobalConfig)).toBe(false);
-    expect(shortcuts?.isConfigured?.({ shortcut_bindings_json: "invalid" } as GlobalConfig)).toBe(false);
-    expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: true } as GlobalConfig)).toBe(true);
-    expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: false } as GlobalConfig)).toBe(false);
-    expect(overlays?.capabilityIds).toEqual(["terror-zone-overlay", "statistics-overlay"]);
-    expect(SETTINGS_FEATURES.find((feature) => feature.id === "automation")?.capabilityIds).toEqual(["audio-telemetry"]);
-    expect(SETTINGS_FEATURES.find((feature) => feature.id === "pet")?.capabilityIds).toEqual(["desktop-pet"]);
-    expect(SETTINGS_FEATURES.find((feature) => feature.id === "room-automation")?.capabilityIds).toEqual(["room-automation"]);
+  it("preserves feature identities and supervised capability ids", () => {
+    expect(new Set(SETTINGS_FEATURES.map(feature => feature.id)).size).toBe(SETTINGS_FEATURES.length);
+    expect(SETTINGS_FEATURES.find(feature => feature.id === "accounts")?.kind).toBe("core");
+    expect(SETTINGS_FEATURES.find(feature => feature.id === "mod-processing")?.group).toBe("game");
+    expect(SETTINGS_FEATURES.find(feature => feature.id === "overlays")?.capabilityIds).toEqual(["terror-zone-overlay", "statistics-overlay"]);
+    expect(SETTINGS_FEATURES.find(feature => feature.id === "automation")?.capabilityIds).toEqual(["audio-telemetry"]);
+    expect(SETTINGS_FEATURES.find(feature => feature.id === "pet")?.capabilityIds).toEqual(["desktop-pet"]);
+    expect(SETTINGS_FEATURES.find(feature => feature.id === "room-automation")?.capabilityIds).toEqual(["room-automation"]);
   });
 });
 
 describe("SettingsNavigation", () => {
-  it("selects a module and exposes tab semantics", () => {
+  it("keeps every added tool in one sidebar, with no nested navigation", () => {
     render(<Harness />);
-
-    const coreTab = screen.getByRole("tab", { name: /账号与实例/ });
-    const optionalTab = screen.getByRole("tab", { name: /模块管理/ });
-    expect(coreTab.getAttribute("aria-selected")).toBe("true");
-
-    fireEvent.click(optionalTab);
-
-    expect(optionalTab.getAttribute("aria-selected")).toBe("true");
-    expect(coreTab.getAttribute("aria-selected")).toBe("false");
+    expect(screen.getAllByRole("tablist")).toHaveLength(1);
+    expect(screen.getByRole("tablist").getAttribute("aria-orientation")).toBe("vertical");
+    expect(screen.getAllByRole("tab").map(tab => tab.id)).toEqual([
+      "settings-tab-accounts", "settings-tab-paths", "settings-tab-mod-processing",
+      "settings-tab-module-management", "settings-tab-overlays", "settings-tab-automation", "settings-tab-room-automation", "settings-tab-pet",
+      "settings-tab-appearance", "settings-tab-shortcuts", "settings-tab-agent", "settings-tab-tasks", "settings-tab-advanced",
+    ]);
   });
 
-  it("supports arrow-key navigation across capability groups", () => {
+  it("selects an extension directly and binds it to its own panel", async () => {
     render(<Harness />);
-    const coreTab = screen.getByRole("tab", { name: /账号与实例/ });
-
-    fireEvent.keyDown(coreTab, { key: "ArrowRight" });
-
-    expect(screen.getByRole("tab", { name: /窗口快捷键/ }).getAttribute("aria-selected")).toBe("true");
+    const tab = screen.getByRole("tab", { name: "识别与统计" });
+    fireEvent.click(tab);
+    await waitFor(() => expect(tab.getAttribute("aria-selected")).toBe("true"));
+    expect(tab.getAttribute("aria-controls")).toBe("settings-panel-automation");
+    expect(screen.getByRole("tab", { name: "扩展功能" }).getAttribute("aria-selected")).toBe("false");
+    expect(document.activeElement).toBe(tab);
   });
 
-  it("keeps focus on the active tab when a guarded selection is rejected", () => {
-    render(<SettingsNavigation activeTab="room-automation" onSelect={() => false} />);
-    const active = screen.getByRole("tab", { name: /模块管理/ }) as HTMLButtonElement;
-    const next = screen.getByRole("tab", { name: /账号与实例/ }) as HTMLButtonElement;
+  it("supports arrows, Home, and End with one roving focus target", async () => {
+    render(<Harness />);
+    fireEvent.keyDown(screen.getByRole("tab", { name: "账号与实例" }), { key: "ArrowDown" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("tab", { name: "运行环境" })));
+    fireEvent.keyDown(document.activeElement!, { key: "End" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("tab", { name: "维护与迁移" })));
+    fireEvent.keyDown(document.activeElement!, { key: "Home" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("tab", { name: "账号与实例" })));
+    expect(screen.getAllByRole("tab").filter(tab => tab.tabIndex === 0)).toHaveLength(1);
+  });
 
-    next.focus();
+  it("waits for a save and restores focus if navigation is rejected", async () => {
+    let finish!: (accepted: boolean) => void;
+    const onSelect = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+    render(<SettingsNavigation activeTab="accounts" onSelect={onSelect} />);
+    const original = screen.getByRole("tab", { name: "账号与实例" });
+    const next = screen.getByRole("tab", { name: "运行环境" });
     fireEvent.click(next);
-    expect(document.activeElement).toBe(active);
-
-    fireEvent.keyDown(active, { key: "ArrowRight" });
-    expect(document.activeElement).toBe(active);
-    expect(active.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tablist").getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: "Mod 管理" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    await act(async () => finish(false));
+    expect(document.activeElement).toBe(original);
+    expect(original.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tablist").getAttribute("aria-busy")).toBe("false");
   });
 
-  it("renders the registry copy in English when the application language is English", () => {
+  it("offers the extension overview without advertising tools that are not added", () => {
     render(<SettingsNavigation activeTab="accounts" language="en-US" onSelect={() => {}} />);
-
-    expect(screen.getByRole("tab", { name: /Accounts & Instances/ })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /Appearance/ }).querySelector(".settings-navigation-badge")).toBeNull();
-    expect(screen.getByRole("tab", { name: /Module Management/ })).toBeTruthy();
-    expect(screen.getByText("Optional Features")).toBeTruthy();
-    expect(screen.queryByRole("tab", { name: /Desktop Overlays/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Extensions" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Overlays" })).toBeNull();
     expect(screen.queryByText("账号与实例")).toBeNull();
   });
 
-});
-
-describe("OptionalFeaturesNavigation", () => {
-  it("moves optional modules into a horizontal top-level tab list", () => {
-    render(<OptionalFeaturesNavigation
-      activeTab="automation"
-      installedModules={["automation", "room-automation", "overlays", "pet"]}
-      onSelect={() => {}}
-    />);
-
-    expect(screen.getByRole("tab", { name: /模块管理/ })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /识别与统计/ }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tab", { name: /自动跟房/ })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /桌面悬浮窗/ })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /桌宠/ })).toBeTruthy();
+  it("keeps minimal mode focused on game and application settings", () => {
+    render(<SettingsNavigation activeTab="accounts" installedModules={["automation", "pet"]}
+      config={{ feature_profile: "minimal", feature_profile_prompt_revision: 1 } as GlobalConfig} onSelect={() => {}} />);
+    expect(screen.getByRole("tab", { name: "Mod 管理" })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "扩展功能" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "桌宠" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "后台任务" })).toBeNull();
   });
 
-  it("renders observed lifecycle state instead of inferring desktop pet health from config", () => {
-    render(
-      <OptionalFeaturesNavigation
-        activeTab="pet"
-        installedModules={["pet"]}
-        config={{ enable_bongo_cat: true } as GlobalConfig}
-        capabilityStatus={{
-          revision: 4,
-          capabilities: [{
-            id: "desktop-pet",
-            requested_enabled: true,
-            state: "failed",
-            reason_code: "window-unavailable",
-          }],
-        }}
-        onSelect={() => {}}
-      />,
-    );
-
-    const tab = screen.getByRole("tab", { name: /桌宠 · 异常/ });
-    expect(tab.querySelector(".optional-features-status-dot")?.getAttribute("data-state")).toBe("failed");
+  it("shows meaningful observed errors without claiming configured tools are healthy", () => {
+    render(<SettingsNavigation activeTab="pet" installedModules={["pet"]} onSelect={() => {}}
+      config={{ enable_bongo_cat: true } as GlobalConfig}
+      capabilityStatus={{ revision: 4, capabilities: [{ id: "desktop-pet", requested_enabled: true, state: "failed", reason_code: "window-unavailable" }] }} />);
+    expect(screen.getByRole("tab", { name: "桌宠 · 异常" })).toBeTruthy();
   });
 
-  it("does not present a stale runtime snapshot when status synchronization is unavailable", () => {
-    render(
-      <OptionalFeaturesNavigation
-        activeTab="pet"
-        installedModules={["pet"]}
-        capabilityStatus={{
-          revision: 9,
-          capabilities: [{
-            id: "desktop-pet",
-            requested_enabled: true,
-            state: "running",
-            reason_code: null,
-          }],
-        }}
-        capabilityStatusUnavailable
-        onSelect={() => {}}
-      />,
-    );
-
-    const tab = screen.getByRole("tab", { name: /桌宠 · 状态不可用/ });
-    expect(tab.querySelector(".optional-features-status-dot")?.getAttribute("data-state")).toBe("unknown");
+  it("does not expose stale errors when runtime synchronization is unavailable", () => {
+    render(<SettingsNavigation activeTab="pet" installedModules={["pet"]} onSelect={() => {}} capabilityStatusUnavailable
+      capabilityStatus={{ revision: 4, capabilities: [{ id: "desktop-pet", requested_enabled: true, state: "failed", reason_code: "window-unavailable" }] }} />);
+    expect(screen.getByRole("tab", { name: "桌宠" })).toBeTruthy();
+    expect(screen.queryByText("异常")).toBeNull();
   });
 });

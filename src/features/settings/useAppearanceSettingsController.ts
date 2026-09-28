@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
-import { useGlobalConfig } from "../../store/globalConfig";
-import type { ThemeKey } from "../../store/theme";
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { normalizeTheme } from "../../store/themeCatalog";
 import type { GlobalConfig } from "../../store/types";
 import type { AppearanceSettingsDraft } from "./panels/AppearancePanel";
@@ -26,61 +24,45 @@ export function appearanceSettingsEqual(
 interface AppearanceSettingsControllerParams {
   open: boolean;
   config: GlobalConfig | null;
+  committedConfig: GlobalConfig | null;
+  updateConfig: (updater: (config: GlobalConfig) => void) => void;
   persistConfig: (draft: GlobalConfig, quiet?: boolean) => Promise<GlobalConfig | null>;
-  previewTheme: (theme: ThemeKey) => void;
 }
 
 /**
- * 外观草稿、即时预览与应用/回滚的编排。
- *
- * 预览会先落地到 store 与 DOM 再持久化，失败时必须整体回滚，
- * 因此草稿、主题预览与持久化只能由同一处持有。
+ * Appearance shares the settings edit session. Theme and font effects follow
+ * committed configuration, so a failed save never needs a global rollback.
  */
 export function useAppearanceSettingsController({
-  open,
   config,
+  committedConfig,
+  updateConfig,
   persistConfig,
-  previewTheme,
 }: AppearanceSettingsControllerParams) {
-  const [draft, setDraft] = useState<AppearanceSettingsDraft | null>(null);
   const [applying, setApplying] = useState(false);
-
-  // 只在设置面板打开时用磁盘配置重置草稿，避免编辑过程中被外部更新打断。
-  useEffect(() => {
-    if (open && config) setDraft(appearanceFromConfig(config));
-  }, [open]);
-
-  const apply = async (quiet = false): Promise<boolean> => {
-    const current = useGlobalConfig.getState().config;
-    if (!current || !draft) return true;
-    const next: GlobalConfig = {
-      ...current,
-      app_language: draft.app_language,
-      theme: draft.theme,
-      main_opacity: draft.main_opacity,
-      font_scale: draft.font_scale,
-      separate_game_taskbar_icons: draft.separate_game_taskbar_icons,
-    };
-
-    setApplying(true);
-    useGlobalConfig.setState({ config: next });
-    previewTheme(draft.theme);
-    document.documentElement.dataset.fontScale = draft.font_scale;
-    try { localStorage.setItem("d2rhub-font-scale", draft.font_scale); } catch {}
-    const saved = await persistConfig(next, quiet);
-    setApplying(false);
-    if (!saved) {
-      useGlobalConfig.setState({ config: current });
-      previewTheme(normalizeTheme(current.theme));
-      document.documentElement.dataset.fontScale = current.font_scale || "default";
-      try { localStorage.setItem("d2rhub-font-scale", current.font_scale || "default"); } catch {}
-      return false;
-    }
-    setDraft(appearanceFromConfig(saved));
-    return true;
+  const applyingRef = useRef(false);
+  const draft = config ? appearanceFromConfig(config) : null;
+  const setDraft: Dispatch<SetStateAction<AppearanceSettingsDraft | null>> = (action) => {
+    updateConfig(current => {
+      const next = typeof action === "function" ? action(appearanceFromConfig(current)) : action;
+      if (next) Object.assign(current, next);
+    });
   };
 
-  const hasChanges = !!config && !!draft && !appearanceSettingsEqual(config, draft);
+  const apply = async (quiet = false): Promise<boolean> => {
+    if (!config || !draft) return true;
+    if (applyingRef.current) return false;
+    applyingRef.current = true;
+    setApplying(true);
+    try {
+      return !!(await persistConfig(config, quiet));
+    } finally {
+      applyingRef.current = false;
+      setApplying(false);
+    }
+  };
+
+  const hasChanges = !!committedConfig && !!draft && !appearanceSettingsEqual(committedConfig, draft);
 
   return { draft, setDraft, applying, hasChanges, apply };
 }

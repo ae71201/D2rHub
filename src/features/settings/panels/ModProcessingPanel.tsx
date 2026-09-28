@@ -1,256 +1,59 @@
+import { useId } from "react";
+import { AlertTriangle, Check, CheckCircle2, Download, Layers3, PackageOpen, PackagePlus, RefreshCw } from "lucide-react";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
-import {
-  AlertTriangle,
-  Check,
-  CheckCircle2,
-  Download,
-  Layers3,
-  PackageOpen,
-  PackagePlus,
-  RefreshCw,
-} from "lucide-react";
-import type { Dispatch, SetStateAction } from "react";
-import { useEffect, useState } from "react";
-import { ModDownloadsPage } from "./ModResourceLibrary";
-import { ModProcessorStatus } from "./ModProcessorStatus";
-import { invokeCommand } from "../../../platform/tauri";
 import { Button } from "../../../components/ui/Button";
-import { showToast } from "../../../components/ui/Toast";
-import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
-import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
+import { ModProcessorStatus } from "./ModProcessorStatus";
 import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/model";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
-import {
-  ESC_NEXT_GAME_FEATURE_ID,
-  AUTO_EXIT_ON_DEATH_FEATURE_ID,
-  AUDIO_TELEMETRY_FEATURE_ID,
-  IN_GAME_ROOM_TOOLS_FEATURE_ID,
-  type AudioModPrepareProgress,
-  type AudioModProcessingMode,
-} from "../audioModuleModel";
-import { ModCatalogManager } from "./ModCatalogManager";
+import { AUDIO_TELEMETRY_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, ESC_NEXT_GAME_FEATURE_ID, AUTO_EXIT_ON_DEATH_FEATURE_ID } from "../../mods/featureContract";
+import type { ModWorkflowController } from "../../mods/workflow/useModWorkflow";
 
-type TrackingTarget = ReturnType<typeof validateTrackingTarget>;
-type AudioSetupMode = "original" | "existing";
-export type ModProcessingPurpose = "recognition" | "room-tools" | "manage";
-
-interface ModProcessingPanelProps {
-  config: GlobalConfig;
-  minimalMode?: boolean;
-  initializedAccounts: AccountMeta[];
-  trackingTarget: TrackingTarget;
-  audioModState: AudioModSetupState | null;
-  audioModStateLoading: boolean;
-  audioModScannedAt: number | null;
-  modCapsulePool?: ModCapsulePool | null;
-  modCapsulePoolLoading?: boolean;
-  modCapsulePoolError?: string | null;
-  modCatalog?: ModCapsuleController;
-  openAddRequest?: boolean;
-  initialEdition?: string;
-  purpose: ModProcessingPurpose;
-  audioSetupMode: AudioSetupMode;
-  setAudioSetupMode: Dispatch<SetStateAction<AudioSetupMode>>;
-  audioSetupSource: string;
-  setAudioSetupSource: Dispatch<SetStateAction<string>>;
-  audioSetupName: string;
-  setAudioSetupName: Dispatch<SetStateAction<string>>;
-  audioProcessingMode?: AudioModProcessingMode;
-  setAudioProcessingMode?: Dispatch<SetStateAction<AudioModProcessingMode>>;
-  audioProcessingTarget?: string;
-  setAudioProcessingTarget?: Dispatch<SetStateAction<string>>;
-  includeAudioTelemetry: boolean;
-  setIncludeAudioTelemetry: Dispatch<SetStateAction<boolean>>;
-  includeRoomTools: boolean;
-  setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
-  includeEscNextGame?: boolean;
-  includeAutoExitOnDeath: boolean;
-  setIncludeEscNextGame?: Dispatch<SetStateAction<boolean>>;
-  setIncludeAutoExitOnDeath: Dispatch<SetStateAction<boolean>>;
-  audioPreparing: boolean;
-  audioPrepareProgress: AudioModPrepareProgress | null;
-  isAudioModUpgrade: boolean;
-  isAudioModFeatureManagement: boolean;
-  audioSetupNameError: string | null;
-  showAudioSetupNameError: boolean;
-  audioPrepareBlockedReason: string;
-  onTargetChange: (accountId: string) => Promise<void>;
-  onPrepare: () => Promise<void>;
-  onRefresh: () => Promise<void>;
-  onBackToRecognition: () => void;
-  autoPrepareRequest?: number;
-  onAutoPrepareConsumed?: () => void;
-}
-
-export function ModProcessingPanel({
-  config,
-  minimalMode = false,
-  initializedAccounts,
-  trackingTarget,
-  audioModState,
-  audioModStateLoading,
-  audioModScannedAt,
-  modCapsulePool = null,
-  modCapsulePoolLoading = false,
-  modCapsulePoolError = null,
-  modCatalog,
-  openAddRequest,
-  initialEdition,
-  purpose,
-  audioSetupMode,
-  setAudioSetupMode,
-  audioSetupSource,
-  setAudioSetupSource,
-  audioSetupName,
-  setAudioSetupName,
-  audioProcessingMode,
-  setAudioProcessingMode,
-  audioProcessingTarget,
-  setAudioProcessingTarget,
-  includeAudioTelemetry,
-  setIncludeAudioTelemetry,
-  includeRoomTools,
-  setIncludeRoomTools,
-  includeEscNextGame = false,
-  setIncludeEscNextGame = () => {},
-  includeAutoExitOnDeath,
-  setIncludeAutoExitOnDeath,
-  audioPreparing,
-  audioPrepareProgress,
-  isAudioModUpgrade,
-  isAudioModFeatureManagement,
-  audioSetupNameError,
-  showAudioSetupNameError,
-  audioPrepareBlockedReason,
-  onTargetChange,
-  onPrepare,
-  onRefresh,
-  onBackToRecognition,
-  autoPrepareRequest = 0,
-  onAutoPrepareConsumed,
-}: ModProcessingPanelProps) {
-  const [workspace, setWorkspace] = useState<"catalog" | "processing" | "downloads">(purpose === "manage" ? "catalog" : "processing");
-  const [downloadEdition, setDownloadEdition] = useState<"CN" | "Global">(initialEdition === "Global" ? "Global" : "CN");
-  const [processorReady, setProcessorReady] = useState<boolean | null>(null);
-  const [downloadReturn, setDownloadReturn] = useState<"catalog" | "processing">("processing");
-  useEffect(() => {
-    setWorkspace(purpose === "manage" ? "catalog" : "processing");
-  }, [purpose]);
-  const isEnglish = config.app_language === "en-US";
-  const effectiveProcessingMode = audioProcessingMode
-    ?? (isAudioModUpgrade ? "augment" : "create");
-  const effectiveProcessingTarget = audioProcessingTarget
-    || (isAudioModUpgrade ? audioModState?.current_mod_name ?? "" : "");
-  const selectedSource = audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource);
-  const selectedProcessingMod = audioModState?.installed_mods.find((mod) => (
-    mod.name.toLocaleLowerCase() === effectiveProcessingTarget.toLocaleLowerCase()
-  ));
-  const inheritedFeatureGroups = isAudioModUpgrade
-    ? selectedProcessingMod?.feature_groups ?? []
-    : audioSetupMode === "existing"
-      ? selectedSource?.feature_groups ?? []
-      : [];
-  const audioRequired = purpose === "recognition";
-  const roomToolsRequired = purpose === "room-tools";
+/** The form renders one explicit workflow draft; it does not own navigation or scanning. */
+export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowController }) {
+  const blockedReasonId = useId();
+  const { draft, inspection, analysis, actions, en: isEnglish, minimalMode } = workflow;
+  if (!draft || !analysis) return null;
+  const initializedAccounts = workflow.accounts;
+  const trackingTarget = validateTrackingTarget(draft.accountId, initializedAccounts);
+  const inspectionState = inspection.state;
+  const inspecting = inspection.loading;
+  const preparing = workflow.busy;
+  const prepareProgress = workflow.progress;
+  const blockedReason = workflow.blockedReason;
+  const operationKind = draft.recipe.kind;
+  const targetModName = draft.recipe.kind === "augment" ? draft.recipe.modName : "";
+  const sourceMode = draft.recipe.kind === "create" && draft.recipe.source !== null ? "existing" : "original";
+  const sourceName = draft.recipe.kind === "create" ? draft.recipe.source ?? "" : "";
+  const outputName = draft.recipe.kind === "create" ? draft.recipe.name : "";
+  const isAugment = analysis.augment;
+  const isAddingFeatures = analysis.augment && !analysis.updating;
+  const outputNameError = analysis.nameError;
+  const showNameError = !!outputName && !!analysis.nameError && !workflow.prepared;
+  const inheritedFeatureGroups = analysis.inherited;
+  const audioRequired = draft.origin === "recognition";
+  const roomToolsRequired = draft.origin === "room-automation";
   const audioInherited = inheritedFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID);
   const roomToolsInherited = inheritedFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
   const autoExitOnDeathInherited = inheritedFeatureGroups.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID);
-  const audioSelected = audioRequired || audioInherited || includeAudioTelemetry;
-  const roomToolsSelected = roomToolsRequired || roomToolsInherited || includeRoomTools;
-  const autoExitOnDeathSelected = autoExitOnDeathInherited || includeAutoExitOnDeath;
-  const sourceMods = audioModState?.installed_mods.filter((mod) => mod.source_eligible) ?? [];
-  const scannedLabel = audioModScannedAt
-    ? new Date(audioModScannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-    : null;
-  const targetEdition = trackingTarget.valid
-    ? modCapsulePool?.accounts.find((entry) => entry.account_id === trackingTarget.account.id)?.edition
-    : null;
-  const readyCapsules = modCapsulePool?.capsules.filter((capsule) => (
-    capsule.ready
-    && capsule.processed
-    && (!targetEdition || capsule.edition === targetEdition)
-  )) ?? [];
-  const selectSourceMod = (name: string) => {
-    setAudioSetupMode("existing");
-    setAudioSetupSource(name);
-  };
-  const selectProcessedMod = (name: string) => {
-    setAudioProcessingMode?.("augment");
-    setAudioProcessingTarget?.(name);
-    setAudioSetupName("");
-  };
-  const selectNewMod = () => {
-    setAudioProcessingMode?.("create");
-    setAudioProcessingTarget?.("");
-    setAudioSetupMode("original");
-    setAudioSetupSource("");
-    setAudioSetupName("");
-  };
-  useEffect(() => {
-    if (!processorReady || !autoPrepareRequest || audioModStateLoading || audioPreparing || audioPrepareBlockedReason
-      || !trackingTarget.valid || audioModState?.account_id !== trackingTarget.account.id) return;
-    onAutoPrepareConsumed?.();
-    void onPrepare();
-  }, [audioModState?.account_id, audioPrepareBlockedReason, audioModStateLoading, audioPreparing,
-    autoPrepareRequest, onAutoPrepareConsumed, onPrepare, trackingTarget, processorReady]);
-
-  const openProcessorDownloads = () => {
-    setProcessorReady(null);
-    setDownloadReturn("processing");
-    setDownloadEdition((targetEdition ?? initialEdition) === "Global" ? "Global" : "CN");
-    setWorkspace("downloads");
-  };
-  if (workspace === "downloads") return <ModDownloadsPage edition={downloadEdition} en={isEnglish} catalog={modCatalog}
-    onBack={() => setWorkspace(downloadReturn)} onEditionChange={setDownloadEdition} />;
-
-  if (workspace === "catalog" && modCatalog) {
-    return (
-      <ModCatalogManager
-        catalog={modCatalog}
-        accounts={initializedAccounts}
-        language={config.app_language}
-        minimalMode={minimalMode}
-        autoOpenAdd={openAddRequest}
-        initialEdition={initialEdition}
-        onProcess={async (capsule) => {
-          try {
-            const local = await invokeCommand<{ processor: { ready: boolean } }>("get_mod_resources", { edition: capsule.edition, refresh: false });
-            if (!local.processor.ready) {
-              setDownloadEdition(capsule.edition === "Global" ? "Global" : "CN");
-              setDownloadReturn("catalog");
-              setWorkspace("downloads");
-              return;
-            }
-          } catch (error) {
-            showToast("error", String(error));
-            return;
-          }
-          const target = modCatalog.pool?.accounts.find((entry) => entry.edition === capsule.edition
-            && initializedAccounts.some((account) => account.id === entry.account_id));
-          if (!target) {
-            showToast("warning", isEnglish
-              ? `No initialized account is available for processing ${capsule.edition} Mods`
-              : `没有可用于加工${capsule.edition === "CN" ? "国服" : "国际服"} Mod 的已初始化账号`);
-            return;
-          }
-          await onTargetChange(target.account_id);
-          if (capsule.processed || capsule.update_required) {
-            selectProcessedMod(capsule.name);
-          } else {
-            setAudioProcessingMode?.("create");
-            setAudioProcessingTarget?.("");
-            selectSourceMod(capsule.name);
-            setAudioSetupName("");
-          }
-          setWorkspace("processing");
-        }}
-      />
-    );
-  }
-
+  const audioSelected = analysis.selection.includeAudioTelemetry;
+  const roomToolsSelected = analysis.selection.includeRoomTools;
+  const autoExitOnDeathSelected = analysis.selection.includeAutoExitOnDeath;
+  const includeEscNextGame = analysis.selection.includeEscNextGame;
+  const sourceMods = inspectionState?.installed_mods.filter(mod => mod.source_eligible) ?? [];
+  const readyCapsules = workflow.readyCapsules;
+  const catalogLoading = workflow.catalog.loading;
+  const catalogError = workflow.catalog.error;
+  const scannedLabel = inspection.scannedAt ? new Date(inspection.scannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+  const backLabel = draft.origin === "recognition" ? (isEnglish ? "Back to recognition" : "返回识别设置")
+    : draft.origin === "room-automation" ? (isEnglish ? "Back to room automation" : "返回自动跟房")
+      : (isEnglish ? "Back to Mod library" : "返回 Mod 管理");
+  const selectSourceMod = (source: string) => actions.changeRecipe({ kind: "create", source, name: outputName });
+  const selectProcessedMod = (modName: string) => actions.changeRecipe({ kind: "augment", modName });
+  const selectNewMod = () => actions.changeRecipe({ kind: "create", source: null, name: "" });
+  const setOutputName = (name: string) => { if (draft.recipe.kind === "create") actions.changeRecipe({ ...draft.recipe, name }); };
   return (
-    <div className="mod-processing-panel" data-processing-mode={effectiveProcessingMode}>
+    <div className="mod-processing-panel" data-processing-mode={operationKind}>
       <header className="mod-processing-header">
         <div>
           <h2>{isEnglish ? "Mod Processing" : "Mod 加工"}</h2>
@@ -261,16 +64,14 @@ export function ModProcessingPanel({
           </p>
         </div>
         <div className="mod-processing-header-actions">
-          {purpose === "manage" && modCatalog && (
-            <Button size="sm" variant="ghost" onClick={() => setWorkspace("catalog")}>返回 Mod 管理</Button>
-          )}
+          <Button size="sm" variant="ghost" disabled={preparing} onClick={actions.back}>{backLabel}</Button>
           <Button
             size="sm"
             variant="ghost"
-            loading={audioModStateLoading}
-            disabled={!trackingTarget.valid || audioPreparing}
+            loading={inspecting}
+            disabled={!trackingTarget.valid || preparing}
             title={scannedLabel ? `上次扫描 ${scannedLabel}` : "重新扫描 Mod 目录"}
-            onClick={() => void onRefresh()}
+            onClick={() => void actions.refresh()}
           >
             <RefreshCw size={13} />
             {isEnglish ? "Rescan" : "重新扫描"}
@@ -278,20 +79,24 @@ export function ModProcessingPanel({
         </div>
       </header>
 
-      <div className="mod-processing-processor"><ModProcessorStatus edition={targetEdition ?? initialEdition ?? "CN"} en={isEnglish} onReady={setProcessorReady}
-        onManage={openProcessorDownloads} /></div>
+      <div className="mod-processing-processor"><ModProcessorStatus edition={draft.edition} en={isEnglish}
+        onReady={actions.setProcessorReady} onManage={actions.openResources} /></div>
+      {workflow.error && <p className="mod-catalog-error" style={{ gridColumn: "1 / -1" }} role="alert">{workflow.error}</p>}
+      {inspection.error && <p className="mod-catalog-error" style={{ gridColumn: "1 / -1" }} role="alert">{inspection.error}</p>}
       <section className="spatial-panel mod-processing-section mod-processing-target">
         <div className="mod-processing-section-heading">
           <div>
             <h3>{isEnglish ? "Target account" : "加工目标"}</h3>
+            <span className="micro-meta">{draft.edition === "CN" ? (isEnglish ? "China edition" : "国服") : (isEnglish ? "Global edition" : "国际服")}</span>
             <p>{isEnglish ? "The selected account receives the generated launch arguments." : "加工完成后会自动写入这个账号的启动参数。"}</p>
           </div>
         </div>
         <select
           className="settings-input mod-processing-account-select"
+          aria-label={isEnglish ? "Target account" : "加工目标账号"}
           value={trackingTarget.valid ? trackingTarget.account.id : ""}
-          disabled={initializedAccounts.length === 0 || audioPreparing}
-          onChange={(event) => void onTargetChange(event.target.value)}
+          disabled={initializedAccounts.length === 0 || preparing}
+          onChange={(event) => void actions.chooseTarget(event.target.value)}
         >
           <option value="" disabled>{initializedAccounts.length ? "请选择账号" : "暂无已初始化账号"}</option>
           {initializedAccounts.map((account) => (
@@ -303,23 +108,23 @@ export function ModProcessingPanel({
             <Layers3 size={14} aria-hidden="true" />
             <span>
               <strong>{isEnglish ? "Processing options" : "选择加工方式"}</strong>
-              <small>{modCapsulePoolLoading
+              <small>{catalogLoading
                 ? (isEnglish ? "Scanning installed Mods…" : "正在扫描已安装 Mod…")
-                : modCapsulePoolError
+                : catalogError
                   ? (isEnglish ? "Processed Mods are temporarily unavailable" : "暂时无法读取已加工 Mod")
                   : isEnglish
                     ? `${readyCapsules.length} processed Mods can be augmented, or you can process a new Mod`
                     : `${readyCapsules.length} 个已加工 Mod 可继续增补，也可以加工新 Mod`}</small>
             </span>
           </div>
-          {!modCapsulePoolLoading && (
+          {!catalogLoading && (
             <div className="mod-capsule-pool-list">
               <button
                 type="button"
                 className="mod-processing-new-capsule"
-                aria-pressed={effectiveProcessingMode === "create"}
+                aria-pressed={operationKind === "create"}
                 title={isEnglish ? "Create a separate processed Mod" : "加工并生成一个新的独立 Mod"}
-                disabled={audioPreparing}
+                disabled={preparing}
                 onClick={selectNewMod}
               >
                 <PackagePlus size={14} aria-hidden="true" />
@@ -330,10 +135,10 @@ export function ModProcessingPanel({
                 <button
                   type="button"
                   key={capsule.id}
-                  aria-pressed={effectiveProcessingMode === "augment"
-                    && effectiveProcessingTarget.toLocaleLowerCase() === capsule.name.toLocaleLowerCase()}
+                  aria-pressed={operationKind === "augment"
+                    && targetModName.toLocaleLowerCase() === capsule.name.toLocaleLowerCase()}
                   title={`${capsule.edition} · ${capsuleFeatureLabels(capsule, isEnglish, minimalMode).join(isEnglish ? ", " : "、")}`}
-                  disabled={audioPreparing}
+                  disabled={preparing}
                   onClick={() => selectProcessedMod(capsule.name)}
                 >
                   <b>{capsule.name}</b>
@@ -358,14 +163,14 @@ export function ModProcessingPanel({
             <p>{isEnglish ? "D2RHub needs the account edition and Mod directory before it can inspect available modules." : "D2RHub 需要先确定账号版本与 Mod 目录，才能读取可用模块。"}</p>
           </div>
         </div>
-      ) : audioModStateLoading && !audioModState ? (
+      ) : inspecting && !inspectionState ? (
         <div className="mod-processing-main-state space-y-2" aria-label="正在扫描 Mod">
           <div className="h-24 skeleton rounded-xl" />
           <div className="h-40 skeleton rounded-xl" />
         </div>
       ) : (
         <>
-          {effectiveProcessingMode === "create" && (
+          {operationKind === "create" && (
             <section className="spatial-panel mod-processing-section mod-processing-source">
               <div className="mod-processing-section-heading">
                 <div>
@@ -377,13 +182,10 @@ export function ModProcessingPanel({
                 <button
                   type="button"
                   role="radio"
-                  aria-checked={audioSetupMode === "original"}
-                  className={`audio-mod-choice ${audioSetupMode === "original" ? "is-selected" : ""}`}
-                  disabled={audioPreparing}
-                  onClick={() => {
-                    setAudioSetupMode("original");
-                    setAudioSetupSource("");
-                  }}
+                  aria-checked={sourceMode === "original"}
+                  className={`audio-mod-choice ${sourceMode === "original" ? "is-selected" : ""}`}
+                  disabled={preparing}
+                  onClick={() => actions.changeRecipe({ kind: "create", source: null, name: outputName })}
                 >
                   <strong>{isEnglish ? "Original game" : "原版游戏"}</strong>
                   <span>{isEnglish ? "Start with D2RHub modules only" : "只生成本次所选模块"}</span>
@@ -391,22 +193,22 @@ export function ModProcessingPanel({
                 <button
                   type="button"
                   role="radio"
-                  aria-checked={audioSetupMode === "existing"}
-                  className={`audio-mod-choice ${audioSetupMode === "existing" ? "is-selected" : ""}`}
-                  disabled={audioPreparing || sourceMods.length === 0}
-                  onClick={() => setAudioSetupMode("existing")}
+                  aria-checked={sourceMode === "existing"}
+                  className={`audio-mod-choice ${sourceMode === "existing" ? "is-selected" : ""}`}
+                  disabled={preparing || sourceMods.length === 0}
+                  onClick={() => selectSourceMod("")}
                 >
                   <strong>{isEnglish ? "Existing Mod" : "已有 Mod"}</strong>
                   <span>{isEnglish ? "Keep every detected feature" : "继承并锁定已有功能"}</span>
                 </button>
               </div>
-              {audioSetupMode === "existing" && (
+              {sourceMode === "existing" && (
                 <label className="mod-processing-source-select">
                   <span>{isEnglish ? "Source Mod" : "源 Mod"}</span>
                   <select
                     className="settings-input"
-                    value={audioSetupSource}
-                    disabled={audioPreparing}
+                    value={sourceName}
+                    disabled={preparing}
                     onChange={(event) => selectSourceMod(event.target.value)}
                   >
                     <option value="" disabled>{isEnglish ? "Select a Mod" : "请选择 Mod"}</option>
@@ -421,7 +223,7 @@ export function ModProcessingPanel({
             <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Feature modules" : "功能模块"}</h3>
-                <p>{effectiveProcessingMode === "augment"
+                <p>{operationKind === "augment"
                   ? (isEnglish
                     ? "Installed modules remain intact. Choose only the additional capabilities you need."
                     : "目标 Mod 已有模块会完整保留，只需选择这次要增补的功能。")
@@ -437,12 +239,12 @@ export function ModProcessingPanel({
                 checked={audioSelected}
                 locked={audioRequired || audioInherited}
                 lockLabel={audioInherited
-                  ? effectiveProcessingMode === "augment"
+                  ? operationKind === "augment"
                     ? (isEnglish ? "Already installed" : "目标 Mod 已有")
                     : (isEnglish ? "Included in source" : "源 Mod 已有")
                   : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
-                disabled={audioPreparing}
-                onChange={setIncludeAudioTelemetry}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includeAudioTelemetry: value })}
               />}
               {!minimalMode && <FeatureChoice
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}
@@ -450,12 +252,12 @@ export function ModProcessingPanel({
                 checked={roomToolsSelected}
                 locked={roomToolsRequired || roomToolsInherited}
                 lockLabel={roomToolsInherited
-                  ? effectiveProcessingMode === "augment"
+                  ? operationKind === "augment"
                     ? (isEnglish ? "Already installed" : "目标 Mod 已有")
                     : (isEnglish ? "Included in source" : "源 Mod 已有")
                   : (isEnglish ? "Required for room automation" : "自动跟房必选")}
-                disabled={audioPreparing}
-                onChange={setIncludeRoomTools}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includeRoomTools: value })}
               />}
               <FeatureChoice
                 title={isEnglish ? "Double Esc: next Hell game" : "双击 Esc 下一局地狱"}
@@ -463,19 +265,19 @@ export function ModProcessingPanel({
                 checked={includeEscNextGame || inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
                 locked={inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
-                disabled={audioPreparing}
-                onChange={setIncludeEscNextGame}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includeEscNextGame: value })}
               />
               <FeatureChoice
                 title={isEnglish ? "Auto-exit after death" : "死亡后自动退房"}
                 detail={isEnglish
-                  ? "Protect the blacksmith / Iron Golem from dying, but the corpse cannot be recovered (experience and gold are lost)"
-                  : "避免铁匠/铁魔死亡，但无法捡尸体（掉经验和金币）"}
+                  ? "Leave the current game after death. This cannot prevent death, and you cannot recover your corpse in that game."
+                  : "死亡后离开当前房间；不能避免死亡，离开后无法在本局捡回尸体。"}
                 checked={autoExitOnDeathSelected}
                 locked={autoExitOnDeathInherited}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
-                disabled={audioPreparing}
-                onChange={setIncludeAutoExitOnDeath}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includeAutoExitOnDeath: value })}
               />
             </div>
           </section>
@@ -484,15 +286,15 @@ export function ModProcessingPanel({
               <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Output" : "输出与应用"}</h3>
-                <p>{effectiveProcessingMode === "augment"
+                <p>{operationKind === "augment"
                   ? (isEnglish ? "The selected Mod is augmented in place after verification, then applied to the target account." : "校验成功后原位增补所选 Mod，再应用到目标账号。")
                   : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "为加工结果命名，然后一次完成生成、校验与应用。")}</p>
               </div>
             </div>
-            {effectiveProcessingMode === "augment" ? (
+            {operationKind === "augment" ? (
               <div className="mod-processing-existing-output">
                 <CheckCircle2 size={15} />
-                <span>{effectiveProcessingTarget}</span>
+                <span>{targetModName}</span>
               </div>
             ) : (
               <label className="mod-processing-name" htmlFor="processed-mod-name">
@@ -500,58 +302,61 @@ export function ModProcessingPanel({
                 <input
                   id="processed-mod-name"
                   className="settings-input"
-                  value={audioSetupName}
+                  value={outputName}
                   maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
-                  disabled={audioPreparing}
+                  disabled={preparing}
                   autoCapitalize="off"
                   autoCorrect="off"
                   spellCheck={false}
-                  aria-invalid={!!audioSetupNameError}
+                  aria-invalid={!!outputNameError}
                   placeholder="MyD2RHubMod"
-                  onChange={(event) => setAudioSetupName(event.target.value)}
+                  onChange={(event) => setOutputName(event.target.value)}
                 />
-                {showAudioSetupNameError && <small>{audioSetupNameError}</small>}
+                {showNameError && <small>{outputNameError}</small>}
               </label>
             )}
-            {audioPreparing && audioPrepareProgress && (
+            {preparing && prepareProgress && (
               <div className="mod-processing-progress" aria-live="polite">
-                <div><span>{audioPrepareProgress.message}</span><strong>{Math.round(audioPrepareProgress.percent)}%</strong></div>
-                <ProgressBar value={audioPrepareProgress.percent} label={isEnglish ? "Mod processing progress" : "Mod 加工进度"} />
+                <div><span>{prepareProgress.message}</span><strong>{Math.round(prepareProgress.percent)}%</strong></div>
+                <ProgressBar value={prepareProgress.percent} label={isEnglish ? "Mod processing progress" : "Mod 加工进度"} />
               </div>
             )}
-            {!!audioPrepareBlockedReason && !audioPreparing && (
-              <p className="mod-processing-blocked" role="status">
+            {!!blockedReason && !preparing && (
+              <p id={blockedReasonId} className="mod-processing-blocked" role="status">
                 <AlertTriangle size={13} />
-                {audioPrepareBlockedReason}
+                {blockedReason}
               </p>
             )}
             <div className="mod-processing-actions">
-              {purpose === "recognition" && (
-                <Button variant="ghost" size="md" disabled={audioPreparing} onClick={onBackToRecognition}>
-                  {isEnglish ? "Back" : "返回识别设置"}
-                </Button>
-              )}
+              {preparing && <Button variant="ghost" size="md"
+                disabled={workflow.preparationTask.currentTask?.state !== "running" || workflow.preparationTask.cancelling || workflow.preparationTask.currentTask?.cancel_requested}
+                onClick={() => void workflow.preparationTask.cancel()}>
+                {workflow.preparationTask.cancelling || workflow.preparationTask.currentTask?.cancel_requested
+                  ? (isEnglish ? "Cancelling…" : "正在取消…") : (isEnglish ? "Cancel processing" : "取消加工")}
+              </Button>}
               <Button
                 variant="primary"
                 size="md"
-                loading={audioPreparing}
-                disabled={audioPreparing || processorReady === null || (processorReady && !!audioPrepareBlockedReason)}
-                onClick={() => { if (processorReady) void onPrepare(); else openProcessorDownloads(); }}
+                loading={preparing}
+                disabled={preparing || (!workflow.prepared && (workflow.processorReady === null || (workflow.processorReady && !!blockedReason)))}
+                aria-describedby={blockedReason && workflow.processorReady && !workflow.prepared ? blockedReasonId : undefined}
+                onClick={() => { if (workflow.processorReady || workflow.prepared) void actions.prepare(); else actions.openResources(); }}
               >
-                {processorReady ? <PackageOpen size={14} /> : <Download size={14} />}
-                {audioPreparing
+                {workflow.processorReady || workflow.prepared ? <PackageOpen size={14} /> : <Download size={14} />}
+                {preparing
                   ? (isEnglish ? "Processing…" : "正在加工…")
-                  : processorReady === null
-                    ? (isEnglish ? "Checking processor…" : "正在读取加工器…")
-                    : !processorReady
-                      ? (isEnglish ? "Download processor" : "下载加工器")
-                  : isAudioModFeatureManagement
+                  : workflow.prepared ? (isEnglish ? "Retry application" : "重试应用")
+                  : workflow.processorReady === null ? (isEnglish ? "Checking processor…" : "正在读取加工器…")
+                  : !workflow.processorReady ? (isEnglish ? "Download processor" : "下载加工器")
+                  : isAddingFeatures
                     ? (isEnglish ? "Add selected modules" : "增补所选模块")
-                    : isAudioModUpgrade
+                    : isAugment
                       ? (isEnglish ? "Verify and update" : "校验并更新")
                       : (isEnglish ? "Process and apply" : "开始加工并应用")}
               </Button>
             </div>
+            {workflow.preparationTask.cancelError && <p className="mod-catalog-error" role="alert">{workflow.preparationTask.cancelError}</p>}
+            {workflow.notice && <p className="text-xs text-text-muted" role="status">{workflow.notice}</p>}
           </section>
         </>
       )}

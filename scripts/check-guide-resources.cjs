@@ -12,6 +12,12 @@ const dom = new JSDOM(fs.readFileSync(guide, 'utf8'), {
   url: 'https://guide.local/user-guide.html', runScripts: 'outside-only', pretendToBeVisual: true,
 });
 const { window } = dom;
+const packageVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+assert.equal(
+  window.document.querySelector('meta[name="d2rhub-version"]')?.content,
+  packageVersion,
+  'Guide version differs from package.json; update the manual when preparing a release.',
+);
 const runtimeErrors = [];
 window.addEventListener('error', event => runtimeErrors.push(event.error || event.message));
 window.HTMLElement.prototype.scrollIntoView = () => {};

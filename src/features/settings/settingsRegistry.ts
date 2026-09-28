@@ -14,7 +14,6 @@ import {
   User,
   type LucideIcon,
 } from "lucide-react";
-import type { GlobalConfig } from "../../store/types";
 
 export type SettingsTabId =
   | "paths"
@@ -32,7 +31,7 @@ export type SettingsTabId =
   | "advanced";
 
 export type SettingsCapabilityKind = "core" | "platform" | "optional";
-export type SettingsFeatureGroup = "multi-instance" | "application" | "optional-features";
+export type SettingsFeatureGroup = "game" | "extensions" | "application";
 
 export interface SettingsFeatureDefinition {
   id: SettingsTabId;
@@ -43,23 +42,15 @@ export interface SettingsFeatureDefinition {
   availableInMinimal?: boolean;
   /** Stable backend lifecycle IDs. Their observed status is never inferred from config. */
   capabilityIds?: readonly string[];
-  /** Compatibility-only configuration intent for capabilities not yet supervised. */
-  isConfigured?: (config: GlobalConfig) => boolean;
 }
 
 export const SETTINGS_GROUPS: ReadonlyArray<{
   id: SettingsFeatureGroup;
 }> = [
-  { id: "multi-instance" },
+  { id: "game" },
+  { id: "extensions" },
   { id: "application" },
-  { id: "optional-features" },
 ];
-
-export const SETTINGS_CAPABILITY_LABELS: Record<SettingsCapabilityKind, string> = {
-  core: "多开",
-  platform: "应用",
-  optional: "可选功能",
-};
 
 export type SettingsLanguage = "zh-CN" | "en-US";
 
@@ -106,25 +97,9 @@ export function optionalModulesAfterUninstall(
   return OPTIONAL_SETTINGS_TABS.filter((id) => next.has(id));
 }
 
-export const SETTINGS_OPTIONAL_HUB_COPY: Record<SettingsLanguage, {
-  label: string;
-  description: string;
-  badge: string;
-}> = {
-  "zh-CN": {
-    label: "模块管理",
-    description: "按需添加或卸载桌面扩展",
-    badge: `${OPTIONAL_SETTINGS_TABS.length} 个`,
-  },
-  "en-US": {
-    label: "Module Management",
-    description: "Add or remove desktop extensions on demand",
-    badge: `${OPTIONAL_SETTINGS_TABS.length}`,
-  },
-};
-
 export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
   label: string;
+  navigationLabel?: string;
   description: string;
 }>> = {
   "zh-CN": {
@@ -137,41 +112,40 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
     appearance: { label: "外观与界面", description: "语言、主题、字体与主界面透明度" },
     overlays: { label: "桌面悬浮窗", description: "邪恶区域与场景统计悬浮窗口" },
     automation: { label: "识别与统计", description: "掉落识别、运行统计与协议诊断" },
-    "module-management": { label: "模块管理", description: "添加、卸载并组织可选功能" },
-    "mod-processing": { label: "Mod 管理", description: "扫描、选择、编辑共享 Mod，并加工功能模块" },
+    "module-management": { label: "扩展功能", description: "选择需要的工具，再按自己的习惯配置" },
+    "mod-processing": { label: "Mod 管理", description: "管理游戏 Mod、下载资源与添加功能" },
     "room-automation": { label: "自动跟房", description: "主账号建房与跟随账号分阶段加入" },
     pet: { label: "桌宠", description: "桌面伴随角色及轻量状态反馈" },
   },
   "en-US": {
-    accounts: { label: "Accounts & Instances", description: "Identity, launch options, windows, and game settings" },
-    paths: { label: "Runtime Paths", description: "Game, Battle.net, browser, and saved-game locations" },
-    agent: { label: "Launch Strategy", description: "Battle.net Agent and instance launch timing" },
-    shortcuts: { label: "Window Shortcuts", description: "Show D2RHub or focus a game instance" },
-    advanced: { label: "Maintenance & Transfer", description: "Logs, setup assistant, and account transfer" },
-    tasks: { label: "Background Tasks", description: "Progress, cancellation, retries, and diagnostic timelines" },
+    accounts: { label: "Accounts & Instances", navigationLabel: "Accounts", description: "Identity, launch options, windows, and game settings" },
+    paths: { label: "Runtime Paths", navigationLabel: "Game paths", description: "Game, Battle.net, browser, and saved-game locations" },
+    agent: { label: "Launch Strategy", navigationLabel: "Launch", description: "Battle.net Agent and instance launch timing" },
+    shortcuts: { label: "Window Shortcuts", navigationLabel: "Shortcuts", description: "Show D2RHub or focus a game instance" },
+    advanced: { label: "Maintenance & Transfer", navigationLabel: "Maintenance", description: "Logs, setup assistant, and account transfer" },
+    tasks: { label: "Background Tasks", navigationLabel: "Tasks", description: "Progress, cancellation, retries, and diagnostic timelines" },
     appearance: { label: "Appearance", description: "Language, theme, typography, and main window opacity" },
-    overlays: { label: "Desktop Overlays", description: "Terror Zone and run statistics overlay windows" },
-    automation: { label: "Recognition & Stats", description: "Audio recognition, run statistics, and diagnostics" },
-    "module-management": { label: "Module Management", description: "Add, remove, and organize optional features" },
-    "mod-processing": { label: "Mod Management", description: "Scan, edit, share, and process installed Mods" },
-    "room-automation": { label: "Room Automation", description: "Primary room creation and staged follower joining" },
-    pet: { label: "Desktop Companion", description: "Optional desktop pet and status feedback" },
+    overlays: { label: "Desktop Overlays", navigationLabel: "Overlays", description: "Terror Zone and run statistics overlay windows" },
+    automation: { label: "Recognition & Stats", navigationLabel: "Recognition", description: "Audio recognition, run statistics, and diagnostics" },
+    "module-management": { label: "Extensions", description: "Choose the tools you need and make them your own" },
+    "mod-processing": { label: "Mod Management", navigationLabel: "Mods", description: "Scan, edit, share, and process installed Mods" },
+    "room-automation": { label: "Room Automation", navigationLabel: "Auto join", description: "Primary room creation and staged follower joining" },
+    pet: { label: "Desktop Companion", navigationLabel: "Companion", description: "Optional desktop pet and status feedback" },
   },
 };
 
 export const SETTINGS_GROUP_COPY: Record<SettingsLanguage, Record<SettingsFeatureGroup, {
   label: string;
-  note: string;
 }>> = {
   "zh-CN": {
-    "multi-instance": { label: "多开", note: "始终启用" },
-    application: { label: "应用", note: "多开所需" },
-    "optional-features": { label: "可选功能", note: "按需添加" },
+    game: { label: "游戏" },
+    extensions: { label: "扩展" },
+    application: { label: "应用" },
   },
   "en-US": {
-    "multi-instance": { label: "Multi-instance", note: "Always on" },
-    application: { label: "Application", note: "Required" },
-    "optional-features": { label: "Optional Features", note: "Add on demand" },
+    game: { label: "Game" },
+    extensions: { label: "Tools" },
+    application: { label: "Application" },
   },
 };
 
@@ -189,14 +163,14 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     id: "accounts",
     icon: User,
     kind: "core",
-    group: "multi-instance",
+    group: "game",
     availableInMinimal: true,
   },
   {
     id: "paths",
     icon: Folder,
     kind: "platform",
-    group: "application",
+    group: "game",
     availableInMinimal: true,
   },
   {
@@ -230,66 +204,48 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     id: "shortcuts",
     icon: Settings,
     kind: "core",
-    group: "multi-instance",
+    group: "application",
     availableInMinimal: true,
-    isConfigured: (config) => {
-      if (config.show_main_window_shortcut?.trim() || config.hide_main_window_shortcut?.trim()) {
-        return true;
-      }
-      try {
-        const bindings: unknown = JSON.parse(config.shortcut_bindings_json || "{}");
-        return !!bindings
-          && typeof bindings === "object"
-          && !Array.isArray(bindings)
-          && Object.values(bindings).some(
-            (binding) => typeof binding === "string" && binding.trim().length > 0,
-          );
-      } catch {
-        return false;
-      }
-    },
   },
   {
     id: "mod-processing",
     icon: PackageOpen,
     kind: "platform",
-    group: "application",
+    group: "game",
     availableInMinimal: true,
   },
   {
     id: "module-management",
     icon: Blocks,
     kind: "optional",
-    group: "optional-features",
+    group: "extensions",
   },
   {
     id: "overlays",
     icon: Monitor,
     kind: "optional",
-    group: "optional-features",
+    group: "extensions",
     capabilityIds: ["terror-zone-overlay", "statistics-overlay"],
-    isConfigured: (config) => config.enable_tz_overlay || config.enable_stats_overlay,
   },
   {
     id: "pet",
     icon: Cat,
     kind: "optional",
-    group: "optional-features",
+    group: "extensions",
     capabilityIds: ["desktop-pet"],
   },
   {
     id: "automation",
     icon: ScanEye,
     kind: "optional",
-    group: "optional-features",
+    group: "extensions",
     capabilityIds: ["audio-telemetry"],
-    isConfigured: (config) => config.rune_audio_enabled,
   },
   {
     id: "room-automation",
     icon: Route,
     kind: "optional",
-    group: "optional-features",
+    group: "extensions",
     capabilityIds: ["room-automation"],
   },
 ] as const;
@@ -302,15 +258,6 @@ export function isSettingsTabAvailableInMinimal(tab: SettingsTabId): boolean {
   return SETTINGS_FEATURES.find((feature) => feature.id === tab)?.availableInMinimal === true;
 }
 
-export function isOptionalSettingsTab(tab: SettingsTabId): boolean {
-  return tab === "module-management"
-    || (OPTIONAL_SETTINGS_TABS as readonly SettingsTabId[]).includes(tab);
-}
-
 export function isOptionalModuleTab(tab: SettingsTabId): tab is OptionalModuleTabId {
   return (OPTIONAL_SETTINGS_TABS as readonly SettingsTabId[]).includes(tab);
-}
-
-export function getSettingsFeaturesByKind(kind: SettingsCapabilityKind): readonly SettingsFeatureDefinition[] {
-  return SETTINGS_FEATURES.filter((feature) => feature.kind === kind);
 }

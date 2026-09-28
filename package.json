@@ -15,8 +15,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check": "tsc --noEmit && npm test && npm run check:guide && npm run test:publisher",
     "build": "tsc && vite build",
-    "package:mod-resources": "python scripts/package-mod-resources.py",
+    "package:mod-resources": "python scripts/release-workflow.py --target mods",
     "build:desktop": "tauri build",
     "build:nsis": "tauri build --bundles nsis",
     "check:guide": "node scripts/check-guide-resources.cjs",
@@ -27,7 +28,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "publish:downloads": "python scripts/publish-downloads.py",
-    "test:publisher": "python scripts/test_publish_downloads.py && python scripts/test_release_workflow.py",
+    "test:publisher": "python scripts/test_publish_downloads.py && python scripts/test_release_workflow.py && python scripts/test_release_platforms.py",
     "release": "python scripts/release-workflow.py"
   },
   "dependencies": {

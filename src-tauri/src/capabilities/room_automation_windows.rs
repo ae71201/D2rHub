@@ -617,9 +617,20 @@ fn open_room_form(
         false,
         strategy,
         flow.key_hold_ms,
-        flow.form_settle_ms,
+        room_form_settle_ms(create, flow.form_settle_ms),
         cancel,
     )
+}
+
+fn room_form_settle_ms(create: bool, configured_ms: u64) -> u64 {
+    // The Mod opens the form at 100 ms and selects Hell 50 ms later.
+    // Reserve the existing default 300 ms even for a zero-delay create profile;
+    // this is a scheduling margin, not an acknowledgement from the game.
+    if create {
+        configured_ms.max(300)
+    } else {
+        configured_ms
+    }
 }
 
 fn deliver_key(
@@ -745,5 +756,20 @@ fn wait(cancel: &dyn CancellationCheck, duration: Duration) -> Result<(), String
         Err("自动跟房流程已取消".to_string())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::room_form_settle_ms;
+
+    #[test]
+    fn creating_reserves_initialization_time_without_shortening_user_delays() {
+        assert_eq!(room_form_settle_ms(true, 0), 300);
+        assert_eq!(room_form_settle_ms(true, 150), 300);
+        assert_eq!(room_form_settle_ms(true, 300), 300);
+        assert_eq!(room_form_settle_ms(true, 2000), 2000);
+        assert_eq!(room_form_settle_ms(false, 0), 0);
+        assert_eq!(room_form_settle_ms(false, 600), 600);
     }
 }

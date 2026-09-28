@@ -1,6 +1,6 @@
 # 模块化单体重构验收记录
 
-本记录是重构分支的发布门禁。D2rHub 仍是编译期组合、统一发布的 Windows
+本记录是架构变更的验收清单。最近一次执行结果见 [2026-09-28 整理记录](review-2026-09-28.md)，各项边界的当前归属见 [架构说明](architecture.md)。D2RHub 是编译期组合、统一发布的 Windows
 模块化单体，不提供第三方 SDK，不动态加载 DLL，也不拆分微服务。
 
 ## 自动验收
@@ -13,23 +13,25 @@
 | 4 能力协议 | 静态能力清单声明 ID、版本、分类、依赖、配置版本、设置入口、命令、事件、生命周期和健康状态 |
 | 5 配置兼容 | v0-v9 样本迁移、未知字段保留、CAS、staging/backup、失败恢复和跨资源 journal 测试 |
 | 6 前端架构 | Tauri 原始 API 仅存在于平台网关；设置面板和控制器按功能拆分；壳组件设有 900 行回归上限 |
-| 7 设置中心 | 导航、搜索、可用性和能力状态由注册表组合；简单/复杂设置均由功能面板拥有 |
+| 7 设置中心 | 游戏 / 扩展 / 应用导航、可用性和能力状态由注册表组合；草稿会话和 Mod 工作流有独立控制器 |
 | 8 任务运行时 | 初始化、启动、Mod 加工和自动跟房共享任务状态、冲突键、取消、时间线、错误码和后端重试 |
 | 9 诊断 | 结构化任务时间线、能力健康和脱敏日志可导出 ZIP；测试验证路径、账号和凭据不会泄漏 |
 | 10 资源治理 | 可选窗口按需创建并在停用时销毁；worker、监听器和快捷键由能力生命周期回收；提供 Release 基线脚本 |
 | 11 测试体系 | Rust 单元/迁移/集成测试、前端逻辑/交互/同步测试、架构契约、严格 Clippy 和生产构建 |
-| 12 发布收口 | 每个垂直阶段独立提交；正式命令 `npm run tauri build` 生成 EXE、MSI 和 NSIS 包 |
+| 12 发布收口 | 发布入口从干净提交构建 NSIS，保存源码和检查证据；本地也可生成 MSI，补传复用原产物 |
 
 每次 RC 必须依次执行：
 
 ```powershell
-npm test
+npm run check
 npm run build
-cargo test --manifest-path src-tauri/Cargo.toml --lib
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-npm run tauri build
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+npm run build:nsis -- -- --locked
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/measure-release-baseline.ps1
 ```
+
+正式发布使用 [统一发布入口](release-workflow.md)；它会在隔离源码快照中重新执行检查并记录结果。上面的工作区构建用于本地验收，不能作为已绑定源码提交的正式发布任务。
 
 ## 人工实机门禁
 

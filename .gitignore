@@ -17,3 +17,12 @@ reasonix.toml
 __pycache__/
 *.pyc
 src-tauri/permissions/*
+
+# Local credentials, runtime state, and review scratch files.
+.env
+.env.*
+!.env.example
+/logs/
+/config/
+/stateData/
+/.codex-tmp/

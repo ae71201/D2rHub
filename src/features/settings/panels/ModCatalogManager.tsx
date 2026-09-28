@@ -1,85 +1,77 @@
-import { useEffect, useMemo, useState } from "react";
-import { Check, FolderOpen, PackageOpen, PackagePlus, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, FolderOpen, PackageOpen, PackagePlus, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
+import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
-import { ModDownloadsPage } from "./ModResourceLibrary";
-import { LIGHTWEIGHT_PROFILES } from "../../modCapsules/lightweightModel";
+import { ModResourceLibrary } from "./ModResourceLibrary";
+import { ModCatalogEntry } from "./ModCatalogEntry";
+import "./modLibrary.css";
 import { Modal } from "../../../components/ui/Modal";
-import { Toggle } from "../../../components/ui/Toggle";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, ModCapsule } from "../../../store/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
-import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/model";
 
 interface ModCatalogManagerProps {
   catalog: ModCapsuleController;
   accounts: AccountMeta[];
   autoOpenAdd?: boolean;
   initialEdition?: string;
+  edition?: "CN" | "Global";
+  onEditionChange?: (edition: "CN" | "Global") => void;
   language?: string | null;
   minimalMode?: boolean;
   onProcess: (capsule: ModCapsule) => Promise<void> | void;
+  onCreate?: (edition: "CN" | "Global") => Promise<void> | void;
 }
 
 const COPY = {
   "zh-CN": {
-    title: "Mod 管理", description: "游戏目录中的 Mod 自动成为共享预设；账号、声纹识别和自动跟房都从这里选择同一份配置。",
+    title: "Mod 管理", description: "管理游戏加载的内容。在账号卡片中选用 Mod，重启游戏后生效。",
     scan: "扫描目录", openFolder: "打开文件夹", openFolderTitle: "打开当前版本的 mods 文件夹", editions: "游戏版本", cn: "国服", global: "国际服", add: "添加自定义参数",
     addLabel: "添加自定义共享参数", customTitle: "自定义共享参数",
     customHelp: "用于保留旧账号或特殊启动写法；普通 Mod 会由目录扫描自动加入。",
     cancel: "取消", save: "保存", addSuccess: "自定义参数已加入 Mod 列表",
-    scanned: "游戏目录预设 · 名称由文件夹决定", custom: "自定义共享参数", baseMod: "基 Mod",
-    credentialsPending: "凭证待更新", inUse: "使用中",
     updateSuccess: "共享参数已更新，引用它的账号和启动方案已同步",
-    autoExit: "死亡自动退房", autoExitOn: "已启用；关闭游戏后可在此停用", autoExitOff: "已停用；关闭游戏后可在此启用",
     autoExitEnabled: "死亡自动退房已启用，重新启动游戏后生效", autoExitDisabled: "死亡自动退房已停用，重新启动游戏后生效",
-    process: "加工", editTitle: "点击编辑启动参数", restoreTitle: "恢复默认预设", restore: "恢复",
-    restoreSuccess: "已恢复标准启动参数", delete: "删除",
     deleteScannedTitle: (name: string) => `删除 Mod“${name}”？`,
-    deleteScannedDescription: (name: string) => `删除此参数会同时永久删除游戏目录中的 Mod 文件夹“mods\\${name}”。此操作不可撤销。`,
+    deleteScannedDescription: (name: string) => `删除此参数会同时永久删除游戏目录中的 Mod 文件夹“mods\\${name}”。其中的 back 备份也会被删除。此操作不可撤销。`,
     deleteScannedAction: "删除参数和 Mod", deleteScannedSuccess: (name: string) => `Mod“${name}”及其参数已删除`,
     deleteCustomTitle: "删除自定义参数？",
     deleteCustomDescription: "只会删除这条自定义参数，不会删除或修改任何 Mod 文件。",
     deleteCustomAction: "删除参数", deleteCustomSuccess: "自定义参数已删除",
     empty: (value: string) => `没有扫描到 ${value === "CN" ? "国服" : "国际服"} Mod`,
-    emptyHelp: "请确认游戏目录下存在 mods\\Mod名\\Mod名.mpq，然后重新扫描。",
-    footnote: "点击参数条可编辑；扫描 Mod 的 -mod 名称必须与文件夹名称一致。删除扫描 Mod 会同时删除对应文件夹。",
   },
   "en-US": {
-    title: "Mod Management", description: "Mods in the game directory become shared presets. Accounts, recognition, and room automation all use this catalog.",
+    title: "Mod Management", description: "Manage what your game loads. Choose a Mod on an account card, then restart the game.",
     scan: "Scan folders", openFolder: "Open folder", openFolderTitle: "Open the mods folder for this game edition", editions: "Game edition", cn: "China", global: "Global", add: "Add custom arguments",
     addLabel: "Add shared custom arguments", customTitle: "Shared custom arguments",
     customHelp: "Keep legacy or specialized launch syntax here. Regular Mods are discovered from the game directory.",
     cancel: "Cancel", save: "Save", addSuccess: "Custom arguments added to the Mod list",
-    scanned: "Game-directory preset · folder name is authoritative", custom: "Shared custom arguments", baseMod: "Base Mod",
-    credentialsPending: "Metadata update required", inUse: "Used by",
     updateSuccess: "Shared arguments updated across accounts and launch schemes",
-    autoExit: "Auto-exit on death", autoExitOn: "On; close the game before turning it off here", autoExitOff: "Off; close the game before turning it on here",
     autoExitEnabled: "Auto-exit on death enabled; restart the game to apply", autoExitDisabled: "Auto-exit on death disabled; restart the game to apply",
-    process: "Process", editTitle: "Click to edit launch arguments", restoreTitle: "Restore default preset", restore: "Restore",
-    restoreSuccess: "Default launch arguments restored", delete: "Delete",
     deleteScannedTitle: (name: string) => `Delete “${name}”?`,
-    deleteScannedDescription: (name: string) => `Deleting these arguments will also permanently delete the corresponding Mod folder, “mods\\${name}”. This cannot be undone.`,
+    deleteScannedDescription: (name: string) => `Deleting these arguments will also permanently delete the corresponding Mod folder, “mods\\${name}”. Any back backups inside this folder are also deleted. This cannot be undone.`,
     deleteScannedAction: "Delete arguments and Mod", deleteScannedSuccess: (name: string) => `“${name}” and its arguments were deleted`,
     deleteCustomTitle: "Delete custom arguments?",
     deleteCustomDescription: "Only these custom arguments will be deleted. No Mod files will be deleted or changed.",
     deleteCustomAction: "Delete arguments", deleteCustomSuccess: "Custom arguments deleted",
     empty: (value: string) => `No ${value === "CN" ? "China" : "Global"} Mods found`,
-    emptyHelp: "Confirm that mods\\ModName\\ModName.mpq exists in the game directory, then scan again.",
-    footnote: "Click the arguments strip to edit it. A scanned Mod must keep the -mod name that matches its folder. Deleting a scanned Mod also deletes that folder.",
   },
 } as const;
 
-export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEdition, language, minimalMode = false, onProcess }: ModCatalogManagerProps) {
+export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEdition, edition: controlledEdition, onEditionChange, language, minimalMode = false, onProcess, onCreate }: ModCatalogManagerProps) {
   const isEnglish = language === "en-US";
   const copy = COPY[isEnglish ? "en-US" : "zh-CN"];
-  const [edition, setEdition] = useState<"CN" | "Global">(
+  const [localEdition, setLocalEdition] = useState<"CN" | "Global">(
     (initialEdition ?? catalog.pool?.capsules[0]?.edition) === "Global" ? "Global" : "CN",
   );
+  const edition = controlledEdition ?? localEdition;
+  const setEdition = (next: "CN" | "Global") => { setLocalEdition(next); onEditionChange?.(next); };
   const [generateOpen, setGenerateOpen] = useState(false);
-  const [generatedName] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [argumentDraft, setArgumentDraft] = useState("");
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const operationLock = useRef(false);
+  const [operationBusy, setOperationBusy] = useState(false);
+  const busy = catalog.loading || operationBusy || catalog.unpackingCapsuleId !== null;
   const [addOpen, setAddOpen] = useState(false);
   const [addDraft, setAddDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ModCapsule | null>(null);
@@ -95,21 +87,10 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
     }
   }, [autoOpenAdd, initialEdition]);
 
-  useEffect(() => {
-    if (generateOpen) return;
-    const all = catalog.pool?.capsules ?? [];
-    if (all.length && !all.some((capsule) => capsule.edition === edition)) {
-      setEdition(all.some((capsule) => capsule.edition === "CN") ? "CN" : "Global");
-    }
-  }, [catalog.pool, edition, generateOpen]);
-
-  useEffect(() => {
-    if (!generatedName || generateOpen) return;
-    const row = document.getElementById(`generated-mod-${edition}-${generatedName}`);
-    row?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-  }, [generatedName, generateOpen, edition, capsules]);
-
   const run = async (operation: () => Promise<unknown>, success: string) => {
+    if (operationLock.current) return false;
+    operationLock.current = true;
+    setOperationBusy(true);
     try {
       await operation();
       showToast("success", success);
@@ -117,13 +98,10 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
     } catch (error) {
       showToast("error", String(error));
       return false;
+    } finally {
+      operationLock.current = false;
+      setOperationBusy(false);
     }
-  };
-
-  const beginEdit = (capsule: ModCapsule) => {
-    setEditingId(capsule.id);
-    setArgumentDraft(capsule.launch_arguments);
-    setDeleteTarget(null);
   };
 
   const deleteIsScanned = deleteTarget?.origin === "scanned";
@@ -138,14 +116,11 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
       : copy.deleteCustomDescription
     : "";
   const closeDeleteConfirmation = () => {
-    if (!catalog.loading) setDeleteTarget(null);
+    if (!busy) setDeleteTarget(null);
   };
 
-  if (generateOpen) return <ModDownloadsPage edition={edition} en={isEnglish} catalog={catalog}
-    onBack={() => setGenerateOpen(false)} onEditionChange={setEdition} />;
-
   return (
-    <div className="mod-catalog-manager">
+    <div className="mod-catalog-manager mod-library">
       <header className="mod-processing-header">
         <div>
           <h2>{copy.title}</h2>
@@ -156,9 +131,6 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             : copy.description}</p>
         </div>
         <div className="mod-processing-header-actions">
-          <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}>
-            <PackagePlus size={13} />{isEnglish ? "Download Mods & processor" : "下载 Mod 与加工器"}
-          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -169,25 +141,27 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           >
             <FolderOpen size={13} />{copy.openFolder}
           </Button>
-          <Button size="sm" variant="ghost" loading={catalog.loading} onClick={() => void catalog.scan()}>
+          <Button size="sm" variant="ghost" loading={busy} onClick={() => void catalog.scan()}>
             <RefreshCw size={13} />{copy.scan}
           </Button>
         </div>
       </header>
 
-      <div className="mod-catalog-toolbar">
+      <div className="mod-library-navigation">
+        <div className="mod-library-views" role="group" aria-label={isEnglish ? "Mod library views" : "Mod 库视图"}>
+          <button type="button" aria-pressed={!generateOpen} onClick={() => setGenerateOpen(false)}>{isEnglish ? "Installed" : "已安装"}</button>
+          <button type="button" aria-pressed={generateOpen} onClick={() => setGenerateOpen(true)}>{isEnglish ? "Downloads & updates" : "下载与更新"}</button>
+        </div>
         <div className="mod-catalog-editions" role="tablist" aria-label={copy.editions}>
           {(["CN", "Global"] as const).map((value) => (
-            <button key={value} type="button" role="tab" aria-selected={edition === value} onClick={() => setEdition(value)}>
+            <button key={value} type="button" role="tab" aria-selected={edition === value} disabled={downloadBusy} onClick={() => { setEdition(value); setAddOpen(false); setAddDraft(""); }}>
               {value === "CN" ? copy.cn : copy.global}
             </button>
           ))}
         </div>
-        <Button size="sm" variant="secondary" onClick={() => { setAddOpen(true); setAddDraft(""); }}>
-          <Plus size={13} />{copy.add}
-        </Button>
       </div>
 
+      {generateOpen ? <ModResourceLibrary edition={edition} en={isEnglish} catalog={catalog} onBusy={setDownloadBusy} /> : <>
       {addOpen && (
         <section className="mod-catalog-add" aria-label={copy.addLabel}>
           <div>
@@ -197,12 +171,14 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           <input
             className="settings-input"
             value={addDraft}
+            disabled={busy}
+            aria-label={copy.customTitle}
             autoFocus
             placeholder={isEnglish ? "Example: -mod MyMod -txt -assettestmode 1" : "例如：-mod MyMod -txt -assettestmode 1"}
             onChange={(event) => setAddDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Escape") setAddOpen(false);
-              if (event.key === "Enter" && addDraft.trim()) {
+              if (event.key === "Escape") { event.stopPropagation(); if (!busy) setAddOpen(false); }
+              if (event.key === "Enter" && addDraft.trim() && !busy) {
                 void run(() => catalog.add(edition, addDraft.trim()), copy.addSuccess).then((saved) => {
                   if (saved) { setAddOpen(false); setAddDraft(""); }
                 });
@@ -214,7 +190,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             <Button
               size="sm"
               variant="primary"
-              disabled={!addDraft.trim() || catalog.loading}
+              disabled={!addDraft.trim() || busy}
               onClick={() => void run(() => catalog.add(edition, addDraft.trim()), copy.addSuccess).then((saved) => {
                 if (saved) { setAddOpen(false); setAddDraft(""); }
               })}
@@ -223,145 +199,60 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
         </section>
       )}
 
+      {catalog.unpackingCapsuleId && <section aria-label={isEnglish ? "MPQ unpacking" : "MPQ 解压"}>
+        <p role="status">{isEnglish ? "Unpacking MPQ…" : (catalog.unpackProgress?.message ?? "正在准备解压…")}</p>
+        <ProgressBar value={catalog.unpackProgress?.percent} label={isEnglish ? "MPQ unpacking progress" : "MPQ 解压进度"} />
+        <Button size="sm" variant="ghost" disabled={!catalog.unpackProgress} onClick={() => void catalog.cancelUnpack().catch(error => showToast("error", String(error)))}>
+          {isEnglish ? "Cancel unpacking" : "取消解压"}
+        </Button>
+      </section>}
+      {catalog.unpackResult && <p role="status">{isEnglish ? "Unpacked. You can now process this Mod." : "解压完成，现在可以加工此 Mod。"}
+        {catalog.unpackResult.backup_path && <><br />{isEnglish ? "Original MPQ backup: " : "原 MPQ 备份："}<code>{catalog.unpackResult.backup_path}</code></>}
+        {catalog.unpackResult.escaped_name_count > 0 && <><br />{isEnglish ? "Some resource names were escaped; the original names are recorded with the backup." : "部分资源文件名已转义，原始名称记录在备份清单中。"}</>}
+      </p>}
       {catalog.error && <p className="mod-catalog-error" role="status">{catalog.error}</p>}
-      <div className="mod-catalog-list" aria-busy={catalog.loading}>
-        {capsules.map((capsule) => {
-          const editing = editingId === capsule.id;
-          const assignedNames = capsule.assigned_account_ids
-            .map((id) => accounts.find((account) => account.id === id)?.display_name || id)
-            .join(isEnglish ? ", " : "、");
-          const featureLabels = capsuleFeatureLabels(capsule, isEnglish, minimalMode);
-          const supportsAutoExitOnDeath = capsule.origin === "scanned"
-            && capsule.feature_groups.includes("auto_exit_on_death");
-          const autoExitDescriptionId = `mod-auto-exit-${capsule.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-          return (
-            <article key={capsule.id} className="mod-catalog-row" id={`generated-mod-${edition}-${capsule.name}`} data-generated={generatedName === capsule.name ? "true" : undefined} data-processed={capsule.processed ? "true" : undefined} data-assigned={assignedNames ? "true" : undefined}>
-              <div className="mod-catalog-identity">
-                <span className="mod-catalog-capsule"><PackageOpen size={13} /><b>{capsule.name}</b></span>
-                <small>{capsule.lightweight_profile
-                  ? (isEnglish ? "Generated from original game resources" : "原版资源生成")
-                  : capsule.origin === "scanned" ? copy.scanned : copy.custom}</small>
-                {capsule.lightweight_profile && <div className="mod-catalog-badges"><span data-kind="feature">{LIGHTWEIGHT_PROFILES.find((p) => p.id === capsule.lightweight_profile)?.[isEnglish ? "en" : "label"]}</span></div>}
-                {capsule.issue && <small className="lightweight-error" role="status">{capsule.issue}</small>}
-                <div className="mod-catalog-state">
-                  {capsule.processed && (
-                    <div className="mod-catalog-capability-capsules">
-                      <span data-kind="base" title={copy.baseMod}>{capsuleBaseModLabel(capsule, isEnglish)}</span>
-                      {featureLabels.length
-                        ? featureLabels.map((label) => <span data-kind="feature" key={label}>{label}</span>)
-                        : !minimalMode && <span data-kind="pending">{copy.credentialsPending}</span>}
-                    </div>
-                  )}
-                  {!!assignedNames && <small title={assignedNames}>{copy.inUse}: {assignedNames}</small>}
-                </div>
-              </div>
-              {editing ? (
-                <div className="mod-catalog-editor">
-                  <input
-                    className="settings-input"
-                    value={argumentDraft}
-                    autoFocus
-                    onChange={(event) => setArgumentDraft(event.target.value)}
-                    onKeyDown={(event) => { if (event.key === "Escape") setEditingId(null); }}
-                  />
-                  <Button size="sm" variant="primary" disabled={!argumentDraft.trim()} onClick={() => void run(
-                    () => catalog.update(capsule.id, argumentDraft.trim()),
-                    copy.updateSuccess,
-                  ).then((saved) => { if (saved) setEditingId(null); })}><Check size={12} />{copy.save}</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}><X size={12} />{copy.cancel}</Button>
-                </div>
-              ) : (
-                <div className="mod-catalog-configuration">
-                  <button
-                    type="button"
-                    className="mod-catalog-arguments"
-                    title={`${copy.editTitle}: ${capsule.launch_arguments}`}
-                    aria-label={`${copy.editTitle}: ${capsule.name}`}
-                    disabled={catalog.loading}
-                    onClick={() => beginEdit(capsule)}
-                  >
-                    <code>{capsule.launch_arguments}</code>
-                  </button>
-                  {supportsAutoExitOnDeath && (
-                    <div className="mod-catalog-feature-control">
-                      <span>
-                        <b>{copy.autoExit}</b>
-                        <small id={autoExitDescriptionId}>
-                          {capsule.auto_exit_on_death_enabled
-                            ? copy.autoExitOn
-                            : copy.autoExitOff}
-                        </small>
-                      </span>
-                      <Toggle
-                        checked={capsule.auto_exit_on_death_enabled === true}
-                        disabled={catalog.loading}
-                        ariaLabel={`${capsule.name} ${copy.autoExit}`}
-                        descriptionId={autoExitDescriptionId}
-                        onChange={(enabled) => void run(
-                          () => catalog.setAutoExitOnDeathEnabled(capsule.id, enabled),
-                          enabled ? copy.autoExitEnabled : copy.autoExitDisabled,
-                        )}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-              {!editing && (
-                <div className="mod-catalog-actions">
-                  {capsule.origin === "scanned" && (
-                    capsule.source_eligible || capsule.update_required || capsule.processed
-                  ) && (
-                    <Button size="sm" variant="ghost" onClick={() => void onProcess(capsule)}>{copy.process}</Button>
-                  )}
-                  {capsule.deletable && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      title={capsule.origin === "scanned" ? copy.deleteScannedAction : copy.deleteCustomAction}
-                      onClick={() => { setEditingId(null); setDeleteTarget(capsule); }}
-                    >
-                      <Trash2 size={12} />{copy.delete}
-                    </Button>
-                  )}
-                  {capsule.origin === "scanned" && capsule.default_launch_arguments
-                    && capsule.launch_arguments !== capsule.default_launch_arguments && (
-                      <Button size="sm" variant="ghost" title={copy.restoreTitle} onClick={() => void run(
-                        () => catalog.update(capsule.id, capsule.default_launch_arguments!),
-                        copy.restoreSuccess,
-                      )}><RotateCcw size={12} />{copy.restore}</Button>
-                    )}
-                </div>
-              )}
-            </article>
-          );
-        })}
+      <div className="mod-catalog-list" aria-busy={busy}>
+        {capsules.map(capsule => <ModCatalogEntry key={capsule.id} capsule={capsule}
+          accounts={accounts} en={isEnglish} minimalMode={minimalMode} busy={busy}
+          onUpdate={args => run(() => catalog.update(capsule.id, args), copy.updateSuccess)}
+          onDelete={() => setDeleteTarget(capsule)}
+          onProcess={() => void onProcess(capsule)}
+          unpacking={catalog.unpackingCapsuleId === capsule.id}
+          onUnpack={() => void run(() => catalog.unpack(capsule.id), isEnglish ? "Unpacked; ready to process" : "解压完成，可以加工了")}
+          onToggleDeathExit={enabled => void run(() => catalog.setAutoExitOnDeathEnabled(capsule.id, enabled), enabled ? copy.autoExitEnabled : copy.autoExitDisabled)} />)}
         {!catalog.loading && capsules.length === 0 && (
           <div className="mod-catalog-empty">
             <PackageOpen size={22} />
             <strong>{copy.empty(edition)}</strong>
-            <p>{isEnglish ? "Scan an existing Mod or generate one from original game resources." : "可以扫描已有 Mod，也可以使用原版资源生成轻量 Mod。"}</p>
+            <p>{isEnglish ? "Download a ready-to-use Mod, or scan Mods already in your game folder." : "下载成品 Mod，或将已有 Mod 放入游戏目录后重新扫描。"}</p>
             <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}><PackagePlus size={13} />{isEnglish ? "Download Mods & processor" : "下载 Mod 与加工器"}</Button>
           </div>
         )}
       </div>
-      <footer className="mod-catalog-footnote">
-        {copy.footnote}
-      </footer>
+      <details className="mod-library-advanced" open={addOpen || undefined}>
+        <summary>{isEnglish ? "Custom processing & launch presets" : "自定义加工与启动预设"}</summary>
+        {onCreate && <Button size="sm" variant="secondary" disabled={busy} onClick={() => void onCreate(edition)}>
+          <PackagePlus size={13} />{isEnglish ? "Process a new Mod" : "加工新 Mod"}
+        </Button>}
+        <p>{copy.customHelp}</p>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setAddOpen(true); setAddDraft(""); }}><Plus size={13} />{copy.add}</Button>
+      </details>
+      </>}
       <Modal
         open={deleteTarget !== null}
         onClose={closeDeleteConfirmation}
         title={deleteTitle}
         width="max-w-sm"
-        dismissible={!catalog.loading}
+        dismissible={!busy}
         footer={(
           <>
-            <Button autoFocus size="sm" variant="secondary" disabled={catalog.loading} onClick={closeDeleteConfirmation}>
+            <Button autoFocus size="sm" variant="secondary" disabled={busy} onClick={closeDeleteConfirmation}>
               {copy.cancel}
             </Button>
             <Button
               size="sm"
               variant="danger"
-              loading={catalog.loading}
+              loading={busy}
               onClick={() => {
                 if (!deleteTarget) return;
                 const target = deleteTarget;

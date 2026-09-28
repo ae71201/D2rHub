@@ -32,13 +32,13 @@
 
 ```powershell
 npm ci
-npm test
-npm exec tsc -- --noEmit
+python -m pip install -r scripts/publisher-requirements.txt
+npm run check
 npm run build
 Set-Location src-tauri
 cargo fmt -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked
 Set-Location ..
 ```
 

@@ -21,7 +21,7 @@ export function AccountStatusLight({ name, running, issue, selected, mode, disab
   const action = running ? "关闭" : "启动";
   const mismatch = !!mode && mode !== (running ? "close" : "launch");
   const unknown = uncertain || issue === undefined;
-  const label = activity || (selected ? `待${action}` : issue ? `${running ? "运行中 · " : ""}配置异常` : unknown ? "状态待确认" : "");
+  const label = activity || (selected ? `待${action}` : issue ? `${running ? "运行中 · " : ""}配置异常` : unknown ? "状态待确认" : running ? "运行中" : "未运行");
   const title = unknown ? "状态待确认，请稍后重试" : selected ? `已选中待${action}，再次点击取消`
     : mismatch ? "请先取消当前选择" : issue && !running ? `配置异常：${issue}，点击配置`
     : `${running ? "运行中" : "未运行"}，点击选择${action}${issue ? `；配置异常：${issue}` : ""}`;

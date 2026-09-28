@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
+use crate::application::mod_mutation::ModMutationLease;
 use crate::domain::account::{AccountMeta, AuthMode, ClientEdition, GameRegion};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
@@ -400,9 +401,23 @@ pub(crate) fn validate_distinct_installation_profiles(
 
 pub(crate) struct HostRuntimeLease<'a> {
     busy: &'a std::sync::atomic::AtomicBool,
+    _mod_mutation: Option<ModMutationLease>,
 }
 
 impl<'a> HostRuntimeLease<'a> {
+    /// A launch must keep its Mod files stable until the process and its
+    /// running-session identity have been registered. Both reservations are
+    /// fail-fast; acquiring the host second releases the Mod lease on failure.
+    pub(crate) fn try_acquire_for_launch(state: &'a AppState) -> Result<Self, AppError> {
+        let mutation = state
+            .mod_mutations()
+            .try_acquire()
+            .map_err(AppError::Unknown)?;
+        let mut lease = Self::try_acquire(state)?;
+        lease._mod_mutation = Some(mutation);
+        Ok(lease)
+    }
+
     pub(crate) fn try_acquire(state: &'a AppState) -> Result<Self, AppError> {
         state
             .host_runtime_busy
@@ -414,6 +429,7 @@ impl<'a> HostRuntimeLease<'a> {
             })?;
         Ok(Self {
             busy: &state.host_runtime_busy,
+            _mod_mutation: None,
         })
     }
 }
@@ -427,6 +443,37 @@ impl Drop for HostRuntimeLease<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_reserves_mod_files_until_completion_or_cancellation() {
+        let state = AppState::new();
+        let launch = HostRuntimeLease::try_acquire_for_launch(&state).unwrap();
+        assert!(state.mod_mutations().try_acquire().is_err());
+        assert!(state.host_runtime_busy.load(Ordering::Acquire));
+        drop(launch);
+        assert!(state.mod_mutations().try_acquire().is_ok());
+        assert!(!state.host_runtime_busy.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn mod_mutation_rejects_launch_before_host_runtime_is_reserved() {
+        let state = AppState::new();
+        let mutation = state.mod_mutations().try_acquire().unwrap();
+        assert!(HostRuntimeLease::try_acquire_for_launch(&state).is_err());
+        assert!(!state.host_runtime_busy.load(Ordering::Acquire));
+        drop(mutation);
+        assert!(HostRuntimeLease::try_acquire_for_launch(&state).is_ok());
+    }
+
+    #[test]
+    fn busy_host_does_not_leak_a_failed_launch_mod_reservation() {
+        let state = AppState::new();
+        let host = HostRuntimeLease::try_acquire(&state).unwrap();
+        assert!(HostRuntimeLease::try_acquire_for_launch(&state).is_err());
+        assert!(state.mod_mutations().try_acquire().is_ok());
+        drop(host);
+        assert!(HostRuntimeLease::try_acquire_for_launch(&state).is_ok());
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

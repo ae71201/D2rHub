@@ -3,7 +3,7 @@
 ## 开源与信任边界
 
 D2RHub 是开源的 Windows 本地工具，源代码、构建配置和依赖声明均保存在本仓库。
-请只从本仓库的 [Releases](https://github.com/gjy991229/D2RHub/releases) 下载发布产物，
+请从本仓库的 [Releases](https://github.com/gjy991229/D2RHub/releases) 或应用内校验的 GitHub / Gitee 分发通道下载发布产物，
 并在安装前核对 Release 页面公布的文件名和校验值。
 
 开源便于审查，但不等于杀毒软件白名单，也不能仅凭仓库内容证明任意来源的二进制文件
@@ -27,7 +27,7 @@ D2RHub 当前主程序请求管理员权限。下表列出程序使用的主要�
 | 全局键盘和鼠标钩子 | 仅在 Bongo Cat 已启用且可见时，为桌宠提供键盘、左右键动画事件。 | 监听后继续传递输入，不吞键、不保存按键文本或输入历史，也不通过网络发送输入事件。 |
 | 进程音频捕获 | 使用 Windows WASAPI application loopback 捕获指定 D2R PID 的实际混音输出，用于地点和掉落声纹识别。 | 不访问麦克风；捕获范围限定为所选 D2R 应用及其进程树。 |
 | 窗口管理 | 查找 D2R 窗口、修改窗口标题和位置、聚焦指定账号窗口，并显示置顶悬浮窗。 | 只操作 D2RHub 自身窗口及已识别的游戏窗口。 |
-| 网络访问与外部浏览器 | 打开 Battle.net 官方登录页、查询 GitHub Releases 更新、获取邪恶区域公开信息。统计页 API 绑定 Windows 回环地址。 | 本地统计服务仅监听 `127.0.0.1`；程序不设计用于上传账号配置、Token 或 UnifiedAuth 快照。 |
+| 网络访问与外部浏览器 | 打开 Battle.net 官方登录页、通过 GitHub / Gitee 检查与下载软件和 Mod 资源、获取邪恶区域公开信息；自动下载源选择会查询公开国家码服务。统计页 API 绑定 Windows 回环地址。 | 本地统计服务仅监听 `127.0.0.1`；程序不设计用于上传账号配置、Token 或 UnifiedAuth 快照。 |
 
 ## 本地数据和联网范围
 
@@ -43,7 +43,8 @@ D2RHub 当前主程序请求管理员权限。下表列出程序使用的主要�
 当前源码中的主动联网范围包括：
 
 - Battle.net 官方登录页面；
-- GitHub Releases 最新版本接口；
+- GitHub / Gitee Releases 清单接口与对应资源附件下载；
+- 自动选源时的 `api.country.is` 国家码查询（只缓存国家码和优先来源，不保存返回的 IP）；
 - `api.d2-trade.com.cn` 的邪恶区域公开信息接口；
 - 绑定随机端口的 `127.0.0.1` 本地统计服务。
 
@@ -108,8 +109,7 @@ VirusTotal 只汇总各安全厂商的结果，误报需要由产生检测的厂
 ## 私下报告漏洞
 
 请优先使用仓库 Security 页面中的 **Report a vulnerability**（GitHub Private
-Vulnerability Reporting）提交报告。若该入口暂未启用，请先通过 README 中的
-开发者 QQ 联系维护者索取私密报告渠道，不要在公开 Issue 中披露漏洞细节。
+Vulnerability Reporting）提交报告。若该入口暂未启用，可先在公开 Issue 请求维护者提供私密联系渠道；请求中不要包含漏洞细节、复现材料或凭据。
 
 报告请包含：
 

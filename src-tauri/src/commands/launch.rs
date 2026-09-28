@@ -27,6 +27,8 @@ use crate::launch_context::{
 use crate::state::{AccountLifecycleLease, SharedState};
 use crate::token_registry_change::{WebTokenChangeMonitor, WEB_TOKEN_VALUE_NAME};
 
+const LOGIN_KEY_SEND_WINDOW: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// 启动进度详情
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchResult {
@@ -715,6 +717,13 @@ pub(crate) fn preflight_account_meta(
             validate_bnet_snapshot(config, meta, context.installation.edition)?;
         }
     }
+    if purpose == ContextPurpose::LaunchGame {
+        crate::mpq_mod::ensure_no_pending_conversion(
+            &context.installation.game_directory.join("mods"),
+            &meta.mod_args,
+        )
+        .map_err(AppError::ConfigReadError)?;
+    }
     Ok(())
 }
 
@@ -980,7 +989,7 @@ async fn launch_battle_net_only_impl(
         }
 
         if host_runtime_lease.is_none() {
-            match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
+            match HostRuntimeLease::try_acquire_for_launch(state.inner().as_ref()) {
                 Ok(lease) => {
                     host_runtime_lease = Some(lease);
                 }
@@ -1713,7 +1722,7 @@ async fn launch_accounts_impl(
         if host_runtime_lease.is_none() {
             // Token 启动同样会覆盖机器级 Launch Options\OSI 与 Settings.json；只在
             // 真正启动前取得宿主租约，避免并发流程串号或串配置。
-            match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
+            match HostRuntimeLease::try_acquire_for_launch(state.inner().as_ref()) {
                 Ok(lease) => {
                     host_runtime_lease = Some(lease);
                 }
@@ -2383,6 +2392,7 @@ async fn launch_single(
     };
     let start = std::time::Instant::now();
     let key_start = d2r_started_at + std::time::Duration::from_secs(2);
+    let key_deadline = key_start + LOGIN_KEY_SEND_WINDOW;
     let mut next_key_send = key_start;
     let mut change_logged = false;
     let mut key_attempts = 0u32;
@@ -2436,7 +2446,7 @@ async fn launch_single(
             ));
         }
         let now = std::time::Instant::now();
-        if !changed && now >= next_key_send {
+        if !changed && now >= next_key_send && now < key_deadline {
             let sent = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             key_attempts += 1;
             if key_attempts == 1 || key_attempts.is_multiple_of(10) {
@@ -2930,7 +2940,7 @@ async fn launch_single_token(
     let monitor = &token_change_monitor;
     let start = std::time::Instant::now();
     let key_start = d2r_started_at + std::time::Duration::from_secs(2);
-    let key_deadline = key_start + std::time::Duration::from_secs(9);
+    let key_deadline = key_start + LOGIN_KEY_SEND_WINDOW;
     let mut next_key_send = key_start;
     let mut change_logged = false;
     let mut mutex_logged = false;
@@ -3053,71 +3063,8 @@ async fn launch_single_token(
 
 // ── 工具函数 ──
 
-/// Parse a Windows command-line fragment into arguments without losing quoted spaces.
-/// Implements the backslash-before-quote rules used by the Microsoft C runtime.
-pub(crate) fn parse_windows_command_line(input: &str) -> Result<Vec<String>, String> {
-    let chars: Vec<char> = input.chars().collect();
-    let mut args = Vec::new();
-    let mut index = 0;
-
-    while index < chars.len() {
-        while index < chars.len() && chars[index].is_whitespace() {
-            index += 1;
-        }
-        if index == chars.len() {
-            break;
-        }
-
-        let mut argument = String::new();
-        let mut in_quotes = false;
-        let mut started = false;
-        while index < chars.len() {
-            let current = chars[index];
-            if current.is_whitespace() && !in_quotes {
-                break;
-            }
-            if current == '\\' {
-                let slash_start = index;
-                while index < chars.len() && chars[index] == '\\' {
-                    index += 1;
-                }
-                let slash_count = index - slash_start;
-                if index < chars.len() && chars[index] == '"' {
-                    argument.extend(std::iter::repeat_n('\\', slash_count / 2));
-                    if slash_count % 2 == 0 {
-                        in_quotes = !in_quotes;
-                    } else {
-                        argument.push('"');
-                    }
-                    started = true;
-                    index += 1;
-                } else {
-                    argument.extend(std::iter::repeat_n('\\', slash_count));
-                    started = true;
-                }
-                continue;
-            }
-            if current == '"' {
-                in_quotes = !in_quotes;
-                started = true;
-                index += 1;
-                continue;
-            }
-            argument.push(current);
-            started = true;
-            index += 1;
-        }
-
-        if in_quotes {
-            return Err("Mod 启动参数包含未闭合的双引号".to_string());
-        }
-        if started {
-            args.push(argument);
-        }
-    }
-
-    Ok(args)
-}
+// Compatibility path for existing command consumers.
+pub(crate) use crate::domain::mod_arguments::parse_windows_command_line;
 
 /// 解码 .reg 注册表文件内容为 String。
 /// Windows regedit 导出默认 UTF-16LE（BOM 0xFF 0xFE），也兼容 UTF-8（含或不含 BOM）。

@@ -2,11 +2,13 @@
 //! can wait for this exact process before the mode is committed. It never
 //! enters Tauri, takes the single-instance mutex, or reads configuration until
 //! the old process has exited. Dropping an uncommitted handoff kills the child.
+use crate::application::mod_mutation::ModMutationLease;
 use crate::state::SharedState;
 use std::sync::atomic::Ordering;
 
 pub(crate) struct RuntimeWriteReservation {
     state: SharedState,
+    _mod_mutation: ModMutationLease,
 }
 
 impl RuntimeWriteReservation {
@@ -15,26 +17,46 @@ impl RuntimeWriteReservation {
             .host_runtime_busy
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| "游戏启动或账号初始化进行中，请完成后再切换模式".to_string())?;
-        if state
-            .audio_mod_build_busy
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        let mod_mutation = state.mod_mutations().try_acquire().map_err(|_| {
             state.host_runtime_busy.store(false, Ordering::Release);
-            return Err("Mod 加工进行中，请完成后再切换模式".to_string());
-        }
+            "Mod 资源操作进行中，请完成后再切换模式".to_string()
+        })?;
         Ok(Self {
             state: state.clone(),
+            _mod_mutation: mod_mutation,
         })
     }
 }
 
 impl Drop for RuntimeWriteReservation {
     fn drop(&mut self) {
-        self.state
-            .audio_mod_build_busy
-            .store(false, Ordering::Release);
         self.state.host_runtime_busy.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+
+    #[test]
+    fn mod_mutation_blocks_restart_and_releases_the_host_reservation_on_failure() {
+        let state = std::sync::Arc::new(crate::state::AppState::new());
+        let mutation = state.mod_mutations().try_acquire().unwrap();
+        assert!(RuntimeWriteReservation::acquire(&state).is_err());
+        assert!(!state.host_runtime_busy.load(Ordering::Acquire));
+        drop(mutation);
+        assert!(RuntimeWriteReservation::acquire(&state).is_ok());
+    }
+
+    #[test]
+    fn restart_blocks_mod_mutations_until_the_handoff_is_cancelled() {
+        let state = std::sync::Arc::new(crate::state::AppState::new());
+        let restart = RuntimeWriteReservation::acquire(&state).unwrap();
+        assert!(state.mod_mutations().try_acquire().is_err());
+        assert!(state.host_runtime_busy.load(Ordering::Acquire));
+        drop(restart);
+        assert!(state.mod_mutations().try_acquire().is_ok());
+        assert!(!state.host_runtime_busy.load(Ordering::Acquire));
     }
 }
 

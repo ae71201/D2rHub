@@ -1,5 +1,7 @@
 # 一键发布工作流
 
+本页是当前唯一的维护者发布入口；资源协议细节见 [双源更新协议](dual-source-updates.md)。
+
 日常使用仓库根目录的 `release.cmd`（双击），选择 **软件 / 加工器 / 三个Mod / 全部**。脚本自动准备文件并显示版本、兼容范围、大小；输入 `p` 上传双端，输入 `s` 上传并提升软件正式版，直接回车则仅保留准备结果。选择“补传已有任务”可恢复失败的发布，不重新构建。
 
 ## 首次配置
@@ -52,8 +54,8 @@ gh auth login
 
 ## 文件从哪里来
 
-- **软件**：从运行脚本所在的干净 Git 提交构建。核对 npm、Cargo、Tauri 版本一致，执行 `npm ci` 和 NSIS 构建，再核对 EXE 内嵌版本。不会误取历史 `target` 中的旧安装包。
-- **加工器**：从配置的干净 Git 仓库执行 `cargo build --locked --release`，检查程序实际 `--version` 与 Cargo 版本一致。
+- **软件**：从运行脚本所在的干净 Git 提交准备。核对快照内 npm、Cargo、Tauri 版本一致，运行前端和 Rust 检查，再执行锁定依赖的 NSIS 构建，并核对 EXE 内嵌版本。不会误取历史 `target` 中的旧安装包。
+- **加工器**：从配置的干净 Git 仓库准备。先运行 Rust 格式、Clippy 和测试，再执行 `cargo build --locked --release`，检查程序实际 `--version` 与快照内 Cargo 版本一致。
 - **三个 Mod**：从配置目录读取 `LiteHub`、`BoHub`、`NullHub`。校验生成来源、方案、实际游戏数据版本；拒绝加工清单、符号链接和重解析点。只去除 Hub 安装记录与可由同目录 TXT 生成的 BIN 缓存，规范化生成清单中的本机路径。ZIP 使用固定时间和属性，相同内容得到相同文件。
 
 软件和加工器先通过 `git archive` 导出当前提交的源码快照，再在本次任务独立的源码及构建目录运行构建。未跟踪的历史权限文件、旧构建缓存和本机文件不会混入源码，构建不会改写原工作区；原始 Mod 也不会被修改。完成后得到一个时间戳任务目录，包含安装包/EXE/ZIP、自动生成的 `software.json` / `resources.json`、每个 Mod 的文件摘要、记录源码提交与文件摘要的 `job.json`。准备未完成时不会生成可发布任务。
@@ -63,6 +65,21 @@ gh auth login
 资源兼容范围与协议通道读取仓库的 `resources/mod-resources-v2.json`。协议发生破坏性变更时，应先审查并更新此兼容声明，工作流不会猜测兼容性或自动放宽范围。
 
 **生成记录只能证明生成时的声明，不能证明目录后来没有手工修改。** 工作流会拦截可识别的加工记录并保存准确摘要，但发布者仍需选择经过确认的Mod 成品；不会把 `verified_output_integrity` 当作实时的纯净性证明。
+
+## 发布前检查与源码对应
+
+新任务在归档出来的源码快照中执行检查，任何检查失败都会停止准备，不生成可发布的 `job.json`：
+
+- Hub：`npm ci`、`npm run check`、Rust 格式检查、带 `--locked` 的严格 Clippy（所有 targets/features）和 Rust 测试，然后构建 NSIS。
+- 加工器：Rust 格式检查、带 `--locked` 的严格 Clippy（所有 targets/features）和 Rust 测试，然后构建 release EXE。
+
+`npm run check` 汇总 TypeScript、前端测试、手册和发布器检查，需要先安装 Python 发布器依赖。任务目录中的 `verification-hub.json` / `verification-processor.json` 记录源码提交、源码快照摘要、各条命令、执行目录、时间和退出结果；schema 2 的 `job.json` 同时固定证据文件摘要。补传会核对这些证据与来源一致，不补做或伪造原任务的检查结果。
+
+自动检查不运行被忽略的真实游戏用例，也不能代替登录、音频、跟房和升级验收。发布前仍需按 [实机验收记录](REFACTOR_ACCEPTANCE.md) 验证受影响流程。
+
+Hub 安装器的 `source_commit` 来自用于 `git archive` 的完整提交 SHA，并与 `job.json` 的 `hub_commit` 交叉核对。上传前该提交必须已经存在于 GitHub；软件标签使用此提交创建，已有标签若指向其他提交则在上传任何一端前拒绝发布，不再默认指向当时的 main。GitHub 忽略已存在标签的 `target_commitish`，因此工作流还解析实际标签提交。[GitHub Release API](https://docs.github.com/en/rest/releases/releases#create-a-release)
+
+Gitee 仓库只镜像附件，不镜像 Hub 源码；两端软件清单均记录同一个 GitHub 来源 SHA。资源/索引标签仍属于各自资源仓库。旧 schema 1 任务可从已有 `job.json` 读取 `hub_commit` 后补传，保留其原始字节与既有校验，不给旧任务追加新的检查声明或重新构建；缺少来源、来源不一致或已有错误软件标签时必须先解决记录问题，工具不会改写已发布标签。
 
 ## 发布、重试与正式版
 
@@ -74,4 +91,8 @@ gh auth login
 
 构建缓存和发布任务不会自动删除，便于复核和补传；磁盘空间不足时由发布者清理不再需要的旧任务。尚未接入“合并 main 自动构建发布”，需要主动运行入口。
 
-验证：`npm run test:publisher`。测试覆盖确定性打包、加工目录拦截、数据版本不符、任务篡改、失败补传、未变化资源跳过，以及正式发布参数检查。
+`npm run package:mod-resources` 保留为只准备 Mod 的兼容别名，等价于 `npm run release -- --target mods`。旧 v1 打包脚本已停止写文件；旧清单与旧附件仍保留兼容。
+
+发布前需要完成 [贡献指南](../CONTRIBUTING.md) 中对应实机验收。准备成功说明源码检查与产物校验通过；上传及提升正式版仍由维护者显式选择。
+
+验证：`npm run test:publisher`。测试覆盖确定性打包、加工目录拦截、数据版本不符、检查失败阻止构建、证据及任务篡改、失败补传、未变化资源跳过、源码与标签一致性、旧任务兼容，以及超过 100 个历史快照时的附件分页。测试使用隔离目录和模拟发布适配器，不上传实际文件。

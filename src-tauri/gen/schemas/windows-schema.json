@@ -579,12 +579,6 @@
           "markdownDescription": "Enables the focus_game_window command without any pre-configured scope."
         },
         {
-          "description": "Enables the generate_lightweight_mod command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-generate-lightweight-mod",
-          "markdownDescription": "Enables the generate_lightweight_mod command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_account command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-account",
@@ -663,12 +657,6 @@
           "markdownDescription": "Enables the get_global_config command without any pre-configured scope."
         },
         {
-          "description": "Enables the get_lightweight_mod_context command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-get-lightweight-mod-context",
-          "markdownDescription": "Enables the get_lightweight_mod_context command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_mod_capsule_pool command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-mod-capsule-pool",
@@ -679,6 +667,12 @@
           "type": "string",
           "const": "allow-get-mod-resources",
           "markdownDescription": "Enables the get_mod_resources command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_mod_waypoints command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-mod-waypoints",
+          "markdownDescription": "Enables the get_mod_waypoints command without any pre-configured scope."
         },
         {
           "description": "Enables the get_next_terror_zone command without any pre-configured scope.",
@@ -1065,6 +1059,12 @@
           "markdownDescription": "Enables the save_global_config command without any pre-configured scope."
         },
         {
+          "description": "Enables the save_mod_waypoints command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-mod-waypoints",
+          "markdownDescription": "Enables the save_mod_waypoints command without any pre-configured scope."
+        },
+        {
           "description": "Enables the save_overlay_geometry command without any pre-configured scope.",
           "type": "string",
           "const": "allow-save-overlay-geometry",
@@ -1195,6 +1195,12 @@
           "type": "string",
           "const": "allow-switch-feature-profile",
           "markdownDescription": "Enables the switch_feature_profile command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unpack_mod_capsule command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-unpack-mod-capsule",
+          "markdownDescription": "Enables the unpack_mod_capsule command without any pre-configured scope."
         },
         {
           "description": "Enables the update_account_meta command without any pre-configured scope.",
@@ -1437,12 +1443,6 @@
           "markdownDescription": "Denies the focus_game_window command without any pre-configured scope."
         },
         {
-          "description": "Denies the generate_lightweight_mod command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-generate-lightweight-mod",
-          "markdownDescription": "Denies the generate_lightweight_mod command without any pre-configured scope."
-        },
-        {
           "description": "Denies the get_account command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-account",
@@ -1521,12 +1521,6 @@
           "markdownDescription": "Denies the get_global_config command without any pre-configured scope."
         },
         {
-          "description": "Denies the get_lightweight_mod_context command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-get-lightweight-mod-context",
-          "markdownDescription": "Denies the get_lightweight_mod_context command without any pre-configured scope."
-        },
-        {
           "description": "Denies the get_mod_capsule_pool command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-mod-capsule-pool",
@@ -1537,6 +1531,12 @@
           "type": "string",
           "const": "deny-get-mod-resources",
           "markdownDescription": "Denies the get_mod_resources command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_mod_waypoints command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-mod-waypoints",
+          "markdownDescription": "Denies the get_mod_waypoints command without any pre-configured scope."
         },
         {
           "description": "Denies the get_next_terror_zone command without any pre-configured scope.",
@@ -1923,6 +1923,12 @@
           "markdownDescription": "Denies the save_global_config command without any pre-configured scope."
         },
         {
+          "description": "Denies the save_mod_waypoints command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-mod-waypoints",
+          "markdownDescription": "Denies the save_mod_waypoints command without any pre-configured scope."
+        },
+        {
           "description": "Denies the save_overlay_geometry command without any pre-configured scope.",
           "type": "string",
           "const": "deny-save-overlay-geometry",
@@ -2053,6 +2059,12 @@
           "type": "string",
           "const": "deny-switch-feature-profile",
           "markdownDescription": "Denies the switch_feature_profile command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unpack_mod_capsule command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-unpack-mod-capsule",
+          "markdownDescription": "Denies the unpack_mod_capsule command without any pre-configured scope."
         },
         {
           "description": "Denies the update_account_meta command without any pre-configured scope.",

@@ -1,3 +1,6 @@
+#[path = "build_support/generated_permissions.rs"]
+mod generated_permissions;
+
 const APP_COMMANDS: &[&str] = &[
     "get_global_config",
     "get_capability_statuses",
@@ -100,8 +103,6 @@ const APP_COMMANDS: &[&str] = &[
     "get_next_terror_zone",
     "get_audio_mod_setup_state",
     "get_mod_capsule_pool",
-    "get_lightweight_mod_context",
-    "generate_lightweight_mod",
     "get_mod_resources",
     "check_mod_resource_updates",
     "check_software_update",
@@ -110,8 +111,11 @@ const APP_COMMANDS: &[&str] = &[
     "install_mod_resource",
     "open_mod_processor_directory",
     "scan_mod_capsule_pool",
+    "unpack_mod_capsule",
     "open_mods_directory",
     "set_mod_auto_exit_on_death_enabled",
+    "get_mod_waypoints",
+    "save_mod_waypoints",
     "add_mod_capsule",
     "update_mod_capsule",
     "delete_mod_capsule",
@@ -146,6 +150,15 @@ const APP_COMMANDS: &[&str] = &[
 
 fn main() {
     validate_command_surfaces();
+    println!("cargo:rerun-if-changed=build_support/generated_permissions.rs");
+    let manifest_dir = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"),
+    );
+    for command in generated_permissions::retire_removed_commands(&manifest_dir, APP_COMMANDS)
+        .expect("failed to retire obsolete generated Tauri permissions")
+    {
+        println!("cargo:warning=Retired obsolete generated permission: {command}");
+    }
 
     // Read version from config file
     let version = get_version_from_config();

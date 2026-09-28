@@ -3,13 +3,12 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invokeCommand } from "../../platform/tauri";
 import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
-import { useTheme } from "../../store/theme";
 import { showToast } from "../ui/Toast";
 import { flushWindowGeometrySaves } from "../../hooks/windowGeometryFlush";
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
-import { diffGlobalConfig } from "../../utils/globalConfigPatch";
+import { useGlobalSettingsDraft } from "../../features/settings/useGlobalSettingsDraft";
 import { sortAccountsByCardOrder } from "../../utils/accountOrder";
 import { PathsPanel } from "../../features/settings/panels/PathsPanel";
 import { SettingsShell } from "../../features/settings/SettingsShell";
@@ -20,13 +19,12 @@ import { AccountsPanel } from "../../features/settings/panels/AccountsPanel";
 import { AppearancePanel } from "../../features/settings/panels/AppearancePanel";
 import {
   appearanceFromConfig,
-  appearanceSettingsEqual,
   useAppearanceSettingsController,
 } from "../../features/settings/useAppearanceSettingsController";
-import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
-import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
-import { ModProcessingPanel } from "../../features/settings/panels/ModProcessingPanel";
-import { RoomAutomationPanel } from "../../features/settings/panels/RoomAutomationPanel";
+
+
+import { useModWorkflow } from "../../features/mods/workflow/useModWorkflow";
+
 import { ModuleManagementPanel } from "../../features/settings/panels/ModuleManagementPanel";
 import { TaskRuntimePanel } from "../../features/tasks";
 import { useAudioModuleController } from "../../features/settings/useAudioModuleController";
@@ -53,6 +51,10 @@ import {
 import { DisclosureDialog } from "../../features/disclosures/DisclosureDialog";
 import "../../features/settings/settings.css";
 
+const ModWorkspace = lazy(() => import("../../features/mods/workflow/ModWorkspace").then(module => ({ default: module.ModWorkspace })));
+const AutomationPanel = lazy(() => import("../../features/settings/panels/AutomationPanel").then(module => ({ default: module.AutomationPanel })));
+const RoomAutomationPanel = lazy(() => import("../../features/settings/panels/RoomAutomationPanel").then(module => ({ default: module.RoomAutomationPanel })));
+const OverlayPanel = lazy(() => import("../../features/settings/panels/OverlayPanel").then(module => ({ default: module.OverlayPanel })));
 const PetPanel = lazy(() => import("../../features/settings/panels/PetPanel").then(module => ({ default: module.PetPanel })));
 
 interface Props {
@@ -66,9 +68,14 @@ interface Props {
 }
 
 export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId, initialRequestRevision }: Props) {
-  const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
+  const { config: committedConfig, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
+  const { config, updateConfig, persistDraft, getDraft, hasPendingChanges, hasChanges: globalHasChanges } = useGlobalSettingsDraft({
+    open,
+    committedConfig,
+    readCommitted: () => useGlobalConfig.getState().config,
+    persistPatch: patchConfig,
+  });
   const { accounts, loadAccounts, renameAccount } = useAccounts();
-  const { previewTheme } = useTheme();
   const initializedTrackingAccounts = accounts.filter((account) => account.initialized);
   const shortcutAccounts = sortAccountsByCardOrder(accounts);
   const trackingTarget = validateTrackingTarget(config?.rune_audio_target_account ?? "", accounts);
@@ -84,19 +91,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     config?.app_language,
   );
 
-  const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
   const navigationSaveRef = useRef(false);
   const [navigationSaving, setNavigationSaving] = useState(false);
   const [profileChanging, setProfileChanging] = useState(false);
-
-  // Local Config Mutation helper
-  const updateConfig = (updater: (c: GlobalConfig) => void) => {
-    if (config) {
-      const clone = { ...config };
-      updater(clone);
-      useGlobalConfig.setState({ config: clone });
-    }
-  };
 
   // 快捷键录入、冲突校验与写回由控制器持有；shell 只负责渲染与保存编排。
   const {
@@ -169,13 +166,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     toggleCustomizedSettings: handleToggleAccountSettingsMode,
   } = useAccountSettingsController({ accounts, loadAccounts, renameAccount });
 
-  // Backup config for rollback when modal opens
-  useEffect(() => {
-    if (open && config) {
-      setOriginalConfig(JSON.parse(JSON.stringify(config)));
-    }
-  }, [open]);
-
   useEffect(() => {
     if (!open) {
       setExportPickerOpen(false);
@@ -198,6 +188,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     if (open) {
       if (initialTab?.startsWith("mod-processing") || isSettingsTabId(initialTab)) {
         const requested = initialTab?.startsWith("mod-processing") ? "mod-processing" : initialTab as SettingsTabId;
+        if (initialTab?.startsWith("mod-processing")) {
+          const edition = initialTab.split(":")[2];
+          modWorkflow.actions.openLibrary(edition === "CN" || edition === "Global" ? edition : undefined, initialTab.startsWith("mod-processing:add"));
+        }
         setActiveTab(minimalMode && !isSettingsTabAvailableInMinimal(requested)
           ? "accounts"
           : isOptionalModuleTab(requested) && !installedModules.includes(requested)
@@ -253,7 +247,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Close / Rollback
   const handleClose = () => {
-    if (config && installationPathEditsAreInvalid(originalConfig, config)) {
+    if (config && installationPathEditsAreInvalid(committedConfig, config)) {
       setActiveTab("paths");
       showToast("error", "请至少保留一组国服或国际服的游戏安装目录；Battle.net 仅供国服兼容模式使用");
       return;
@@ -271,13 +265,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Global Config Save
   const persistGlobalDraft = async (draft: GlobalConfig, quiet = false) => {
-    if (installationPathEditsAreInvalid(originalConfig, draft)) {
-      if (!quiet) showToast("error", "请至少配置一组国服或国际服的游戏安装目录；存档目录仅影响画质覆盖");
+    if (installationPathEditsAreInvalid(useGlobalConfig.getState().config, draft)) {
+      showToast("error", "请至少配置一组国服或国际服的游戏安装目录；存档目录仅影响画质覆盖");
       return null;
     }
     try {
-      const saved = await patchConfig(diffGlobalConfig(originalConfig, draft));
-      setOriginalConfig(JSON.parse(JSON.stringify(saved)));
+      const saved = await persistDraft(draft);
       if (!quiet) showToast("success", "全局设置已成功保存");
       return saved;
     } catch (e) {
@@ -295,6 +288,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     dismissPendingDisclosure,
   } = useOptionalModuleController({
     open,
+    config,
     installedModules,
     language: settingsLanguage,
     activeTab,
@@ -311,24 +305,19 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   } = useAppearanceSettingsController({
     open,
     config,
+    committedConfig,
+    updateConfig,
     persistConfig: persistGlobalDraft,
-    previewTheme,
   });
 
   const commitPendingSettings = async () => {
-    const appearanceDirtyNow = !appearanceSettingsEqual(
-      useGlobalConfig.getState().config,
-      appearanceDraft,
-    );
-    if (appearanceDirtyNow) {
-      if (!(await applyAppearanceDraft(true))) return false;
-    } else {
-      const latestConfig = useGlobalConfig.getState().config;
-      if (latestConfig && originalConfig && JSON.stringify(latestConfig) !== JSON.stringify(originalConfig)) {
-        if (!(await persistGlobalDraft(latestConfig, true))) return false;
-      }
-    }
+    const latestDraft = getDraft();
+    if (latestDraft && !(await persistGlobalDraft(latestDraft, true))) return false;
     if (accountHasChanges && !(await handleSaveAccount(true))) return false;
+    if (hasPendingChanges()) {
+      showToast("info", "保存期间有新的修改，请确认后再次保存");
+      return false;
+    }
     return true;
   };
 
@@ -343,9 +332,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     try {
       if (!(await commitPendingSettings())) return false;
       await flushWindowGeometrySaves();
-      const saved = await useGlobalConfig.getState().switchProfile(profile);
+      await useGlobalConfig.getState().switchProfile(profile);
       if (useGlobalConfig.getState().restarting) return true;
-      setOriginalConfig(JSON.parse(JSON.stringify(saved)));
       setActiveTab("advanced");
       showToast("success", profile === "minimal"
         ? "已选择纯净模式；扩展运行实例将保持未加载"
@@ -361,79 +349,26 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
-  const {
-    audioStatus,
-    audioModState,
-    audioModStateLoading,
-    audioSetupOpen,
-    setAudioSetupOpen,
-    audioSetupPurpose,
-    modProcessingTargetId,
-    audioSetupMode,
-    setAudioSetupMode,
-    audioSetupSource,
-    setAudioSetupSource,
-    audioSetupName,
-    setAudioSetupName,
-    audioProcessingMode,
-    setAudioProcessingMode,
-    audioProcessingTarget,
-    setAudioProcessingTarget,
-    includeAudioTelemetry,
-    setIncludeAudioTelemetry,
-    includeRoomTools,
-    setIncludeRoomTools,
-    includeEscNextGame,
-    setIncludeEscNextGame,
-    includeAutoExitOnDeath,
-    setIncludeAutoExitOnDeath,
-    audioPreparing,
-    audioPrepareProgress,
-    audioModScannedAt,
-    isAudioModUpgrade,
-    isAudioModFeatureManagement,
-    audioSetupNameError,
-    showAudioSetupNameError,
-    hasInitializedAudioAccount,
-    hasAudioTarget,
-    hasReadyAudioMod,
-    isAudioEnableRequested,
-    isAudioRecognitionActive,
-    audioPrepareBlockedReason,
-    autoPrepareRequest,
-    consumeAutoPrepareRequest,
-    refreshAudioModState,
-    handleAudioTargetChange,
-    handleModProcessingTargetChange,
-    handleAudioToggle,
-    handleOpenAudioSetup,
-    handleOpenModProcessing,
-    handlePrepareSelectedMod,
-    handlePrepareAudioMod,
-    toggleAudioDiagnosticRecording,
-  } = useAudioModuleController({
-    open,
-    activeTab,
-    config,
-    initializedAccounts: initializedTrackingAccounts,
-    trackingTargetId,
-    updateConfig,
-    persistConfig: persistGlobalDraft,
-    loadAccounts,
-    setActiveTab,
-    optionalFeaturesAvailable: !minimalMode,
-  });
-  const modProcessingTarget = validateTrackingTarget(modProcessingTargetId, accounts);
   const modCapsules = useModCapsulePool({
     active: open && ["automation", "mod-processing", "room-automation"].includes(activeTab),
     onAssigned: loadAccounts,
   });
-  const modFeatures = useModFeatureCoordination({
-    accounts, trackingTargetId, modCatalog: modCapsules, toggleAudio: handleAudioToggle,
-    openProcessing: handlePrepareSelectedMod,
-    onGlobalCommitted: (saved) => setOriginalConfig(JSON.parse(JSON.stringify(saved))),
+  const audio = useAudioModuleController({
+    open, activeTab, config, initializedAccounts: initializedTrackingAccounts, trackingTargetId,
+    updateConfig, persistConfig: persistGlobalDraft, optionalFeaturesAvailable: !minimalMode,
+    requestProcessing: request => modWorkflow.actions.requestProcessing(request),
   });
-
+  const modWorkflow = useModWorkflow({
+    open, active: activeTab === "mod-processing", accounts, catalog: modCapsules,
+    language: config?.app_language, optionalFeaturesAvailable: !minimalMode,
+    onNavigate: origin => setActiveTab(origin === "recognition" ? "automation" : origin === "room-automation" ? "room-automation" : "mod-processing"),
+    onApplied: async result => { await loadAccounts(); await audio.completeModProcessing(result); },
+  });
+  const modFeatures = useModFeatureCoordination({
+    accounts, trackingTargetId, modCatalog: modCapsules, toggleAudio: audio.handleAudioToggle,
+    openProcessing: modWorkflow.actions.requestProcessing,
+    onGlobalCommitted: () => { /* The edit session rebases from the committed store. */ },
+  });
   // Path pickers
   const pickFile = async (field: keyof GlobalConfig, title: string, extensions?: string[]) => {
     try {
@@ -480,9 +415,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
-  // Check if global config has changes compared to original
-  const globalHasChanges = config && originalConfig && JSON.stringify(config) !== JSON.stringify(originalConfig);
-
   const hasAnyUnsavedChanges = !!globalHasChanges || !!accountHasChanges || appearanceHasChanges;
 
   const accountRegionLabel = (region?: string | null) =>
@@ -493,22 +425,23 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       ? "有未保存改动"
       : "已保存";
 
-  const handleTabChange = (nextTab: SettingsTabId) => {
-    if (nextTab === activeTab) return true;
-    if (navigationSaveRef.current) return false;
+  const handleTabChange = async (nextTab: SettingsTabId): Promise<boolean> => {
+    if (navigationSaveRef.current || (modWorkflow.busy && nextTab !== "tasks" && nextTab !== "mod-processing")) return false;
+    if (nextTab === activeTab) {
+      if (nextTab === "mod-processing" && !modWorkflow.busy) modWorkflow.actions.openLibrary();
+      return true;
+    }
     navigationSaveRef.current = true;
     setNavigationSaving(true);
-    void commitPendingSettings().then((saved) => {
-      if (!saved) return;
-      if (nextTab === "mod-processing" && activeTab !== "mod-processing") {
-        handleOpenAudioSetup("manage");
-      }
+    try {
+      if (!(await commitPendingSettings())) return false;
+      if (nextTab === "mod-processing" && !modWorkflow.busy) modWorkflow.actions.openLibrary();
       setActiveTab(nextTab);
-    }).finally(() => {
+      return true;
+    } finally {
       navigationSaveRef.current = false;
       setNavigationSaving(false);
-    });
-    return true;
+    }
   };
 
   const handleSelectedAccountChange = (nextAccountId: string) => {
@@ -537,8 +470,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       installedModules={installedModules}
       onClose={handleClose}
       onTabChange={handleTabChange}
-      dismissible={!pendingDisclosureModule && !profileChanging}
+      dismissible={!pendingDisclosureModule && !profileChanging && !modWorkflow.busy}
     >
+      <Suspense fallback={<div role="status" className="p-3 text-sm text-text-muted">{settingsLanguage === "en-US" ? "Loading settings…" : "正在加载设置…"}</div>}>
             {!minimalMode && activeTab === "module-management" && config && (
               <ModuleManagementPanel
                 config={config}
@@ -576,7 +510,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 snapshotSystemSettings={handleSnapshotSystemSettings}
                 accountNicknameDraft={accountNicknameDraft}
                 setAccountNicknameDraft={setAccountNicknameDraft}
-                onOpenModManager={() => { handleOpenAudioSetup("manage"); setActiveTab("mod-processing"); }}
+                onOpenModManager={() => { void handleTabChange("mod-processing"); }}
                 accountWinXDraft={accountWinXDraft}
                 setAccountWinXDraft={setAccountWinXDraft}
                 accountWinYDraft={accountWinYDraft}
@@ -628,110 +562,36 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 persistConfig={persistGlobalDraft}
                 initializedTrackingAccounts={initializedTrackingAccounts}
                 trackingTarget={trackingTarget}
-                audioStatus={audioStatus}
-                audioModState={audioModState}
-                audioModStateLoading={audioModStateLoading}
+                audioStatus={audio.audioStatus}
+                audioModState={audio.audioModState}
+                audioModStateLoading={audio.audioModStateLoading}
                 modCapsulePool={modCapsules.pool}
                 assigningCapsuleAccountId={modCapsules.assigningAccountId}
                 onAssignModCapsule={async (accountId, capsuleId) => {
                   const next = await modCapsules.assign(accountId, capsuleId);
-                  if (next && accountId === trackingTargetId) await refreshAudioModState();
+                  if (next && accountId === trackingTargetId) await audio.refreshAudioModState();
                   return next;
                 }}
-                audioSetupOpen={audioSetupOpen}
-                onOpenModProcessing={() => handleOpenModProcessing("recognition")}
-                onOpenAudioSetup={handleOpenAudioSetup}
-                onCloseAudioSetup={() => setAudioSetupOpen(false)}
-                audioSetupMode={audioSetupMode}
-                setAudioSetupMode={setAudioSetupMode}
-                audioSetupSource={audioSetupSource}
-                setAudioSetupSource={setAudioSetupSource}
-                audioSetupName={audioSetupName}
-                setAudioSetupName={setAudioSetupName}
-                includeAudioTelemetry={includeAudioTelemetry}
-                setIncludeAudioTelemetry={setIncludeAudioTelemetry}
-                includeRoomTools={includeRoomTools}
-                setIncludeRoomTools={setIncludeRoomTools}
-                includeEscNextGame={includeEscNextGame}
-                setIncludeEscNextGame={setIncludeEscNextGame}
-                includeAutoExitOnDeath={includeAutoExitOnDeath}
-                setIncludeAutoExitOnDeath={setIncludeAutoExitOnDeath}
-                audioPreparing={audioPreparing}
-                audioPrepareProgress={audioPrepareProgress}
-                isAudioModUpgrade={isAudioModUpgrade}
-                isAudioModFeatureManagement={isAudioModFeatureManagement}
-                audioSetupNameError={audioSetupNameError}
-                showAudioSetupNameError={showAudioSetupNameError}
-                hasInitializedAudioAccount={hasInitializedAudioAccount}
-                hasAudioTarget={hasAudioTarget}
-                hasReadyAudioMod={hasReadyAudioMod}
-                isAudioEnableRequested={isAudioEnableRequested}
-                isAudioRecognitionActive={isAudioRecognitionActive}
-                audioPrepareBlockedReason={audioPrepareBlockedReason}
-                onAudioTargetChange={handleAudioTargetChange}
+                onOpenModProcessing={() => modWorkflow.actions.requestProcessing({ origin: "recognition", accountId: trackingTargetId })}
+                audioPreparing={modWorkflow.busy}
+                hasInitializedAudioAccount={audio.hasInitializedAudioAccount}
+                hasAudioTarget={audio.hasAudioTarget}
+                hasReadyAudioMod={audio.hasReadyAudioMod}
+                isAudioEnableRequested={audio.isAudioEnableRequested}
+                isAudioRecognitionActive={audio.isAudioRecognitionActive}
+                onAudioTargetChange={audio.handleAudioTargetChange}
                 onAudioToggle={modFeatures.toggleRecognition}
                 onPrepareModCapsule={(accountId, capsuleId) => {
                   void modFeatures.prepareFeature(accountId, capsuleId, "recognition");
                 }}
-                onPrepareAudioMod={handlePrepareAudioMod}
-                onToggleDiagnosticRecording={toggleAudioDiagnosticRecording}
+                onToggleDiagnosticRecording={audio.toggleAudioDiagnosticRecording}
                 onClose={handleClose}
                 onInitializeAccount={onInitializeAccount}
               />
             )}
 
             {activeTab === "mod-processing" && config && (
-              <ModProcessingPanel
-                minimalMode={minimalMode}
-                config={config}
-                initializedAccounts={initializedTrackingAccounts}
-                trackingTarget={modProcessingTarget}
-                audioModState={audioModState}
-                audioModStateLoading={audioModStateLoading}
-                audioModScannedAt={audioModScannedAt}
-                purpose={audioSetupPurpose}
-                audioSetupMode={audioSetupMode}
-                setAudioSetupMode={setAudioSetupMode}
-                audioSetupSource={audioSetupSource}
-                setAudioSetupSource={setAudioSetupSource}
-                audioSetupName={audioSetupName}
-                setAudioSetupName={setAudioSetupName}
-                audioProcessingMode={audioProcessingMode}
-                setAudioProcessingMode={setAudioProcessingMode}
-                audioProcessingTarget={audioProcessingTarget}
-                setAudioProcessingTarget={setAudioProcessingTarget}
-                includeAudioTelemetry={includeAudioTelemetry}
-                setIncludeAudioTelemetry={setIncludeAudioTelemetry}
-                includeRoomTools={includeRoomTools}
-                setIncludeRoomTools={setIncludeRoomTools}
-                includeEscNextGame={includeEscNextGame}
-                setIncludeEscNextGame={setIncludeEscNextGame}
-                includeAutoExitOnDeath={includeAutoExitOnDeath}
-                setIncludeAutoExitOnDeath={setIncludeAutoExitOnDeath}
-                audioPreparing={audioPreparing}
-                audioPrepareProgress={audioPrepareProgress}
-                isAudioModUpgrade={isAudioModUpgrade}
-                isAudioModFeatureManagement={isAudioModFeatureManagement}
-                audioSetupNameError={audioSetupNameError}
-                showAudioSetupNameError={showAudioSetupNameError}
-                audioPrepareBlockedReason={audioPrepareBlockedReason}
-                modCapsulePool={modCapsules.pool}
-                modCapsulePoolLoading={modCapsules.loading}
-                modCapsulePoolError={modCapsules.error}
-                modCatalog={modCapsules} openAddRequest={initialTab?.startsWith("mod-processing:add")} initialEdition={initialTab?.split(":")[2]}
-                onTargetChange={handleModProcessingTargetChange}
-                onPrepare={async () => {
-                  await handlePrepareAudioMod();
-                  await modCapsules.refresh();
-                }}
-                onRefresh={async () => {
-                  await refreshAudioModState();
-                  await modCapsules.refresh();
-                }}
-                onBackToRecognition={() => setActiveTab("automation")}
-                autoPrepareRequest={autoPrepareRequest}
-                onAutoPrepareConsumed={consumeAutoPrepareRequest}
-              />
+              <ModWorkspace workflow={modWorkflow} />
             )}
 
             {!minimalMode && activeTab === "room-automation" && (
@@ -745,7 +605,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 onAssignModCapsule={modCapsules.assign}
                 onRequireRoomTools={(accountId, capsuleId, autoStart) => capsuleId
                   ? void modFeatures.prepareFeature(accountId, capsuleId, "room-tools", autoStart)
-                  : handleOpenModProcessing("room-tools", accountId)}
+                  : modWorkflow.actions.requestProcessing({ origin: "room-automation", accountId })}
                 onSaveLaunchScheme={modFeatures.saveRoomLaunchScheme}
               />
             )}
@@ -805,6 +665,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 }}
               />
             )}
+      </Suspense>
       </SettingsShell>
       {pendingDisclosureModule && (
         <DisclosureDialog

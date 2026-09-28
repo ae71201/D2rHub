@@ -39,10 +39,13 @@ python scripts/publish-downloads.py --spec release-spec.json --output artifacts/
     "id": "hub",
     "version": "0.9.104",
     "file": "artifacts/D2RHub_0.9.104_x64-setup.exe",
-    "release_tag": "v0.9.104"
+    "release_tag": "v0.9.104",
+    "source_commit": "<安装器实际构建提交的完整 40 位 SHA>"
   }]
 }
 ```
+
+软件的 `source_commit` 必须是实际构建来源，不接受上方占位文字。统一工作流自动填写并核对来源；手写 spec 也必须提供该字段，已有软件标签若指向不同提交则拒绝发布。Gitee 是资源镜像，两端清单均保存 GitHub 来源 SHA。
 
 资源 spec 沿用 `resources/mod-resources-v2.json` 的兼容字段，改 `kind` 为 `resources`，每个变化的 asset 增加 `file`、`release_tag`。首次发布必须包含四个资源；以后只列变化项，脚本从当前索引继承未变化项，也可通过 `--previous` 指定已保存的 v2 清单。修复镜像时列出需要补传的资源并使用更高 revision。
 

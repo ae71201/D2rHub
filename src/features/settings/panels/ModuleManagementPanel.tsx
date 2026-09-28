@@ -1,26 +1,10 @@
-import { useEffect, useState } from "react";
-import {
-  AlertTriangle,
-  ArrowUpRight,
-  Cat,
-  Link2,
-  Monitor,
-  Plus,
-  Route,
-  ScanEye,
-  Trash2,
-  type LucideIcon,
-} from "lucide-react";
-
+import { useState } from "react";
+import { ArrowRight, Cat, Monitor, Plus, Route, ScanEye, type LucideIcon } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
+import { showToast } from "../../../components/ui/Toast";
 import type { GlobalConfig } from "../../../store/types";
-import { roomAutomationGateway } from "../../roomAutomation/gateway";
-import {
-  SETTINGS_COPY,
-  normalizeSettingsLanguage,
-  type OptionalModuleTabId,
-  type SettingsLanguage,
-} from "../settingsRegistry";
+import { SETTINGS_COPY, normalizeSettingsLanguage, type OptionalModuleTabId } from "../settingsRegistry";
+import "../extensions.css";
 
 interface ModuleManagementPanelProps {
   config: GlobalConfig;
@@ -30,155 +14,18 @@ interface ModuleManagementPanelProps {
   onOpen: (module: OptionalModuleTabId) => void;
 }
 
-interface ModuleDefinition {
-  id: OptionalModuleTabId;
-  icon: LucideIcon;
-  linked?: boolean;
-}
+const MODULES: readonly { id: OptionalModuleTabId; icon: LucideIcon; benefit: string; enBenefit: string }[] = [
+  { id: "overlays", icon: Monitor, benefit: "在游戏旁查看恐怖区域和本局统计。", enBenefit: "Keep Terror Zones and run statistics beside your game." },
+  { id: "automation", icon: ScanEye, benefit: "自动识别场景和掉落，记录每一轮刷图。", enBenefit: "Recognize scenes and drops, and keep a history of your runs." },
+  { id: "room-automation", icon: Route, benefit: "主账号创建房间，其他账号按顺序跟随。", enBenefit: "Create a room on the primary account and bring the others along." },
+  { id: "pet", icon: Cat, benefit: "用桌面角色呈现输入反馈与运行状态。", enBenefit: "A desktop companion with input reactions and status feedback." },
+];
 
-interface ModuleCopy {
-  capabilities: readonly string[];
-}
-
-interface ModuleManagementCopy {
-  description: string;
-  countUnit: string;
-  relationshipNote: string;
-  availableModulesLabel: string;
-  includedCapabilitiesLabel: string;
-  linkedLabel: string;
-  installed: string;
-  previousSettings: string;
-  available: string;
-  open: string;
-  remove: string;
-  add: string;
-  removeOverlayDependencyTitle: string;
-  removeAutomationTitle: string;
-  installAutomationTitle: string;
-  installOverlaysTitle: string;
-  confirmRemove: string;
-  cancelRemove: string;
-  removePrompt: string;
-}
-
-const MODULES: readonly ModuleDefinition[] = [
-  {
-    id: "overlays",
-    icon: Monitor,
-    linked: true,
-  },
-  {
-    id: "pet",
-    icon: Cat,
-  },
-  {
-    id: "automation",
-    icon: ScanEye,
-    linked: true,
-  },
-  {
-    id: "room-automation",
-    icon: Route,
-  },
-] as const;
-
-const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, ModuleCopy>> = {
-  "zh-CN": {
-    overlays: {
-      capabilities: ["邪恶区域", "统计悬浮窗", "窗口定位"],
-    },
-    pet: {
-      capabilities: ["输入反馈", "桌面状态", "皮肤与缩放"],
-    },
-    automation: {
-      capabilities: ["声纹识别", "掉落记录", "刷图统计"],
-    },
-    "room-automation": {
-      capabilities: ["主号建房", "跟随入房", "房名序列"],
-    },
-  },
-  "en-US": {
-    overlays: {
-      capabilities: ["Terror Zone", "Stats overlay", "Window placement"],
-    },
-    pet: {
-      capabilities: ["Input feedback", "Desktop status", "Skins and scale"],
-    },
-    automation: {
-      capabilities: ["Audio recognition", "Drop history", "Run statistics"],
-    },
-    "room-automation": {
-      capabilities: ["Primary room", "Follower joins", "Room sequence"],
-    },
-  },
-};
-
-const PANEL_COPY: Record<SettingsLanguage, ModuleManagementCopy> = {
-  "zh-CN": {
-    description: "只添加真正需要的功能。添加后才会出现在顶部导航，也可以随时在这里卸载。",
-    countUnit: "已添加",
-    relationshipNote: "添加识别与统计时会补齐悬浮窗模块，并同时开启场景统计与 TZ 播报；单独添加悬浮窗模块时只默认开启 TZ。",
-    availableModulesLabel: "可用模块",
-    includedCapabilitiesLabel: "包含能力",
-    linkedLabel: "联动模块",
-    installed: "已添加",
-    previousSettings: "旧配置已保留",
-    available: "未添加",
-    open: "打开",
-    remove: "卸载",
-    add: "添加模块",
-    removeOverlayDependencyTitle: "识别与统计依赖悬浮窗；卸载时会一并移除",
-    removeAutomationTitle: "会关闭识别与场景统计；悬浮窗模块和独立 TZ 状态保持不变",
-    installAutomationTitle: "会补齐悬浮窗模块，并开启场景统计与 TZ 播报",
-    installOverlaysTitle: "只添加悬浮窗模块，并默认开启 TZ 播报",
-    confirmRemove: "确认卸载",
-    cancelRemove: "取消",
-    removePrompt: "卸载会立即停止相关运行能力，但保留配置供下次添加时恢复。",
-  },
-  "en-US": {
-    description: "Add only the tools you use. Added modules appear in the top navigation and can be removed here at any time.",
-    countUnit: "added",
-    relationshipNote: "Adding Recognition & Stats also adds Desktop Overlays and turns on both statistics and Terror Zone. Adding Desktop Overlays alone turns on only Terror Zone.",
-    availableModulesLabel: "Available modules",
-    includedCapabilitiesLabel: "Included capabilities",
-    linkedLabel: "Linked module",
-    installed: "Added",
-    previousSettings: "Previous settings kept",
-    available: "Not added",
-    open: "Open",
-    remove: "Remove",
-    add: "Add module",
-    removeOverlayDependencyTitle: "Recognition & Stats depends on Desktop Overlays and will be removed with it",
-    removeAutomationTitle: "Turns off recognition and statistics; Desktop Overlays and the independent Terror Zone setting remain unchanged",
-    installAutomationTitle: "Also adds Desktop Overlays and turns on statistics and Terror Zone",
-    installOverlaysTitle: "Adds only Desktop Overlays and turns on Terror Zone",
-    confirmRemove: "Confirm removal",
-    cancelRemove: "Cancel",
-    removePrompt: "Removing stops the related runtime features now, while keeping settings for a future reinstall.",
-  },
-};
-
-export function ModuleManagementPanel({
-  config,
-  installedModules,
-  onInstall,
-  onUninstall,
-  onOpen,
-}: ModuleManagementPanelProps) {
+export function ModuleManagementPanel({ config, installedModules, onInstall, onUninstall, onOpen }: ModuleManagementPanelProps) {
   const [busyModule, setBusyModule] = useState<OptionalModuleTabId | null>(null);
   const [confirmModule, setConfirmModule] = useState<OptionalModuleTabId | null>(null);
-  const [roomAutomationConfigured, setRoomAutomationConfigured] = useState(false);
   const language = normalizeSettingsLanguage(config.app_language);
-  const copy = PANEL_COPY[language];
-
-  useEffect(() => {
-    let disposed = false;
-    void roomAutomationGateway.getConfig().then((snapshot) => {
-      if (!disposed) setRoomAutomationConfigured(snapshot.config.enabled);
-    }).catch(() => undefined);
-    return () => { disposed = true; };
-  }, []);
+  const en = language === "en-US";
 
   const changeInstallation = async (module: OptionalModuleTabId, install: boolean) => {
     if (busyModule) return;
@@ -187,141 +34,77 @@ export function ModuleManagementPanel({
       if (install) await onInstall(module);
       else await onUninstall(module);
       setConfirmModule(null);
-      if (module === "room-automation") {
-        const snapshot = await roomAutomationGateway.getConfig().catch(() => null);
-        if (snapshot) setRoomAutomationConfigured(snapshot.config.enabled);
-      }
+    } catch (error) {
+      showToast("error", en ? `Unable to change this extension: ${error}` : `无法更新扩展功能：${error}`);
     } finally {
       setBusyModule(null);
     }
   };
 
+  const removalDescription = (module: OptionalModuleTabId) => {
+    if (module === "overlays" && installedModules.includes("automation")) {
+      return en
+        ? "Recognition & Stats requires Desktop Overlays and will also be removed. Their running features will stop."
+        : "识别与统计需要桌面悬浮窗，会一并移除；相关运行功能将停止。";
+    }
+    if (module === "automation") {
+      return en
+        ? "Recognition and statistics will stop. The independent Terror Zone window keeps its current setting."
+        : "识别与场景统计将停止，独立的恐怖区域窗口保持当前设置。";
+    }
+    return en ? "This feature will stop. Your preferences are kept for later." : "此功能将停止运行，已有配置会保留。";
+  };
+
   return (
-    <div className="module-management-panel">
-      <header className="module-management-header">
-        <div>
-          <h2>{SETTINGS_COPY[language]["module-management"].label}</h2>
-          <p>{copy.description}</p>
-        </div>
-        <div
-          className="module-management-count"
-          aria-label={`${installedModules.length} / ${MODULES.length} ${copy.countUnit}`}
-        >
-          <strong>{installedModules.length}</strong>
-          <span>/{MODULES.length} {copy.countUnit}</span>
-        </div>
+    <div className="extensions-overview">
+      <header className="extensions-heading">
+        <h2>{SETTINGS_COPY[language]["module-management"].label}</h2>
+        <p>{en ? "Add the tools you need. Their settings appear in the sidebar." : "添加需要的工具，随后直接从左侧进入设置。"}</p>
       </header>
-
-      <div className="module-management-note" role="note">
-        <Link2 size={14} aria-hidden="true" />
-        <span>{copy.relationshipNote}</span>
-      </div>
-
-      <section className="module-management-list" aria-label={copy.availableModulesLabel}>
-        {MODULES.map((module) => {
-          const moduleCopy = MODULE_COPY[language][module.id];
-          const installed = installedModules.includes(module.id);
-          const configured = module.id === "overlays"
-            ? !!(config.enable_tz_overlay || config.enable_stats_overlay)
-            : module.id === "automation"
-              ? !!config.rune_audio_enabled
-              : module.id === "pet"
-                ? !!config.enable_bongo_cat
-                : roomAutomationConfigured;
-          const state = installed ? "installed" : configured ? "legacy" : "available";
-          const cascadesRecognition = module.id === "overlays" && installedModules.includes("automation");
-          const Icon = module.icon;
+      <section className="extensions-list" aria-label={en ? "Available extensions" : "可用扩展"}>
+        {MODULES.map(({ id, icon: Icon, benefit, enBenefit }) => {
+          const installed = installedModules.includes(id);
+          const name = SETTINGS_COPY[language][id].label;
+          const confirming = confirmModule === id;
           return (
-            <article className="module-management-row" data-state={state} key={module.id}>
-              <span className="module-management-icon"><Icon size={18} aria-hidden="true" /></span>
-              <div className="module-management-copy">
-                <div className="module-management-title-line">
-                  <h3>{SETTINGS_COPY[language][module.id].label}</h3>
-                  <span data-state={state}>
-                    {installed
-                      ? copy.installed
-                      : configured
-                        ? copy.previousSettings
-                        : copy.available}
-                  </span>
-                </div>
-                <div
-                  className="module-management-capabilities"
-                  aria-label={copy.includedCapabilitiesLabel}
-                >
-                  {moduleCopy.capabilities.map((capability) => <span key={capability}>{capability}</span>)}
-                  {module.linked && <span data-linked="true"><Link2 size={10} />{copy.linkedLabel}</span>}
-                </div>
+            <article key={id} className="extension-row" aria-label={name} data-added={installed}>
+              <Icon className="extension-icon" size={21} aria-hidden="true" />
+              <div className="extension-copy">
+                <div className="extension-title"><h3>{name}</h3><span>{installed ? (en ? "Added" : "已添加") : (en ? "Not added" : "未添加")}</span></div>
+                <p>{en ? enBenefit : benefit}</p>
+                {!installed && id === "automation" && <small>{en
+                  ? "Also adds Desktop Overlays and turns on statistics and Terror Zone windows."
+                  : "同时添加桌面悬浮窗，并开启统计与恐怖区域窗口。"}</small>}
+                {!installed && id === "overlays" && <small>{en
+                  ? "Starts with the Terror Zone window."
+                  : "添加后默认开启恐怖区域窗口。"}</small>}
               </div>
-              <div
-                className="module-management-actions"
-                data-confirming={confirmModule === module.id ? "true" : undefined}
-              >
-                {installed ? (
-                  confirmModule === module.id ? (
-                    <div className="module-management-remove-confirm" role="alert">
-                      <AlertTriangle size={14} aria-hidden="true" />
-                      <p>{cascadesRecognition
-                        ? copy.removeOverlayDependencyTitle
-                        : module.id === "automation"
-                          ? copy.removeAutomationTitle
-                          : copy.removePrompt}</p>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        loading={busyModule === module.id}
-                        disabled={busyModule !== null}
-                        onClick={() => void changeInstallation(module.id, false)}
-                      >{copy.confirmRemove}</Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={busyModule !== null}
-                        onClick={() => setConfirmModule(null)}
-                      >{copy.cancelRemove}</Button>
-                    </div>
-                  ) : (
-                    <>
-                    <Button size="sm" variant="secondary" onClick={() => onOpen(module.id)}>
-                      <ArrowUpRight size={12} />{copy.open}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      loading={busyModule === module.id}
-                      disabled={busyModule !== null}
-                      title={cascadesRecognition
-                        ? copy.removeOverlayDependencyTitle
-                        : module.id === "automation"
-                          ? copy.removeAutomationTitle
-                          : undefined}
-                      onClick={() => setConfirmModule(module.id)}
-                    >
-                      <Trash2 size={12} />{copy.remove}
-                    </Button>
-                    </>
-                  )
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    loading={busyModule === module.id}
-                    disabled={busyModule !== null}
-                    title={module.id === "automation"
-                      ? copy.installAutomationTitle
-                      : module.id === "overlays"
-                        ? copy.installOverlaysTitle
-                        : undefined}
-                    onClick={() => void changeInstallation(module.id, true)}
-                  >
-                    <Plus size={12} />{copy.add}
+              <div className="extension-actions">
+                {installed ? <>
+                  <Button size="sm" variant="secondary" disabled={busyModule !== null} onClick={() => onOpen(id)} aria-label={en ? `Configure ${name}` : `设置${name}`}>
+                    {en ? "Configure" : "设置"}<ArrowRight size={13} aria-hidden="true" />
                   </Button>
-                )}
+                  <button type="button" className="extension-remove" disabled={busyModule !== null} aria-expanded={confirming}
+                    aria-label={en ? `Remove ${name}` : `移除${name}`} onClick={() => setConfirmModule(confirming ? null : id)}>
+                    {en ? "Remove" : "移除"}
+                  </button>
+                </> : <Button size="sm" variant="secondary" loading={busyModule === id} disabled={busyModule !== null}
+                    aria-label={en ? `Add ${name}` : `添加${name}`} onClick={() => void changeInstallation(id, true)}>
+                  <Plus size={13} aria-hidden="true" />{en ? "Add" : "添加"}
+                </Button>}
               </div>
+              {confirming && <div className="extension-confirm" role="alert">
+                <p>{removalDescription(id)}</p>
+                <div>
+                  <Button size="sm" variant="ghost" disabled={busyModule !== null} onClick={() => setConfirmModule(null)}>{en ? "Cancel" : "取消"}</Button>
+                  <Button size="sm" variant="danger" loading={busyModule === id} disabled={busyModule !== null} onClick={() => void changeInstallation(id, false)}>{en ? "Confirm removal" : "确认移除"}</Button>
+                </div>
+              </div>}
             </article>
           );
         })}
       </section>
+      <p className="extensions-footnote">{en ? "Removing an extension stops its features and keeps your preferences." : "移除扩展会停止相关功能，保留已有配置。"}</p>
     </div>
   );
 }

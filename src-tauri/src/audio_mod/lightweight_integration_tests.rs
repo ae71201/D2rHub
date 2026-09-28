@@ -1,5 +1,6 @@
 //! Opt-in integration matrix: independent processor, original game, Hub validators.
 use super::*;
+use crate::domain::mod_processing::GeneratorReport;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
@@ -118,7 +119,7 @@ fn augment(
 }
 
 #[test]
-#[ignore = "requires original game resources; generates the 3 x 15 feature matrix"]
+#[ignore = "requires downloaded Mod products and original game resources; processes the 3 x 15 feature matrix"]
 fn lightweight_all_processing_combinations() {
     let game = std::env::var("D2RHUB_LIGHTWEIGHT_GAME_ROOT").expect("D2RHUB_LIGHTWEIGHT_GAME_ROOT");
     let root = std::env::var("D2RHUB_PROCESSING_TEST_RESUME")
@@ -148,25 +149,16 @@ fn lightweight_all_processing_combinations() {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default();
     for (profile, base_name) in [("main", "LiteHub"), ("filler", "BoHub"), ("min", "NullHub")] {
-        let base = root.join(base_name);
-        if !base.exists() {
-            invoke(
-                &[
-                    "lightweight".into(),
-                    "--game".into(),
-                    game.clone(),
-                    "--profile".into(),
-                    profile.into(),
-                    "--name".into(),
-                    base_name.into(),
-                    "--output".into(),
-                    root.display().to_string(),
-                    "--events".into(),
-                ],
-                &root.join(format!("{base_name}-base.jsonl")),
-            )
-            .unwrap();
-        }
+        let products = PathBuf::from(std::env::var("D2RHUB_MOD_PRODUCTS_ROOT")
+            .expect("Set D2RHUB_MOD_PRODUCTS_ROOT to the directory containing LiteHub, BoHub and NullHub products"));
+        let base = products
+            .join(base_name)
+            .canonicalize()
+            .expect("downloaded product directory");
+        let identity = crate::lightweight_mod::inspect(&base, base_name)
+            .expect("valid product manifest")
+            .expect("product identity");
+        assert_eq!(identity.profile, profile);
         let original = snapshot(&base);
         for mask in 1..=15u8 {
             let name = format!("{base_name}F{mask:02}");
@@ -299,7 +291,7 @@ fn lightweight_processed_same_name_replacement() {
         .unwrap();
         let after = validate_audio_mod_credential(&root, &name).unwrap();
         features(15)
-            .validate_present(&after.feature_groups)
+            .validate_present(&after.feature_groups, PROTOCOL_VERSION)
             .unwrap();
         recover_audio_mod_replacements(&root).unwrap();
         results

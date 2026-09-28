@@ -25,6 +25,8 @@ function catalog(assign = vi.fn(async () => pool)): ModCapsuleController {
     pool, loading: false, assigningAccountId: null, error: null,
     refresh: vi.fn(async () => pool), scan: vi.fn(async () => pool),
     add: vi.fn(async () => pool), update: vi.fn(async () => pool), remove: vi.fn(async () => pool),
+    unpackingCapsuleId: null, unpackProgress: null, unpackResult: null, cancelUnpack: vi.fn(async () => {}),
+    unpack: vi.fn(async () => ({ pool, backup_path: null, escaped_name_count: 0 })),
     setAutoExitOnDeathEnabled: vi.fn(async () => pool), assign,
   };
 }
@@ -32,24 +34,39 @@ function catalog(assign = vi.fn(async () => pool)): ModCapsuleController {
 afterEach(() => vi.restoreAllMocks());
 
 describe("shared Mod feature coordination", () => {
-  it("uses the enabled room primary and automatically adds missing recognition to its selected Mod", async () => {
-    vi.spyOn(roomAutomationGateway, "getConfig").mockResolvedValue({
+  it("opens a reviewable recognition setup when the selected account has no Mod", async () => {
+    const openProcessing = vi.fn();
+    const modCatalog = catalog();
+    modCatalog.pool = { ...pool, accounts: [{ ...pool.accounts[0], selected_capsule_id: null }] };
+    const toggleAudio = vi.fn();
+    const { result } = renderHook(() => useModFeatureCoordination({
+      accounts, trackingTargetId: "main", modCatalog, toggleAudio, openProcessing, onGlobalCommitted: vi.fn(),
+    }));
+    await act(() => result.current.toggleRecognition(true));
+    expect(openProcessing).toHaveBeenCalledWith({ origin: "recognition", accountId: "main" });
+    expect(modCatalog.assign).not.toHaveBeenCalled();
+    expect(toggleAudio).not.toHaveBeenCalled();
+  });
+  it("preserves the selected recognition account and requests review without assigning or starting processing", async () => {
+    const readRoom = vi.spyOn(roomAutomationGateway, "getConfig").mockResolvedValue({
       schema_version: 1, generation: 1,
-      config: { enabled: true, primary_account_id: "main" } as never,
+      config: { enabled: true, primary_account_id: "another-room-primary" } as never,
       normalization: {} as never,
     });
     const assign = vi.fn(async () => pool);
     const toggleAudio = vi.fn(async () => undefined);
     const openProcessing = vi.fn();
     const { result } = renderHook(() => useModFeatureCoordination({
-      accounts, trackingTargetId: "", modCatalog: catalog(assign), toggleAudio,
+      accounts, trackingTargetId: "main", modCatalog: catalog(assign), toggleAudio,
       openProcessing, onGlobalCommitted: vi.fn(),
     }));
 
     await act(() => result.current.toggleRecognition(true));
-    expect(assign).toHaveBeenCalledWith("main", "scan:cn:rooms");
-    expect(openProcessing).toHaveBeenCalledWith("main", "recognition", true, "Rooms", "augment");
+    expect(assign).not.toHaveBeenCalled();
+    expect(openProcessing).toHaveBeenCalledWith({ accountId: "main", edition: "CN", origin: "recognition", autoStart: false,
+      source: { name: "Rooms", processed: true } });
     expect(toggleAudio).not.toHaveBeenCalled();
+    expect(readRoom).not.toHaveBeenCalled();
   });
 
   it("saves room participants as a launch scheme with explicit Mods and inherited other settings", async () => {

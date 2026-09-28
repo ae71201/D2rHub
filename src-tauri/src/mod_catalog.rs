@@ -5,26 +5,88 @@
 //! editing is centralized in this versioned sidecar-backed catalog.
 
 use crate::audio_mod::{
-    active_mod_name, arguments_with_audio_mod, ensure_audio_mod_not_in_use, installed_mods,
-    set_auto_exit_on_death_enabled, InstalledMod,
+    ensure_audio_mod_not_in_use, installed_mods, set_auto_exit_on_death_enabled, InstalledMod,
 };
 use crate::commands::account::{
-    update_account_mods_inner, update_account_mods_with_lease_held, AccountManager, AccountMeta,
+    update_account_mods_inner, update_account_mods_with_lease_held, AccountManager,
 };
 use crate::commands::global_config::mutate_loaded_global_config;
-use crate::commands::launch::parse_windows_command_line;
-use crate::domain::account::GameRegion;
+use crate::domain::account::AccountMeta;
 use crate::domain::config::GlobalConfig;
+use crate::domain::mod_arguments::{active_mod_name, arguments_with_audio_mod};
+use crate::domain::mod_catalog::{self as rules, *};
+pub use crate::domain::mod_catalog::{ModCapsule, ModCapsuleAccountSelection, ModCapsulePool};
 use crate::infrastructure::module_config::ModuleConfigStore;
 use crate::state::SharedState;
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+mod transactions;
+use transactions::*;
+
+fn account_snapshots(config: &GlobalConfig) -> Result<Vec<AccountMeta>, String> {
+    AccountManager::list_ids(&config.accounts_dir)
+        .into_iter()
+        .map(|id| {
+            AccountManager::load_meta(&config.accounts_dir, &id)
+                .map_err(|error| format!("无法读取账号 {id} 的 Mod 引用：{error}"))
+        })
+        .collect()
+}
+
+fn plan_catalog_argument_replacements(
+    config: &GlobalConfig,
+    edition: &str,
+    old: &str,
+    new: &str,
+) -> Result<Vec<AccountModReplacement>, String> {
+    Ok(rules::plan_catalog_argument_replacements(
+        config,
+        &account_snapshots(config)?,
+        edition,
+        old,
+        new,
+    ))
+}
+
+fn plan_catalog_argument_replacements_in_schemes(
+    config: &GlobalConfig,
+    edition: &str,
+    old: &str,
+    new: &str,
+) -> Result<Vec<SchemeModJournalEntry>, String> {
+    Ok(rules::plan_catalog_argument_replacements_in_schemes(
+        config,
+        &account_snapshots(config)?,
+        edition,
+        old,
+        new,
+    ))
+}
+
+fn capsule_usage(config: &GlobalConfig, capsule: &ModCapsule) -> Result<Vec<String>, String> {
+    let identity = |game: &str| {
+        if game.trim().is_empty() {
+            return None;
+        }
+        let canonical = std::fs::canonicalize(Path::new(game.trim()).join("mods")).ok()?;
+        crate::launch_context::normalized_path_identity(&canonical)
+    };
+    let identities = InstallationIdentities {
+        cn: identity(&config.cn_game_path),
+        global: identity(&config.global_game_path),
+    };
+    Ok(rules::capsule_usage(
+        config,
+        capsule,
+        &account_snapshots(config)?,
+        &identities,
+    ))
+}
+
 const MODULE_ID: &str = "mod-catalog";
 const SCHEMA_VERSION: u32 = 1;
-const MAX_ARGUMENT_LENGTH: usize = 2_048;
 static CATALOG_LOCK: Mutex<()> = Mutex::new(());
 static RESTART_RESERVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -56,85 +118,6 @@ pub(crate) fn freeze_for_restart() -> Result<impl Sized, String> {
     Ok(CatalogRestartReservation)
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-struct ModCatalogPayload {
-    argument_overrides: BTreeMap<String, String>,
-    custom_entries: Vec<CustomModEntry>,
-    legacy_import_completed: bool,
-    pending_argument_update: Option<PendingCatalogArgumentUpdate>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PendingCatalogArgumentUpdate {
-    capsule_id: String,
-    accounts: Vec<AccountModJournalEntry>,
-    scheme_members: Vec<SchemeModJournalEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AccountModJournalEntry {
-    account_id: String,
-    old_active: String,
-    old_list: Vec<String>,
-    new_active: String,
-    new_list: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SchemeModJournalEntry {
-    group_id: String,
-    account_id: String,
-    old_arguments: Option<String>,
-    new_arguments: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CustomModEntry {
-    id: String,
-    edition: String,
-    launch_arguments: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModCapsule {
-    pub id: String,
-    pub edition: String,
-    pub name: String,
-    pub origin: String,
-    pub launch_arguments: String,
-    pub default_launch_arguments: Option<String>,
-    pub source_mod_name: Option<String>,
-    pub lightweight_profile: Option<String>,
-    pub issue: Option<String>,
-    pub feature_groups: Vec<String>,
-    pub auto_exit_on_death_enabled: bool,
-    pub processed: bool,
-    pub source_eligible: bool,
-    pub update_required: bool,
-    pub ready: bool,
-    pub deletable: bool,
-    pub assigned_account_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModCapsuleAccountSelection {
-    pub account_id: String,
-    pub account_name: String,
-    pub edition: Option<String>,
-    pub selected_capsule_id: Option<String>,
-    pub legacy_mod_arguments: String,
-    pub issue: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModCapsulePool {
-    pub generation: u64,
-    pub scanned_at: String,
-    pub capsules: Vec<ModCapsule>,
-    pub accounts: Vec<ModCapsuleAccountSelection>,
-}
-
 #[derive(Debug, Clone)]
 struct ScannedMod {
     id: String,
@@ -143,43 +126,6 @@ struct ScannedMod {
     default_arguments: String,
     lightweight_profile: Option<String>,
     issue: Option<String>,
-}
-
-fn catalog_store(state: &SharedState) -> Result<ModuleConfigStore, String> {
-    ModuleConfigStore::new(&state.app_data_dir, MODULE_ID, SCHEMA_VERSION)
-        .map_err(|error| error.to_string())
-}
-
-fn normalize_edition(value: &str) -> Result<String, String> {
-    match value.trim().to_ascii_uppercase().as_str() {
-        "CN" => Ok("CN".to_string()),
-        "GLOBAL" => Ok("Global".to_string()),
-        _ => Err("Mod 胶囊版本只能是 CN 或 Global".to_string()),
-    }
-}
-
-fn account_edition(config: &GlobalConfig, account: &AccountMeta) -> Option<String> {
-    if let Some(region) = account.region.as_deref() {
-        return GameRegion::parse(region)
-            .ok()
-            .map(|region| region.edition().canonical().to_string());
-    }
-    match (
-        !config.cn_game_path.trim().is_empty(),
-        !config.global_game_path.trim().is_empty(),
-    ) {
-        (true, false) => Some("CN".to_string()),
-        (false, true) => Some("Global".to_string()),
-        _ => None,
-    }
-}
-
-fn scanned_capsule_id(edition: &str, name: &str) -> String {
-    format!(
-        "scan:{}:{}",
-        edition.to_ascii_lowercase(),
-        name.trim().to_ascii_lowercase()
-    )
 }
 
 fn scan_installations(config: &GlobalConfig) -> Vec<ScannedMod> {
@@ -193,7 +139,10 @@ fn scan_installations(config: &GlobalConfig) -> Vec<ScannedMod> {
             continue;
         }
         for installed in installed_mods(&Path::new(game_directory).join("mods")) {
-            let light = if installed.feature_groups.is_empty() && !installed.update_required {
+            let light = if !installed.requires_unpack
+                && installed.feature_groups.is_empty()
+                && !installed.update_required
+            {
                 crate::lightweight_mod::inspect(
                     &Path::new(game_directory).join("mods").join(&installed.name),
                     &installed.name,
@@ -324,31 +273,12 @@ fn delete_scanned_mod_directory(
         .map_err(|error| format!("无法删除 Mod 文件夹 {}：{error}", mod_directory.display()))
 }
 
-fn validate_arguments(arguments: &str) -> Result<String, String> {
-    let arguments = arguments.trim();
-    if arguments.is_empty() {
-        return Err("自定义 Mod 参数不能为空；原版游戏请直接选择“不使用 Mod”".to_string());
-    }
-    if arguments.len() > MAX_ARGUMENT_LENGTH {
-        return Err(format!("Mod 参数不能超过 {MAX_ARGUMENT_LENGTH} 个字符"));
-    }
-    parse_windows_command_line(arguments).map_err(|error| format!("Mod 参数无法解析：{error}"))?;
-    Ok(arguments.to_string())
-}
-
 fn effective_scanned_arguments(payload: &ModCatalogPayload, scanned: &ScannedMod) -> String {
     payload
         .argument_overrides
         .get(&scanned.id)
         .cloned()
         .unwrap_or_else(|| scanned.default_arguments.clone())
-}
-
-fn custom_display_name(arguments: &str) -> String {
-    active_mod_name(arguments)
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "自定义参数".to_string())
 }
 
 fn legacy_arguments(config: &GlobalConfig) -> Vec<(String, String)> {
@@ -420,98 +350,6 @@ fn merge_legacy_entries(
         }
     }
     changed
-}
-
-fn load_payload(
-    state: &SharedState,
-    config: &GlobalConfig,
-    scanned: &[ScannedMod],
-) -> Result<(u64, ModCatalogPayload), String> {
-    let store = catalog_store(state)?;
-    let loaded = store
-        .load::<ModCatalogPayload>()
-        .map_err(|error| error.to_string())?;
-    let (generation, mut payload, missing) = match loaded {
-        Some(envelope) => (envelope.generation, envelope.payload, false),
-        None => (0, ModCatalogPayload::default(), true),
-    };
-    let migrated = if payload.legacy_import_completed {
-        false
-    } else {
-        merge_legacy_entries(config, scanned, &mut payload);
-        payload.legacy_import_completed = true;
-        true
-    };
-    if missing || migrated {
-        let saved = store
-            .save_if_generation(generation, payload)
-            .map_err(|error| error.to_string())?;
-        Ok((saved.generation, saved.payload))
-    } else {
-        Ok((generation, payload))
-    }
-}
-
-fn save_payload(
-    state: &SharedState,
-    generation: u64,
-    payload: ModCatalogPayload,
-) -> Result<(u64, ModCatalogPayload), String> {
-    let saved = catalog_store(state)?
-        .save_if_generation(generation, payload)
-        .map_err(|error| error.to_string())?;
-    Ok((saved.generation, saved.payload))
-}
-
-fn load_payload_with_recovery(
-    state: &SharedState,
-    app: &tauri::AppHandle,
-    config: &GlobalConfig,
-    scanned: &[ScannedMod],
-) -> Result<(u64, ModCatalogPayload), String> {
-    let (generation, payload) = load_payload(state, config, scanned)?;
-    recover_argument_update(state, app, config, generation, payload)
-}
-
-fn recover_argument_update(
-    state: &SharedState,
-    app: &tauri::AppHandle,
-    config: &GlobalConfig,
-    generation: u64,
-    mut payload: ModCatalogPayload,
-) -> Result<(u64, ModCatalogPayload), String> {
-    let Some(pending) = payload.pending_argument_update.clone() else {
-        return Ok((generation, payload));
-    };
-
-    let _account_catalog_lease = state
-        .multi_instance()
-        .catalog_leases()
-        .acquire()
-        .map_err(|error| error.to_string())?;
-    let _account_leases = state
-        .multi_instance()
-        .account_leases()
-        .try_acquire_many(
-            pending
-                .accounts
-                .iter()
-                .map(|change| change.account_id.as_str()),
-        )
-        .map_err(|error| format!("恢复未完成的 Mod 目录事务失败: {error}"))?;
-    apply_account_mod_journal(config, &pending.accounts, false)
-        .map_err(|error| format!("恢复未完成的 Mod 账号引用失败: {error}"))?;
-    apply_scheme_mod_replacements(state, app, &pending.scheme_members, false)
-        .map_err(|error| format!("恢复未完成的 Mod 启动方案引用失败: {error}"))?;
-
-    payload.pending_argument_update = None;
-    let saved = save_payload(state, generation, payload)?;
-    crate::logger::log_msg(
-        "WARN",
-        "ModCatalog",
-        &format!("已回滚上次中断的 Mod 目录编辑事务: {}", pending.capsule_id),
-    );
-    Ok(saved)
 }
 
 /// Required core recovery, deliberately independent of installation scanning
@@ -596,13 +434,19 @@ fn build_pool(
                 default_launch_arguments: Some(entry.default_arguments.clone()),
                 source_mod_name: entry.installed.source_mod_name.clone(),
                 lightweight_profile: entry.lightweight_profile.clone(),
-                issue: entry.issue.clone(),
+                issue: if entry.installed.unpack_recovery_required {
+                    Some("上次 MPQ 转换未完成，请点击解压恢复".to_string())
+                } else {
+                    entry.issue.clone()
+                },
+                requires_unpack: entry.installed.requires_unpack,
+                unpack_recovery_required: entry.installed.unpack_recovery_required,
                 feature_groups: entry.installed.feature_groups.clone(),
                 auto_exit_on_death_enabled: entry.installed.auto_exit_on_death_enabled,
                 processed,
                 source_eligible: entry.installed.source_eligible && entry.issue.is_none(),
                 update_required: entry.installed.update_required,
-                ready: entry.issue.is_none(),
+                ready: entry.issue.is_none() && !entry.installed.unpack_recovery_required,
                 deletable: true,
                 assigned_account_ids: Vec::new(),
             }
@@ -617,7 +461,17 @@ fn build_pool(
             source_eligible,
             auto_exit_on_death_enabled,
         ) = capsule_feature_metadata(scanned, &entry.edition, &entry.launch_arguments);
+        let linked = active_mod_name(&entry.launch_arguments)
+            .ok()
+            .flatten()
+            .and_then(|name| {
+                scanned.iter().find(|m| {
+                    m.edition == entry.edition && m.installed.name.eq_ignore_ascii_case(&name)
+                })
+            });
         ModCapsule {
+            requires_unpack: linked.is_some_and(|m| m.installed.requires_unpack),
+            unpack_recovery_required: linked.is_some_and(|m| m.installed.unpack_recovery_required),
             id: entry.id.clone(),
             edition: entry.edition.clone(),
             name: custom_display_name(&entry.launch_arguments),
@@ -632,7 +486,7 @@ fn build_pool(
             processed,
             source_eligible,
             update_required,
-            ready: true,
+            ready: !linked.is_some_and(|m| m.installed.unpack_recovery_required),
             deletable: true,
             assigned_account_ids: Vec::new(),
         }
@@ -788,6 +642,7 @@ pub fn set_mod_auto_exit_on_death_enabled(
     capsule_id: String,
     enabled: bool,
 ) -> Result<ModCapsulePool, String> {
+    let _mutation = state.mod_mutations().try_acquire()?;
     let _catalog = lock_catalog()?;
     let config = state
         .configuration()
@@ -862,227 +717,6 @@ pub fn add_mod_capsule(
     Ok(build_pool(&config, generation, &payload, &scanned))
 }
 
-#[derive(Clone)]
-struct AccountModReplacement {
-    original: AccountMeta,
-    active: String,
-    list: Vec<String>,
-}
-
-impl AccountModReplacement {
-    fn journal_entry(&self) -> AccountModJournalEntry {
-        AccountModJournalEntry {
-            account_id: self.original.id.clone(),
-            old_active: self.original.mod_args.clone(),
-            old_list: self.original.mod_list.clone(),
-            new_active: self.active.clone(),
-            new_list: self.list.clone(),
-        }
-    }
-}
-
-fn plan_catalog_argument_replacements(
-    config: &GlobalConfig,
-    old_arguments: &str,
-    new_arguments: &str,
-) -> Result<Vec<AccountModReplacement>, String> {
-    let mut changes = Vec::new();
-    for account_id in AccountManager::list_ids(&config.accounts_dir) {
-        let account = AccountManager::load_meta(&config.accounts_dir, &account_id)
-            .map_err(|error| error.to_string())?;
-        let active = if account.mod_args.trim() == old_arguments {
-            new_arguments.to_string()
-        } else {
-            account.mod_args.clone()
-        };
-        let mut changed = active != account.mod_args;
-        let list = account
-            .mod_list
-            .iter()
-            .map(|arguments| {
-                if arguments.trim() == old_arguments {
-                    changed = true;
-                    new_arguments.to_string()
-                } else {
-                    arguments.clone()
-                }
-            })
-            .collect::<Vec<_>>();
-        if changed {
-            let mut normalized = account.clone();
-            normalized.replace_mod_configurations(active, list);
-            changes.push(AccountModReplacement {
-                original: account,
-                active: normalized.mod_args,
-                list: normalized.mod_list,
-            });
-        }
-    }
-    Ok(changes)
-}
-
-fn restore_account_mod_replacements(
-    config: &GlobalConfig,
-    changes: &[AccountModReplacement],
-) -> Vec<String> {
-    let mut errors = Vec::new();
-    for change in changes.iter().rev() {
-        if let Err(error) = update_account_mods_with_lease_held(
-            config,
-            change.original.clone(),
-            change.original.mod_args.clone(),
-            change.original.mod_list.clone(),
-        ) {
-            errors.push(format!("账号 {}: {error}", change.original.id));
-        }
-    }
-    errors
-}
-
-fn apply_account_mod_replacements(
-    config: &GlobalConfig,
-    changes: &[AccountModReplacement],
-) -> Result<(), String> {
-    for (index, change) in changes.iter().enumerate() {
-        if let Err(error) = update_account_mods_with_lease_held(
-            config,
-            change.original.clone(),
-            change.active.clone(),
-            change.list.clone(),
-        ) {
-            let rollback_errors = restore_account_mod_replacements(config, &changes[..index]);
-            return Err(if rollback_errors.is_empty() {
-                error.to_string()
-            } else {
-                format!(
-                    "{error}；回滚已更新账号时发生错误：{}",
-                    rollback_errors.join("；")
-                )
-            });
-        }
-    }
-    Ok(())
-}
-
-fn apply_account_mod_journal(
-    config: &GlobalConfig,
-    changes: &[AccountModJournalEntry],
-    forward: bool,
-) -> Result<(), String> {
-    for change in changes {
-        let account = AccountManager::load_meta(&config.accounts_dir, &change.account_id)
-            .map_err(|error| error.to_string())?;
-        let (expected_active, expected_list, target_active, target_list) = if forward {
-            (
-                &change.old_active,
-                &change.old_list,
-                &change.new_active,
-                &change.new_list,
-            )
-        } else {
-            (
-                &change.new_active,
-                &change.new_list,
-                &change.old_active,
-                &change.old_list,
-            )
-        };
-        if &account.mod_args == target_active && &account.mod_list == target_list {
-            continue;
-        }
-        if &account.mod_args != expected_active || &account.mod_list != expected_list {
-            return Err(format!(
-                "账号 {} 的 Mod 配置已被其他操作修改，停止恢复目录事务",
-                change.account_id
-            ));
-        }
-        update_account_mods_with_lease_held(
-            config,
-            account,
-            target_active.clone(),
-            target_list.clone(),
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn plan_catalog_argument_replacements_in_schemes(
-    config: &GlobalConfig,
-    old_arguments: &str,
-    new_arguments: &str,
-) -> Vec<SchemeModJournalEntry> {
-    config
-        .launch_groups
-        .iter()
-        .flat_map(|group| {
-            group
-                .members
-                .iter()
-                .filter(|member| {
-                    member
-                        .mod_args
-                        .as_deref()
-                        .is_some_and(|arguments| arguments.trim() == old_arguments)
-                })
-                .map(|member| SchemeModJournalEntry {
-                    group_id: group.id.clone(),
-                    account_id: member.account_id.clone(),
-                    old_arguments: member.mod_args.clone(),
-                    new_arguments: Some(new_arguments.to_string()),
-                })
-        })
-        .collect()
-}
-
-fn apply_scheme_mod_replacements(
-    state: &SharedState,
-    app: &tauri::AppHandle,
-    changes: &[SchemeModJournalEntry],
-    forward: bool,
-) -> Result<(), String> {
-    mutate_loaded_global_config(state, app, |config| {
-        let mut changed = false;
-        for change in changes {
-            let member = config
-                .launch_groups
-                .iter_mut()
-                .find(|group| group.id == change.group_id)
-                .and_then(|group| {
-                    group
-                        .members
-                        .iter_mut()
-                        .find(|member| member.account_id == change.account_id)
-                })
-                .ok_or_else(|| {
-                    crate::error::AppError::ConfigWriteError(format!(
-                        "启动方案 {} 中已找不到账号 {}，停止 Mod 引用事务",
-                        change.group_id, change.account_id
-                    ))
-                })?;
-            let (expected, target) = if forward {
-                (&change.old_arguments, &change.new_arguments)
-            } else {
-                (&change.new_arguments, &change.old_arguments)
-            };
-            if &member.mod_args == target {
-                continue;
-            }
-            if &member.mod_args != expected {
-                return Err(crate::error::AppError::ConfigWriteError(format!(
-                    "启动方案 {} 的账号 {} 已被其他操作修改，停止 Mod 引用事务",
-                    change.group_id, change.account_id
-                )));
-            }
-            member.mod_args = target.clone();
-            changed = true;
-        }
-        Ok(changed)
-    })
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 #[tauri::command]
 pub fn update_mod_capsule(
     app: tauri::AppHandle,
@@ -1148,14 +782,16 @@ pub fn update_mod_capsule(
         .map_err(|error| error.to_string())?;
     let account_changes = plan_catalog_argument_replacements(
         &config,
+        &current.edition,
         current.launch_arguments.trim(),
         &launch_arguments,
     )?;
     let scheme_changes = plan_catalog_argument_replacements_in_schemes(
         &config,
+        &current.edition,
         current.launch_arguments.trim(),
         &launch_arguments,
-    );
+    )?;
     let _account_leases = state
         .multi_instance()
         .account_leases()
@@ -1267,38 +903,13 @@ pub fn update_mod_capsule(
     Ok(build_pool(&latest_config, generation, &payload, &scanned))
 }
 
-fn capsule_usage(config: &GlobalConfig, arguments: &str) -> Vec<String> {
-    let mut usage = Vec::new();
-    for account_id in AccountManager::list_ids(&config.accounts_dir) {
-        if let Ok(account) = AccountManager::load_meta(&config.accounts_dir, &account_id) {
-            if account.mod_args.trim() == arguments {
-                usage.push(if account.display_name.trim().is_empty() {
-                    account.id
-                } else {
-                    account.display_name
-                });
-            }
-        }
-    }
-    for group in &config.launch_groups {
-        if group.members.iter().any(|member| {
-            member
-                .mod_args
-                .as_deref()
-                .is_some_and(|value| value.trim() == arguments)
-        }) {
-            usage.push(format!("启动方案：{}", group.name));
-        }
-    }
-    usage
-}
-
 #[tauri::command]
 pub fn delete_mod_capsule(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     capsule_id: String,
 ) -> Result<ModCapsulePool, String> {
+    let _mutation = state.mod_mutations().try_acquire()?;
     let _catalog = lock_catalog()?;
     let config = state
         .configuration()
@@ -1315,7 +926,7 @@ pub fn delete_mod_capsule(
         .find(|capsule| capsule.id == capsule_id)
         .cloned()
         .ok_or_else(|| "要删除的 Mod 参数已不存在".to_string())?;
-    let usage = capsule_usage(&config, &current.launch_arguments);
+    let usage = capsule_usage(&config, &current)?;
     if !usage.is_empty() {
         return Err(format!("该 Mod 参数仍被以下项目使用：{}", usage.join("、")));
     }
@@ -1338,6 +949,9 @@ pub fn delete_mod_capsule(
         .iter()
         .find(|entry| entry.id == current.id)
         .ok_or_else(|| "要删除的扫描 Mod 已不存在，请重新扫描后再试".to_string())?;
+    if scanned_mod.installed.unpack_recovery_required {
+        return Err("此 Mod 有未完成的解压事务，请先点击解压恢复，再删除".to_string());
+    }
     ensure_audio_mod_not_in_use(state.inner(), &config, &scanned_mod.installed.name)?;
     delete_scanned_mod_directory(&config, &scanned_mod.edition, &scanned_mod.installed.name)?;
     payload.argument_overrides.remove(&current.id);
@@ -1391,19 +1005,272 @@ pub fn assign_mod_capsule_to_account(
     Ok(())
 }
 
+/// Resolve only scanned presets. The mutation lease is owned by the caller.
+pub(crate) fn resolve_unpack_target(
+    state: &SharedState,
+    capsule_id: &str,
+) -> Result<(GlobalConfig, PathBuf, String), String> {
+    let _catalog = lock_catalog()?;
+    let config = state.configuration().snapshot().ok_or("尚未完成首次配置")?;
+    let scanned = scan_installations(&config);
+    let target = scanned
+        .iter()
+        .find(|entry| entry.id == capsule_id)
+        .ok_or("只能解压游戏目录中扫描到的 Mod，请重新扫描")?;
+    let game = if target.edition == "CN" {
+        &config.cn_game_path
+    } else {
+        &config.global_game_path
+    };
+    let root = Path::new(game.trim())
+        .join("mods")
+        .join(&target.installed.name);
+    let name = target.installed.name.clone();
+    Ok((config, root, name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::config::{LaunchGroup, LaunchGroupMember};
+
+    struct CatalogFixture {
+        root: PathBuf,
+        config: GlobalConfig,
+    }
+
+    impl CatalogFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("hub-catalog-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            std::fs::create_dir_all(root.join("cn-game/mods")).unwrap();
+            std::fs::create_dir_all(root.join("global-game/mods")).unwrap();
+            Self {
+                config: GlobalConfig {
+                    accounts_dir: root.to_string_lossy().into_owned(),
+                    cn_game_path: root.join("cn-game").to_string_lossy().into_owned(),
+                    global_game_path: root.join("global-game").to_string_lossy().into_owned(),
+                    ..GlobalConfig::default()
+                },
+                root,
+            }
+        }
+
+        fn account(&self, id: &str, region: Option<&str>, arguments: &str) {
+            let mut account = AccountMeta::new(id);
+            account.region = region.map(str::to_owned);
+            account.mod_args = arguments.to_string();
+            account.initialized = true;
+            std::fs::create_dir(self.root.join(id)).unwrap();
+            AccountManager::save_meta(&self.config.accounts_dir, &account).unwrap();
+        }
+
+        fn scheme(&mut self, members: &[(&str, &str)]) {
+            self.config.launch_groups.push(LaunchGroup {
+                id: "scheme".into(),
+                name: "Mixed editions".into(),
+                account_ids: members.iter().map(|(id, _)| (*id).into()).collect(),
+                members: members
+                    .iter()
+                    .map(|(id, arguments)| LaunchGroupMember {
+                        account_id: (*id).into(),
+                        mod_args: Some((*arguments).into()),
+                        ..LaunchGroupMember::default()
+                    })
+                    .collect(),
+            });
+        }
+    }
+
+    impl Drop for CatalogFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn sample_capsule(edition: &str, origin: &str) -> ModCapsule {
+        ModCapsule {
+            requires_unpack: false,
+            unpack_recovery_required: false,
+            id: scanned_capsule_id(edition, "Sample"),
+            edition: edition.into(),
+            name: "Sample".into(),
+            origin: origin.into(),
+            launch_arguments: "-mod Sample -txt -assettestmode 1".into(),
+            default_launch_arguments: None,
+            source_mod_name: None,
+            lightweight_profile: None,
+            issue: None,
+            feature_groups: Vec::new(),
+            auto_exit_on_death_enabled: false,
+            processed: false,
+            source_eligible: true,
+            update_required: false,
+            ready: true,
+            deletable: true,
+            assigned_account_ids: Vec::new(),
+        }
+    }
 
     #[test]
-    fn scanned_ids_are_case_insensitive_but_edition_scoped() {
+    fn argument_edits_only_update_accounts_and_scheme_members_in_the_selected_edition() {
+        let mut fixture = CatalogFixture::new();
+        let old = "-mod Sample -txt";
+        let new = "-mod Sample -txt -assettestmode 1";
+        fixture.account("acount1", Some("CN"), old);
+        fixture.account("acount2", Some("KR"), old);
+        fixture.account("acount3", Some("EU"), old);
+        fixture.account("acount4", None, old);
+        fixture.scheme(&[
+            ("acount1", old),
+            ("acount2", old),
+            ("acount3", old),
+            ("acount4", old),
+        ]);
+
+        let accounts = plan_catalog_argument_replacements(&fixture.config, "CN", old, new).unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].original.id, "acount1");
+        assert_eq!(accounts[0].active, new);
+        let schemes =
+            plan_catalog_argument_replacements_in_schemes(&fixture.config, "CN", old, new).unwrap();
+        assert_eq!(schemes.len(), 1);
+        assert_eq!(schemes[0].account_id, "acount1");
+
+        let accounts =
+            plan_catalog_argument_replacements(&fixture.config, "Global", old, new).unwrap();
         assert_eq!(
-            scanned_capsule_id("Global", "MyMod"),
-            scanned_capsule_id("Global", "mymod")
+            accounts
+                .iter()
+                .map(|change| change.original.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["acount2", "acount3"]
         );
-        assert_ne!(
-            scanned_capsule_id("CN", "MyMod"),
-            scanned_capsule_id("Global", "MyMod")
+        let schemes =
+            plan_catalog_argument_replacements_in_schemes(&fixture.config, "Global", old, new)
+                .unwrap();
+        assert_eq!(
+            schemes
+                .iter()
+                .map(|change| change.account_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["acount2", "acount3"]
+        );
+    }
+
+    #[test]
+    fn scanned_deletion_protects_same_folder_with_different_flags_and_casing() {
+        let mut fixture = CatalogFixture::new();
+        fixture.account("acount1", Some("CN"), "-mod sample -txt");
+        fixture.account("acount2", Some("CN"), "");
+        fixture.account("acount3", Some("KR"), "-mod Sample -txt -assettestmode 1");
+        fixture.scheme(&[("acount2", "-mod SAMPLE -custom-flag")]);
+        let usage = capsule_usage(&fixture.config, &sample_capsule("CN", "scanned")).unwrap();
+        assert_eq!(usage, vec!["acount1", "启动方案：Mixed editions"]);
+    }
+
+    #[test]
+    fn other_edition_does_not_block_deleting_an_unused_mod() {
+        let mut fixture = CatalogFixture::new();
+        fixture.account("acount1", Some("KR"), "-mod Sample -txt -assettestmode 1");
+        fixture.scheme(&[("acount1", "-mod Sample -txt -assettestmode 1")]);
+        assert!(
+            capsule_usage(&fixture.config, &sample_capsule("CN", "scanned"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn deletion_protects_shared_installation_across_edition_labels() {
+        let mut fixture = CatalogFixture::new();
+        fixture.config.global_game_path = fixture.config.cn_game_path.clone();
+        fixture.account("acount1", Some("KR"), "-mod Sample -different-flags");
+        fixture.account("acount2", Some("KR"), "");
+        fixture.scheme(&[("ACOUNT2", "-mod sample -txt")]);
+        assert_eq!(
+            capsule_usage(&fixture.config, &sample_capsule("CN", "scanned")).unwrap(),
+            vec!["acount1", "启动方案：Mixed editions"]
+        );
+    }
+
+    #[test]
+    fn deletion_resolves_installation_aliases_and_keeps_uncertain_roots_safe() {
+        let mut fixture = CatalogFixture::new();
+        fixture.config.global_game_path = fixture
+            .root
+            .join("global-game/../cn-game")
+            .to_string_lossy()
+            .into_owned();
+        fixture.account("acount1", Some("KR"), "-mod Sample -txt");
+        let capsule = sample_capsule("CN", "scanned");
+        assert_eq!(
+            capsule_usage(&fixture.config, &capsule).unwrap(),
+            vec!["acount1"]
+        );
+        fixture.config.global_game_path = fixture
+            .root
+            .join("unavailable")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            capsule_usage(&fixture.config, &capsule).unwrap(),
+            vec!["acount1"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn deletion_resolves_windows_case_and_separator_aliases() {
+        let mut fixture = CatalogFixture::new();
+        fixture.config.global_game_path = fixture
+            .config
+            .cn_game_path
+            .to_ascii_uppercase()
+            .replace('\\', "/");
+        fixture.account("acount1", Some("KR"), "-mod Sample -txt");
+        assert_eq!(
+            capsule_usage(&fixture.config, &sample_capsule("CN", "scanned")).unwrap(),
+            vec!["acount1"]
+        );
+    }
+
+    #[test]
+    fn argument_edits_match_windows_account_id_aliases_in_schemes() {
+        let mut fixture = CatalogFixture::new();
+        fixture.account("acount1", Some("CN"), "");
+        fixture.scheme(&[("ACOUNT1", "-mod Sample -txt")]);
+        let changes = plan_catalog_argument_replacements_in_schemes(
+            &fixture.config,
+            "CN",
+            "-mod Sample -txt",
+            "-mod Sample -txt -assettestmode 1",
+        )
+        .unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].account_id, "ACOUNT1");
+    }
+
+    #[test]
+    fn unresolved_legacy_account_and_unreadable_metadata_prevent_unsafe_deletion() {
+        let fixture = CatalogFixture::new();
+        fixture.account("acount1", None, "-mod Sample -txt");
+        assert_eq!(
+            capsule_usage(&fixture.config, &sample_capsule("CN", "scanned")).unwrap(),
+            vec!["acount1"]
+        );
+        std::fs::write(fixture.root.join("acount1/account.json"), "invalid json").unwrap();
+        assert!(capsule_usage(&fixture.config, &sample_capsule("CN", "scanned")).is_err());
+    }
+
+    #[test]
+    fn deleting_custom_parameters_only_checks_the_exact_preset() {
+        let fixture = CatalogFixture::new();
+        fixture.account("acount1", Some("CN"), "-mod Sample -different-flags");
+        assert!(
+            capsule_usage(&fixture.config, &sample_capsule("CN", "custom"))
+                .unwrap()
+                .is_empty()
         );
     }
 
@@ -1413,6 +1280,8 @@ mod tests {
             id: scanned_capsule_id("CN", "Sample"),
             edition: "CN".to_string(),
             installed: InstalledMod {
+                requires_unpack: false,
+                unpack_recovery_required: false,
                 name: "Sample".to_string(),
                 source_mod_name: None,
                 audio_ready: false,
@@ -1436,18 +1305,5 @@ mod tests {
 
         assert_eq!(known, "-mod Sample -txt -assettestmode 1");
         assert_ne!(payload.custom_entries[0].launch_arguments, known);
-    }
-
-    #[test]
-    fn scanned_argument_edits_cannot_change_the_folder_identity() {
-        let accepted = validate_arguments("-mod Sample -txt -assettestmode 1 -foo").unwrap();
-        assert_eq!(
-            active_mod_name(&accepted).unwrap().as_deref(),
-            Some("Sample")
-        );
-        assert_eq!(
-            active_mod_name("-mod Other -txt").unwrap().as_deref(),
-            Some("Other")
-        );
     }
 }

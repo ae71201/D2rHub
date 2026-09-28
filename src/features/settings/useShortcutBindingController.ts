@@ -4,7 +4,6 @@ import {
   useShortcutRecorder,
   validateShortcutAvailability,
 } from "../../hooks/useShortcutRecorder";
-import { useGlobalConfig } from "../../store/globalConfig";
 import type { GlobalConfig } from "../../store/types";
 import { showToast } from "../../components/ui/Toast";
 import { normalizeShortcut } from "../../utils/shortcut";
@@ -31,6 +30,8 @@ export function useShortcutBindingController({
   const [shortcutErrors, setShortcutErrors] = useState<Record<string, string>>({});
   const [checkingShortcut, setCheckingShortcut] = useState<string | null>(null);
   const shortcutRequest = useRef(0);
+  const configRef = useRef(config);
+  configRef.current = config;
 
   useEffect(() => {
     setCheckingShortcut(null);
@@ -106,7 +107,10 @@ export function useShortcutBindingController({
       try {
         await validateShortcutAvailability(combo, true);
         if (request !== shortcutRequest.current) return;
-        if (useGlobalConfig.getState().config !== config) {
+        const latest = configRef.current;
+        if (latest?.shortcut_bindings_json !== config.shortcut_bindings_json
+          || latest?.show_main_window_shortcut !== config.show_main_window_shortcut
+          || latest?.hide_main_window_shortcut !== config.hide_main_window_shortcut) {
           throw new Error(isEnglish ? "Settings changed during the check. Record the shortcut again." : "检查期间设置已变化，请重新录入快捷键");
         }
         updateConfig(c => {
