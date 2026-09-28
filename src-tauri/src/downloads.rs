@@ -561,31 +561,58 @@ mod tests {
     use std::{
         net::TcpListener,
         sync::{
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
         },
         thread,
     };
+    struct TestServer {
+        stop: Arc<AtomicBool>,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+    impl TestServer {
+        fn join(mut self) -> thread::Result<()> {
+            self.stop.store(true, Ordering::SeqCst);
+            self.thread.take().unwrap().join()
+        }
+    }
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
     fn server(
         status: u16,
         body: &'static [u8],
         delay: u64,
-    ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+    ) -> (String, Arc<AtomicUsize>, TestServer) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/file", listener.local_addr().unwrap());
         let hits = Arc::new(AtomicUsize::new(0));
         let count = hits.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
         let join = thread::spawn(move || {
-            // Leave the backup listening while the primary's deliberate stall
-            // times out, including scheduler delays on shared Windows CI hosts.
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while std::time::Instant::now() < deadline {
+            // The caller owns the listener lifetime, including an unused backup.
+            while !stopped.load(Ordering::SeqCst) {
                 if let Ok((mut s, _)) = listener.accept() {
                     count.fetch_add(1, Ordering::SeqCst);
                     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                     let mut buf = [0; 4096];
-                    let _ = s.read(&mut buf);
+                    let mut request = Vec::new();
+                    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                        match s.read(&mut buf) {
+                            Ok(0) | Err(_) => return,
+                            Ok(len) => request.extend_from_slice(&buf[..len]),
+                        }
+                        if request.len() > 16 * 1024 {
+                            return;
+                        }
+                    }
                     let _ = write!(
                         s,
                         "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -598,7 +625,14 @@ mod tests {
                 thread::sleep(Duration::from_millis(5));
             }
         });
-        (url, hits, join)
+        (
+            url,
+            hits,
+            TestServer {
+                stop,
+                thread: Some(join),
+            },
+        )
     }
     fn payload() -> Payload {
         Payload {
@@ -609,7 +643,6 @@ mod tests {
         }
     }
     fn run_failover(status: u16, body: &'static [u8], delay: u64) {
-        // Windows certificate initialization can outlast the fixture's listen deadline.
         let client = reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(if delay == 0 { 10 } else { 2 }))
