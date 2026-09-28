@@ -30,8 +30,8 @@
 
 ## 开发预览与验证
 
-- Vite 下 `/pet-settings-review.html`：真实设置组件配演示数据，不读取或修改真实存档。`?lang=en` 查看英文，`?state=new` 查看新用户状态。
-- `/pet-visual-review.html?new=1`：本轮 12 件新品的三帧效果；`?slot=hands` 查看全部手部饰品。
+- Vite 下 `/dev/previews/pet-settings-review.html`：真实设置组件配演示数据，不读取或修改真实存档。`?lang=en` 查看英文，`?state=new` 查看新用户状态。
+- `/dev/previews/pet-visual-review.html?new=1`：本轮 12 件新品的三帧效果；`?slot=hands` 查看全部手部饰品。
 - 两个预览入口均不在发行构建入口中。
 - 已验证生产构建、前端逻辑检查、桌宠 UI 测试和 Rust 相关测试，覆盖旧存档默认值、输入批次提交、奖励幂等、兑换触发收藏成就、达到每日上限后继续累计统计，以及全目录三帧渲染和双语话题覆盖。
 - 浏览器用于页面及饰品视觉验证；本轮未打包安装或执行原生键鼠监听的人工端到端验证。
