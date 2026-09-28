@@ -7,6 +7,9 @@ mod commands;
 mod domain;
 mod downloads;
 mod error;
+#[cfg(test)]
+#[path = "../build_support/generated_permissions.rs"]
+mod generated_permission_lifecycle_tests;
 #[doc(hidden)]
 pub mod infrastructure;
 mod input_listener;
