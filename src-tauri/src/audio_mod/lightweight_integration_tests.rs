@@ -1,5 +1,6 @@
 //! Opt-in integration matrix: independent processor, original game, Hub validators.
 use super::*;
+use crate::domain::mod_processing::GeneratorReport;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
@@ -299,7 +300,7 @@ fn lightweight_processed_same_name_replacement() {
         .unwrap();
         let after = validate_audio_mod_credential(&root, &name).unwrap();
         features(15)
-            .validate_present(&after.feature_groups)
+            .validate_present(&after.feature_groups, PROTOCOL_VERSION)
             .unwrap();
         recover_audio_mod_replacements(&root).unwrap();
         results

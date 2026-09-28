@@ -1,15 +1,13 @@
 //! Generate shared lightweight Mods without an account or audio feature dependency.
 use crate::application::task_runtime::{TaskHandle, TaskRequest};
-use crate::audio_mod::BuildLease;
+use crate::infrastructure::managed_process;
 use crate::state::SharedState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Duration,
 };
-use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 const MANIFEST: &str = "generation-manifest.json";
 const PRODUCER: &str = "d2r-native-bundled-generator";
@@ -309,7 +307,7 @@ async fn run_task(
     edition(&request.edition)?;
     arguments(&request.profile, &request.mod_name)?;
     let shared = state.inner().clone();
-    let _lease = BuildLease::acquire(&shared)?;
+    let _lease = shared.mod_mutations().try_acquire()?;
     let mut descriptor = TaskRequest::new(TASK_KIND)
         .for_subject(format!("{}:{}", request.edition, request.mod_name))
         .with_conflict_key("audio-mod-build")
@@ -351,10 +349,13 @@ async fn generate_impl(
     }
     let stage = mods.join(format!(".d2rhub-lightweight-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&stage).map_err(|e| e.to_string())?;
-    let command =
-        crate::mod_resources::resolve_processor(app).map(|path| app.shell().command(path));
-    let launched = command.and_then(|cmd| {
-        cmd.args([
+    let mut report = None;
+    let mut reported_error = String::new();
+    let mut percent = 0u8;
+    let process_result = async {
+        let executable = crate::mod_resources::resolve_processor(app)?;
+        let mut command = managed_process::command(&executable);
+        command.args([
             "lightweight",
             "--game",
             &game.to_string_lossy(),
@@ -365,50 +366,13 @@ async fn generate_impl(
             "--output",
             &stage.to_string_lossy(),
             "--events",
-        ])
-        .spawn()
-        .map_err(|e| e.to_string())
-    });
-    let (mut events, child) = match launched {
-        Ok(pair) => pair,
-        Err(e) => {
-            let _ = cleanup(&stage, &mods);
-            return Err(format!("无法启动独立加工器：{e}"));
-        }
-    };
-    let mut child = Some(child);
-    let mut report = None;
-    let mut error = String::new();
-    let mut percent = 0u8;
-    let mut cancelling = false;
-    let mut deadline = None;
-    let process_result = loop {
-        if task.cancellation_requested() && !cancelling {
-            if let Some(child) = child.take() {
-                if let Err(e) = child.kill() {
-                    return Err(format!(
-                        "无法停止生成器，任务目录保留在 {}：{e}",
-                        stage.display()
-                    ));
-                }
-            }
-            cancelling = true;
-            deadline = Some(std::time::Instant::now() + Duration::from_secs(15));
-        }
-        if deadline.is_some_and(|d| std::time::Instant::now() > d) {
-            return Err(format!(
-                "等待生成器退出超时，任务目录保留在 {}",
-                stage.display()
-            ));
-        }
-        let event = match tokio::time::timeout(Duration::from_millis(100), events.recv()).await {
-            Ok(Some(e)) => e,
-            Ok(None) => break Err("生成器事件通道提前关闭".to_string()),
-            Err(_) => continue,
-        };
-        match event {
-            CommandEvent::Stdout(bytes) => {
-                if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+        ]);
+        let output = managed_process::run(
+            &mut command,
+            None,
+            || task.cancellation_requested(),
+            |line| {
+                if let Ok(value) = serde_json::from_slice::<Value>(line) {
                     match value["type"].as_str() {
                         Some("progress") => {
                             percent = percent.max(
@@ -420,53 +384,39 @@ async fn generate_impl(
                                 value["message"].as_str().unwrap_or("正在生成资源"),
                             );
                         }
-                        Some("completed") => report = Some(value["report"].clone()),
+                        Some("completed") => {
+                            if !value["report"].is_object() {
+                                return Err("生成器返回了无效报告".into());
+                            }
+                            report = Some(value["report"].clone());
+                        }
                         Some("error") => {
-                            error = value["message"].as_str().unwrap_or("生成失败").into()
+                            reported_error = managed_process::bounded_diagnostic(
+                                value["message"].as_str().unwrap_or("生成失败"),
+                            );
                         }
                         _ => {}
                     }
                 }
-            }
-            CommandEvent::Stderr(bytes) => {
-                if error.len() < 16000 {
-                    error.push_str(&String::from_utf8_lossy(&bytes));
-                }
-            }
-            CommandEvent::Error(message) => {
-                if error.len() < 16000 {
-                    error.push_str(&message);
-                }
-            }
-            CommandEvent::Terminated(payload) => {
-                break if cancelling {
-                    Err("已取消生成".into())
-                } else if payload.code == Some(0) {
-                    report.ok_or_else(|| "生成器未返回完整报告，请更新内置生成器".into())
-                } else {
-                    Err(if error.is_empty() {
-                        format!("生成器退出：{:?}", payload.code)
-                    } else {
-                        error
-                    })
-                }
-            }
-            _ => {}
+                Ok(())
+            },
+        )
+        .await?;
+        if output.exit_code != Some(0) {
+            let error = if reported_error.is_empty() {
+                output.stderr
+            } else {
+                reported_error
+            };
+            return Err(if error.is_empty() {
+                format!("生成器退出：{:?}", output.exit_code)
+            } else {
+                error
+            });
         }
-    };
-    // On channel loss there is no exit confirmation; retain the staging directory.
-    if process_result
-        .as_ref()
-        .is_err_and(|e| e == "生成器事件通道提前关闭")
-    {
-        if let Some(child) = child.take() {
-            let _ = child.kill();
-        }
-        return Err(format!(
-            "生成器事件通道提前关闭，任务目录保留在 {}",
-            stage.display()
-        ));
+        report.ok_or_else(|| "生成器未返回完整报告，请更新内置生成器".to_string())
     }
+    .await;
     let result = async {
         let returned = process_result?;
         let root = stage.join(&request.mod_name);

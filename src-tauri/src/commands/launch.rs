@@ -980,7 +980,7 @@ async fn launch_battle_net_only_impl(
         }
 
         if host_runtime_lease.is_none() {
-            match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
+            match HostRuntimeLease::try_acquire_for_launch(state.inner().as_ref()) {
                 Ok(lease) => {
                     host_runtime_lease = Some(lease);
                 }
@@ -1713,7 +1713,7 @@ async fn launch_accounts_impl(
         if host_runtime_lease.is_none() {
             // Token 启动同样会覆盖机器级 Launch Options\OSI 与 Settings.json；只在
             // 真正启动前取得宿主租约，避免并发流程串号或串配置。
-            match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
+            match HostRuntimeLease::try_acquire_for_launch(state.inner().as_ref()) {
                 Ok(lease) => {
                     host_runtime_lease = Some(lease);
                 }
@@ -3053,71 +3053,8 @@ async fn launch_single_token(
 
 // ── 工具函数 ──
 
-/// Parse a Windows command-line fragment into arguments without losing quoted spaces.
-/// Implements the backslash-before-quote rules used by the Microsoft C runtime.
-pub(crate) fn parse_windows_command_line(input: &str) -> Result<Vec<String>, String> {
-    let chars: Vec<char> = input.chars().collect();
-    let mut args = Vec::new();
-    let mut index = 0;
-
-    while index < chars.len() {
-        while index < chars.len() && chars[index].is_whitespace() {
-            index += 1;
-        }
-        if index == chars.len() {
-            break;
-        }
-
-        let mut argument = String::new();
-        let mut in_quotes = false;
-        let mut started = false;
-        while index < chars.len() {
-            let current = chars[index];
-            if current.is_whitespace() && !in_quotes {
-                break;
-            }
-            if current == '\\' {
-                let slash_start = index;
-                while index < chars.len() && chars[index] == '\\' {
-                    index += 1;
-                }
-                let slash_count = index - slash_start;
-                if index < chars.len() && chars[index] == '"' {
-                    argument.extend(std::iter::repeat_n('\\', slash_count / 2));
-                    if slash_count % 2 == 0 {
-                        in_quotes = !in_quotes;
-                    } else {
-                        argument.push('"');
-                    }
-                    started = true;
-                    index += 1;
-                } else {
-                    argument.extend(std::iter::repeat_n('\\', slash_count));
-                    started = true;
-                }
-                continue;
-            }
-            if current == '"' {
-                in_quotes = !in_quotes;
-                started = true;
-                index += 1;
-                continue;
-            }
-            argument.push(current);
-            started = true;
-            index += 1;
-        }
-
-        if in_quotes {
-            return Err("Mod 启动参数包含未闭合的双引号".to_string());
-        }
-        if started {
-            args.push(argument);
-        }
-    }
-
-    Ok(args)
-}
+// Compatibility path for existing command consumers.
+pub(crate) use crate::domain::mod_arguments::parse_windows_command_line;
 
 /// 解码 .reg 注册表文件内容为 String。
 /// Windows regedit 导出默认 UTF-16LE（BOM 0xFF 0xFE），也兼容 UTF-8（含或不含 BOM）。

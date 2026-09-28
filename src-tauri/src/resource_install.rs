@@ -104,12 +104,27 @@ pub fn tree_hash(root: &Path) -> Result<String, String> {
     }
     Ok(format!("{:x}", h.finalize()))
 }
-pub fn receipt(root: &Path) -> Option<Receipt> {
+pub(crate) fn read_receipt(root: &Path) -> Result<Option<Receipt>, String> {
     let p = root.join(RECEIPT);
-    if fs::metadata(&p).ok()?.len() > 8192 {
-        return None;
+    let metadata = match fs::symlink_metadata(&p) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    no_links(&p)?;
+    if !metadata.is_file() || metadata.len() > 8192 {
+        return Err("资源安装记录不是有效的小型文件".into());
     }
-    serde_json::from_slice(&fs::read(p).ok()?).ok()
+    let receipt: Receipt = serde_json::from_slice(&fs::read(p).map_err(err)?).map_err(err)?;
+    if receipt.id.is_empty()
+        || receipt.version.is_empty()
+        || [&receipt.sha256, &receipt.tree_sha256]
+            .iter()
+            .any(|hash| hash.len() != 64 || !hash.bytes().all(|c| c.is_ascii_hexdigit()))
+    {
+        return Err("资源安装记录的身份或摘要无效".into());
+    }
+    Ok(Some(receipt))
 }
 pub fn sync_tree(root: &Path) -> Result<(), String> {
     no_links(root)?;
