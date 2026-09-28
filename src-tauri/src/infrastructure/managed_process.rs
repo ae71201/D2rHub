@@ -187,7 +187,7 @@ mod tests {
             writeln!(out, "{{\"type\":\"completed\",\"report\":null}}").unwrap();
             out.flush().unwrap();
         }
-        for index in 0u64.. {
+        for index in 0u64..=u64::MAX {
             std::fs::write(&marker, index.to_string()).unwrap();
             if mode == "flood" {
                 for _ in 0..100 {
