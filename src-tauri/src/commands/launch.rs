@@ -27,6 +27,8 @@ use crate::launch_context::{
 use crate::state::{AccountLifecycleLease, SharedState};
 use crate::token_registry_change::{WebTokenChangeMonitor, WEB_TOKEN_VALUE_NAME};
 
+const LOGIN_KEY_SEND_WINDOW: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// 启动进度详情
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchResult {
@@ -2383,6 +2385,7 @@ async fn launch_single(
     };
     let start = std::time::Instant::now();
     let key_start = d2r_started_at + std::time::Duration::from_secs(2);
+    let key_deadline = key_start + LOGIN_KEY_SEND_WINDOW;
     let mut next_key_send = key_start;
     let mut change_logged = false;
     let mut key_attempts = 0u32;
@@ -2436,7 +2439,7 @@ async fn launch_single(
             ));
         }
         let now = std::time::Instant::now();
-        if !changed && now >= next_key_send {
+        if !changed && now >= next_key_send && now < key_deadline {
             let sent = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             key_attempts += 1;
             if key_attempts == 1 || key_attempts.is_multiple_of(10) {
@@ -2930,7 +2933,7 @@ async fn launch_single_token(
     let monitor = &token_change_monitor;
     let start = std::time::Instant::now();
     let key_start = d2r_started_at + std::time::Duration::from_secs(2);
-    let key_deadline = key_start + std::time::Duration::from_secs(9);
+    let key_deadline = key_start + LOGIN_KEY_SEND_WINDOW;
     let mut next_key_send = key_start;
     let mut change_logged = false;
     let mut mutex_logged = false;
