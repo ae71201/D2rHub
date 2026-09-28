@@ -609,6 +609,12 @@ mod tests {
         }
     }
     fn run_failover(status: u16, body: &'static [u8], delay: u64) {
+        // Windows certificate initialization can outlast the fixture's listen deadline.
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(if delay == 0 { 10 } else { 2 }))
+            .build()
+            .unwrap();
         let (a, ha, ja) = server(status, body, delay);
         let (b, hb, jb) = server(200, b"good", 0);
         let mirrors = vec![
@@ -624,10 +630,6 @@ mod tests {
         let path = std::env::temp_dir().join(format!("hub-download-test-{}", uuid::Uuid::new_v4()));
         let runtime = TaskRuntime::new(4);
         let task = runtime.begin(TaskRequest::new("download-test")).unwrap();
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build()
-            .unwrap();
         tauri::async_runtime::block_on(download_ordered(
             &client,
             &payload(),
@@ -658,6 +660,7 @@ mod tests {
     }
     #[test]
     fn cancellation_does_not_try_the_second_source() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let (a, ha, ja) = server(200, b"good", 400);
         let (b, hb, jb) = server(200, b"good", 0);
         let mirrors = vec![
@@ -686,7 +689,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("hub-download-cancel-{}", uuid::Uuid::new_v4()));
         let result = tauri::async_runtime::block_on(download_ordered(
-            &reqwest::Client::new(),
+            &client,
             &payload(),
             &mirrors,
             &path,

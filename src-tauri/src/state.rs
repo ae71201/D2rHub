@@ -139,6 +139,14 @@ fn system_app_data_dir() -> PathBuf {
         .join("D2RHub")
 }
 
+pub(crate) fn smoke_app_data_dir() -> Option<PathBuf> {
+    std::env::var_os("D2RHUB_SMOKE_DATA_DIR").map(|value| {
+        let path = PathBuf::from(value);
+        assert!(path.is_absolute(), "D2RHUB_SMOKE_DATA_DIR must be absolute");
+        path
+    })
+}
+
 #[cfg(not(test))]
 fn legacy_portable_config_dir() -> PathBuf {
     std::env::current_exe()
@@ -422,6 +430,10 @@ fn migrate_legacy_config_dir(
 
 #[cfg(not(test))]
 fn resolve_app_data_dir() -> PathBuf {
+    // Smoke runs must not read or migrate the real user's configuration.
+    if let Some(path) = smoke_app_data_dir() {
+        return path;
+    }
     let target = system_app_data_dir();
     let source = legacy_portable_config_dir();
     match migrate_legacy_config_dir(&source, &target) {

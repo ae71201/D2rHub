@@ -83,11 +83,14 @@ $beforeFiles = Get-ProtectedFileSnapshot $realRoamingRoot
 $beforeD2r = @(Get-Process -Name "D2R" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $previousAppData = $env:APPDATA
+$previousSmokeData = $env:D2RHUB_SMOKE_DATA_DIR
 try {
     $env:APPDATA = $isolatedRoamingRoot
+    $env:D2RHUB_SMOKE_DATA_DIR = Join-Path $isolatedRoamingRoot "D2RHub"
     $process = Start-Process -FilePath $resolvedExe -PassThru -WindowStyle Hidden
 } finally {
     $env:APPDATA = $previousAppData
+    $env:D2RHUB_SMOKE_DATA_DIR = $previousSmokeData
 }
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
@@ -119,7 +122,7 @@ try {
         direct_child_process_count = $directChildren.Count
         main_window_ready = $process.MainWindowHandle -ne 0
         d2r_process_set_unchanged = (@(Compare-Object $beforeD2r $afterD2r).Count -eq 0)
-        app_data_isolated = $true
+        app_data_isolated = Test-Path -LiteralPath (Join-Path $isolatedRoamingRoot "D2RHub\logs")
     }
 } finally {
     if (-not $process.HasExited) {
@@ -168,6 +171,7 @@ if ($resolvedBaselineRoot.StartsWith($resolvedTempRoot, [System.StringComparison
 }
 
 if (-not $result.main_window_ready -or
+    -not $result.app_data_isolated -or
     -not $result.d2r_process_set_unchanged -or
     -not $result.protected_files_unchanged -or
     -not $result.performance_budget_passed) {

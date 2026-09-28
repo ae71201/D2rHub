@@ -21,6 +21,9 @@ struct D2rHubLogger;
 static LOGGER: D2rHubLogger = D2rHubLogger;
 
 fn system_logs_dir() -> PathBuf {
+    if let Some(path) = crate::state::smoke_app_data_dir() {
+        return path.join("logs");
+    }
     dirs::config_dir()
         .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
         .unwrap_or_else(|| {
@@ -127,7 +130,11 @@ pub fn init_logger() -> Result<(), String> {
 
     // 创建日志文件夹
     fs::create_dir_all(&logs_dir).map_err(|e| format!("创建日志文件夹失败: {}", e))?;
-    let migration_warnings = migrate_legacy_log_files(&legacy_portable_logs_dir(), &logs_dir);
+    let migration_warnings = if crate::state::smoke_app_data_dir().is_some() {
+        Vec::new()
+    } else {
+        migrate_legacy_log_files(&legacy_portable_logs_dir(), &logs_dir)
+    };
 
     // 获取日志文件夹内所有 .log 文件
     let mut log_files = Vec::new();
