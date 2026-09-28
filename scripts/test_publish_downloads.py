@@ -62,6 +62,14 @@ class PublishingTests(unittest.TestCase):
         self.spec['assets'][0]['version']='2.0.0'
         with self.assertRaises(RuntimeError):self.publish(1)
         self.assertEqual(FakePlatform.uploads,[])
+    def test_only_known_hub_version_typo_can_cross_downgrade_guard(self):
+        publisher.guard_asset({'version': '0.99.106'}, {'id': 'hub', 'version': '0.9.107'})
+        for kind, previous, candidate in (
+                ('hub', '0.99.106', '0.9.105'), ('hub', '0.99.107', '0.9.107'),
+                ('processor', '0.99.106', '0.9.107'), ('hub', '0.9.107', '0.9.106')):
+            with self.subTest(kind=kind, previous=previous, candidate=candidate):
+                with self.assertRaisesRegex(RuntimeError, 'downgrade'):
+                    publisher.guard_asset({'version': previous}, {'id': kind, 'version': candidate})
     def test_missing_source_is_rejected_before_upload(self):
         del self.spec['assets'][0]['source_commit']
         with self.assertRaises(publisher.SourceCommitMismatch):self.publish(1)

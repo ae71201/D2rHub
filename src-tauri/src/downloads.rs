@@ -144,10 +144,16 @@ pub fn cache_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .join("downloads"))
 }
 pub fn version_newer(candidate: &str, current: &str) -> bool {
-    match (
-        semver::Version::parse(candidate.trim_start_matches('v')),
-        semver::Version::parse(current.trim_start_matches('v')),
-    ) {
+    // The 0.9.106 release was accidentally labeled 0.99.106, including cached indices.
+    let normalize = |value: &str| {
+        let value = value.trim_start_matches('v');
+        semver::Version::parse(if value == "0.99.106" {
+            "0.9.106"
+        } else {
+            value
+        })
+    };
+    match (normalize(candidate), normalize(current)) {
         (Ok(a), Ok(b)) => a > b,
         _ => false,
     }
@@ -707,6 +713,19 @@ mod tests {
         assert!(select_index(Some(new), downgrade).is_err());
         assert!(!version_newer("0.9.103", "0.9.104"));
         assert!(version_newer("0.9.104", "0.9.103"));
+        assert!(version_newer("0.9.107", "0.99.106"));
+        assert!(!version_newer("0.99.106", "0.9.107"));
+        assert!(!version_newer("0.9.105", "0.99.106"));
+    }
+    #[test]
+    fn corrected_release_replaces_mistyped_cached_version_without_allowing_rollback() {
+        let old = serde_json::json!({"revision":1,"assets":[{"id":"hub","version":"0.99.106","sequence":1,"sha256":"a","size":4}]});
+        let new = serde_json::json!({"revision":2,"assets":[{"id":"hub","version":"0.9.107","sequence":2,"sha256":"b","size":4}]});
+        assert_eq!(select_index(Some(old.clone()), new.clone()).unwrap(), new);
+        let mut rollback = old;
+        rollback["revision"] = serde_json::json!(3);
+        rollback["assets"][0]["sequence"] = serde_json::json!(3);
+        assert!(select_index(Some(new), rollback).is_err());
     }
     #[test]
     fn invalid_primary_index_falls_back_without_poisoning_known_versions() {

@@ -64,6 +64,54 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, '来源'):
             workflow.package_mod(self.mod, 'LiteHub', self.root / 'bad.zip')
 
+    def enhanced_mod(self):
+        (self.mod / 'generation-manifest.json').unlink()
+        workflow.write_json(self.mod / 'LiteHub.mpq/modinfo.json', {'name': 'LiteHub'})
+        metadata = {'mod_name': 'LiteHub', 'mod_version': '2026.09.28.3', 'game_data_version': '93854'}
+        workflow.write_json(self.mod / 'mod-version.json', metadata)
+        mpq = self.mod / 'LiteHub.mpq'
+        workflow.write_json(self.mod / 'enhancement-manifest.json', {
+            **metadata, 'producer': 'd2rhub-local-mod-builder', 'profile': 'main',
+            'verified_output_integrity': True, 'runtime_verified': False,
+            'files': {file.relative_to(mpq).as_posix(): {
+                'bytes': file.stat().st_size, 'sha256': workflow.digest(file)}
+                for file in mpq.rglob('*') if file.is_file() and file.name != 'skills.bin'},
+        })
+
+    def test_enhanced_product_is_verified_and_preserves_runtime_status(self):
+        self.enhanced_mod()
+        first, second = self.root / 'one.zip', self.root / 'two.zip'
+        workflow.package_mod(self.mod, 'LiteHub', first)
+        workflow.package_mod(self.mod, 'LiteHub', second)
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        with zipfile.ZipFile(first) as archive:
+            self.assertFalse(json.loads(archive.read('LiteHub/enhancement-manifest.json'))['runtime_verified'])
+            self.assertNotIn('LiteHub/LiteHub.mpq/data/global/excel/skills.bin', archive.namelist())
+
+    def test_enhanced_product_rejects_changed_missing_and_extra_files(self):
+        self.enhanced_mod()
+        for change in ('changed', 'missing', 'extra'):
+            with self.subTest(change=change):
+                file = self.mod / 'LiteHub.mpq/data/global/excel/skills.txt'
+                original = file.read_bytes()
+                extra = file.with_name('unexpected.txt')
+                if change == 'changed':
+                    file.write_bytes(b'tampered')
+                elif change == 'missing':
+                    file.unlink()
+                else:
+                    extra.write_bytes(b'extra')
+                with self.assertRaisesRegex(RuntimeError, '成品文件'):
+                    workflow.package_mod(self.mod, 'LiteHub', self.root / 'bad.zip')
+                file.write_bytes(original)
+                extra.unlink(missing_ok=True)
+
+    def test_enhanced_product_rejects_wrong_identity(self):
+        self.enhanced_mod()
+        workflow.write_json(self.mod / 'mod-version.json', {'mod_name': 'BoHub'})
+        with self.assertRaisesRegex(RuntimeError, '版本或名称'):
+            workflow.package_mod(self.mod, 'LiteHub', self.root / 'bad.zip')
+
     def job(self):
         file = self.root / 'processor.exe'
         file.write_bytes(b'original')
@@ -172,6 +220,26 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '拒绝降低'):
                 workflow.promote_software({'version': '1.0.0', 'release_tag': 'v1.0.0'}, {'publisher_config': 'unused'})
         self.assertEqual(calls, [('GET', '/releases/latest')])
+
+    def test_promotion_allows_known_version_correction_with_source_checks(self):
+        calls = []
+        class Platform:
+            def __init__(self, name, repo, token):
+                self.name = name
+            def call(self, method, endpoint, **kwargs):
+                calls.append((self.name, method, endpoint))
+                return {'tag_name': 'v0.99.106'}
+            def release(self, tag, create=False, source_commit=None):
+                if self.name == 'github':
+                    self_test.assertEqual(source_commit, 'a' * 40)
+                return {'id': 7, 'tag_name': tag, 'name': tag, 'body': 'release'}
+        self_test = self
+        with patch('release_platforms.Platform', Platform), patch('release_platforms.credentials', return_value=(
+                {'github_repo': 'a/b', 'gitee_repo': 'a/b'}, 'fake')):
+            workflow.promote_software({'version': '0.9.107', 'release_tag': 'v0.9.107',
+                                       'source_commit': 'a' * 40}, {'publisher_config': 'unused'})
+        self.assertEqual(calls, [('github', 'GET', '/releases/latest'),
+                                ('gitee', 'PATCH', '/releases/7'), ('github', 'PATCH', '/releases/7')])
 
     def test_software_build_version_disagreement_stops_before_build(self):
         source = self.root / 'repo'

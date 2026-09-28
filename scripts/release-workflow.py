@@ -182,10 +182,17 @@ def package_mod(root, name, target):
     before = {str(f): (f.stat().st_size, f.stat().st_mtime_ns) for f in files}
     if any(f.name.lower() in MARKERS for f in files):
         raise RuntimeError(f'{name} 含加工记录，不能作为纯净Mod 包发布。')
-    report = read_json(root / 'generation-manifest.json')
+    report_name = ('generation-manifest.json' if (root / 'generation-manifest.json').is_file()
+                   else 'enhancement-manifest.json')
+    if not (root / report_name).is_file():
+        raise RuntimeError(f'{name} 缺少成品来源清单。')
+    report = read_json(root / report_name)
+    enhanced = report_name == 'enhancement-manifest.json'
+    producers = ({'d2r-litehub-plus-personal-builder', 'd2rhub-local-mod-builder'}
+                 if enhanced else {'d2r-native-bundled-generator'})
     if (report.get('mod_name') != name or report.get('profile') != PROFILES[name]
-            or report.get('producer') != 'd2r-native-bundled-generator'
-            or report.get('mode') != 'bundled_rebuild'
+            or report.get('producer') not in producers
+            or (not enhanced and report.get('mode') != 'bundled_rebuild')
             or report.get('verified_output_integrity') is not True):
         raise RuntimeError(f'{name} 的生成来源或方案不符。')
     data_version = (root / f'{name}.mpq/data/global/dataversionbuild.txt').read_text(encoding='utf-8-sig').strip()
@@ -193,7 +200,30 @@ def package_mod(root, name, target):
         raise RuntimeError(f'{name} 的实际游戏数据版本与生成记录不符。')
     if not (root / f'{name}.mpq/modinfo.json').is_file():
         raise RuntimeError(f'{name} 缺少 modinfo.json。')
-    report['mod_directory'] = name
+    if enhanced:
+        metadata = read_json(root / 'mod-version.json')
+        if (metadata.get('mod_name') != name or metadata.get('mod_version') != report.get('mod_version')
+                or str(metadata.get('game_data_version')) != data_version
+                or read_json(root / f'{name}.mpq/modinfo.json').get('name') != name):
+            raise RuntimeError(f'{name} 的成品版本或名称不符。')
+        recorded = report.get('files')
+        if not isinstance(recorded, dict) or not recorded:
+            raise RuntimeError(f'{name} 缺少成品文件摘要。')
+        actual = {f.relative_to(root / f'{name}.mpq').as_posix(): f
+                  for f in files if f.is_relative_to(root / f'{name}.mpq')}
+        # Game-generated BIN caches may be absent from the authored manifest.
+        extra = {key for key, file in actual.items() if key not in recorded
+                 and not (key.startswith('data/global/excel/') and file.suffix.lower() == '.bin'
+                          and file.with_suffix('.txt').is_file())}
+        if extra or set(recorded) - set(actual):
+            raise RuntimeError(f'{name} 的成品文件列表不符。')
+        for relative, expected in recorded.items():
+            file = actual[relative]
+            if (not isinstance(expected, dict) or expected.get('bytes') != file.stat().st_size
+                    or expected.get('sha256') != digest(file)):
+                raise RuntimeError(f'{name} 的成品文件摘要不符：{relative}')
+    else:
+        report['mod_directory'] = name
     # Strip machine paths and runtime-generated caches. Fixed ZIP timestamps and
     # permissions make the same source bytes produce the same artifact.
     hashes = {}
@@ -206,7 +236,7 @@ def package_mod(root, name, target):
                     and file.suffix.lower() == '.bin' and file.with_suffix('.txt').is_file()):
                 continue
             data = (json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2).encode('utf-8')
-                    if relative == 'generation-manifest.json' else file.read_bytes())
+                    if relative == report_name else file.read_bytes())
             hashes[relative] = hashlib.sha256(data).hexdigest()
             info = zipfile.ZipInfo(f'{name}/{relative}', date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -450,7 +480,7 @@ def publish_job(folder, cfg, promote=False):
 
 
 def promote_software(asset, cfg):
-    from release_platforms import credentials, Platform
+    from release_platforms import credentials, Platform, is_hub_version_correction
     settings, token = credentials(Path(cfg['publisher_config']))
     version = tuple(map(int, asset['version'].split('.')))
     # Only promote the software tag. Never make a resource/index tag latest.
@@ -458,7 +488,8 @@ def promote_software(asset, cfg):
     latest = github.call('GET', '/releases/latest', missing=True)
     if latest:
         current = latest['tag_name'].removeprefix('v')
-        if re.fullmatch(r'\d+\.\d+\.\d+', current) and tuple(map(int, current.split('.'))) > version:
+        if (re.fullmatch(r'\d+\.\d+\.\d+', current) and tuple(map(int, current.split('.'))) > version
+                and not is_hub_version_correction(current, asset['version'])):
             raise RuntimeError('已有更高正式软件版本，拒绝降低 latest。')
     source = asset.get('source_commit', '')
     if not re.fullmatch(r'[0-9a-f]{40}', source):

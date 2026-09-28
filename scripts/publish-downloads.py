@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
-from release_platforms import CONFIG, Platform, SourceCommitMismatch, credentials, anonymous_verify, anonymous_json, sha256, windows_file_version
+from release_platforms import CONFIG, Platform, SourceCommitMismatch, credentials, anonymous_verify, anonymous_json, sha256, windows_file_version, is_hub_version_correction
 
 def identity(a):
     return {k:a.get(k) for k in ('id','version','size','sha256','game_data_version','profile')}
@@ -27,7 +27,9 @@ def guard_asset(previous, asset):
             return (int(major),int(minor),int(patch),int(pre is None),suffix)
         next_version=version(asset['version'])
         if asset['id']=='hub' and '-' in asset['version']: raise RuntimeError('The software index requires a stable version')
-        if previous and next_version < version(previous['version']): raise RuntimeError('Refusing software/processor downgrade')
+        correction = previous and asset['id'] == 'hub' and is_hub_version_correction(previous['version'], asset['version'])
+        if previous and next_version < version(previous['version']) and not correction:
+            raise RuntimeError('Refusing software/processor downgrade')
 
 def publish(spec, revision, output, config_path, previous=None):
     if hasattr(sys.stdout, 'reconfigure'):

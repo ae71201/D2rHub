@@ -14,6 +14,11 @@ CONFIG = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'D2RHub-Publis
 class SourceCommitMismatch(RuntimeError):
     """A software release cannot be tied to its prepared source snapshot."""
 
+
+def is_hub_version_correction(previous, candidate):
+    """The 0.9.106 release was accidentally labeled 0.99.106."""
+    return (previous, candidate) == ('0.99.106', '0.9.107')
+
 def windows_file_version(path):
     import ctypes
     from ctypes import wintypes

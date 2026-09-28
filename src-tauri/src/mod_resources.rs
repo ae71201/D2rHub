@@ -1311,7 +1311,7 @@ mod tests {
         validate_catalog(&c).unwrap();
         let min = semver::Version::parse(&c.hub_min).unwrap();
         let max = semver::Version::parse(&c.hub_max_exclusive).unwrap();
-        for supported in ["0.9.104", "0.9.105", "0.99.106"] {
+        for supported in ["0.9.104", "0.9.105", "0.99.106", env!("CARGO_PKG_VERSION")] {
             let version = semver::Version::parse(supported).unwrap();
             assert!(min <= version && version < max);
         }

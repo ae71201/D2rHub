@@ -56,7 +56,7 @@ gh auth login
 
 - **软件**：从运行脚本所在的干净 Git 提交准备。核对快照内 npm、Cargo、Tauri 版本一致，运行前端和 Rust 检查，再执行锁定依赖的 NSIS 构建，并核对 EXE 内嵌版本。不会误取历史 `target` 中的旧安装包。
 - **加工器**：从配置的干净 Git 仓库准备。先运行 Rust 格式、Clippy 和测试，再执行 `cargo build --locked --release`，检查程序实际 `--version` 与快照内 Cargo 版本一致。
-- **三个 Mod**：从配置目录读取 `LiteHub`、`BoHub`、`NullHub`。校验生成来源、方案、实际游戏数据版本；拒绝加工清单、符号链接和重解析点。只去除 Hub 安装记录与可由同目录 TXT 生成的 BIN 缓存，规范化生成清单中的本机路径。ZIP 使用固定时间和属性，相同内容得到相同文件。
+- **三个 Mod**：从配置目录读取 `LiteHub`、`BoHub`、`NullHub`。支持旧 `generation-manifest.json` 与当前成品的 `enhancement-manifest.json`；校验来源、方案、实际游戏数据版本。当前成品还核对 `mod-version.json`、Mod 名称、完整文件列表及每个文件的大小和 SHA-256；拒绝加工清单、符号链接和重解析点。只去除 Hub 安装记录与可由同目录 TXT 生成的 BIN 缓存，规范化旧生成清单中的本机路径。ZIP 使用固定时间和属性，相同内容得到相同文件。
 
 软件和加工器先通过 `git archive` 导出当前提交的源码快照，再在本次任务独立的源码及构建目录运行构建。未跟踪的历史权限文件、旧构建缓存和本机文件不会混入源码，构建不会改写原工作区；原始 Mod 也不会被修改。完成后得到一个时间戳任务目录，包含安装包/EXE/ZIP、自动生成的 `software.json` / `resources.json`、每个 Mod 的文件摘要、记录源码提交与文件摘要的 `job.json`。准备未完成时不会生成可发布任务。
 
@@ -64,7 +64,7 @@ gh auth login
 
 资源兼容范围与协议通道读取仓库的 `resources/mod-resources-v2.json`。协议发生破坏性变更时，应先审查并更新此兼容声明，工作流不会猜测兼容性或自动放宽范围。
 
-**生成记录只能证明生成时的声明，不能证明目录后来没有手工修改。** 工作流会拦截可识别的加工记录并保存准确摘要，但发布者仍需选择经过确认的Mod 成品；不会把 `verified_output_integrity` 当作实时的纯净性证明。
+**生成记录不能代替游戏内验收。** 当前成品会重新核对 `enhancement-manifest.json` 中的文件摘要；旧生成格式仍只能证明生成时的声明。工作流会拦截可识别的加工记录并保存准确摘要，保留原有 `runtime_verified` 状态；不会把 `verified_output_integrity` 当作运行行为的证明。
 
 ## 发布前检查与源码对应
 
