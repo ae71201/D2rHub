@@ -116,6 +116,8 @@ export const TAURI_COMMANDS = [
   "set_mod_auto_exit_on_death_enabled",
   "get_mod_waypoints",
   "save_mod_waypoints",
+  "get_hub_mod_settings",
+  "save_hub_mod_data_version",
   "set_account_window_position",
   "set_auxiliary_window_visible",
   "set_shortcut_capture_active",

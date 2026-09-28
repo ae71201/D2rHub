@@ -37,6 +37,7 @@ commands.allow = [
   "get_audio_mod_setup_state", "get_mod_capsule_pool", "scan_mod_capsule_pool", "unpack_mod_capsule", "open_mods_directory",
   "set_mod_auto_exit_on_death_enabled",
   "get_mod_waypoints", "save_mod_waypoints",
+  "get_hub_mod_settings", "save_hub_mod_data_version",
   "add_mod_capsule", "update_mod_capsule", "delete_mod_capsule",
   "assign_mod_capsule_to_account", "prepare_audio_mod", "upgrade_audio_mod", "apply_audio_mod_to_account",
   "start_rune_audio_monitor", "restart_rune_audio_monitor", "stop_rune_audio_monitor",

@@ -657,6 +657,12 @@
           "markdownDescription": "Enables the get_global_config command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_hub_mod_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-hub-mod-settings",
+          "markdownDescription": "Enables the get_hub_mod_settings command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_mod_capsule_pool command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-mod-capsule-pool",
@@ -1057,6 +1063,12 @@
           "type": "string",
           "const": "allow-save-global-config",
           "markdownDescription": "Enables the save_global_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_hub_mod_data_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-hub-mod-data-version",
+          "markdownDescription": "Enables the save_hub_mod_data_version command without any pre-configured scope."
         },
         {
           "description": "Enables the save_mod_waypoints command without any pre-configured scope.",
@@ -1521,6 +1533,12 @@
           "markdownDescription": "Denies the get_global_config command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_hub_mod_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-hub-mod-settings",
+          "markdownDescription": "Denies the get_hub_mod_settings command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_mod_capsule_pool command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-mod-capsule-pool",
@@ -1921,6 +1939,12 @@
           "type": "string",
           "const": "deny-save-global-config",
           "markdownDescription": "Denies the save_global_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_hub_mod_data_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-hub-mod-data-version",
+          "markdownDescription": "Denies the save_hub_mod_data_version command without any pre-configured scope."
         },
         {
           "description": "Denies the save_mod_waypoints command without any pre-configured scope.",

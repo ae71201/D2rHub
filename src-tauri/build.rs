@@ -116,6 +116,8 @@ const APP_COMMANDS: &[&str] = &[
     "set_mod_auto_exit_on_death_enabled",
     "get_mod_waypoints",
     "save_mod_waypoints",
+    "get_hub_mod_settings",
+    "save_hub_mod_data_version",
     "add_mod_capsule",
     "update_mod_capsule",
     "delete_mod_capsule",

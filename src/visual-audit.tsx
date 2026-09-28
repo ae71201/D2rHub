@@ -4,6 +4,7 @@ import { version as appVersion } from "../package.json";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
 import { APPLICATION_DISCLOSURE_REVISION } from "./features/disclosures/disclosureStorage";
+import waypointCatalog from "../src-tauri/resources/waypoint-catalog.json";
 import type {
   RoomAutomationConfigSnapshot,
   RoomAutomationWorkflowStatus,
@@ -380,6 +381,18 @@ const modCapsulePool: ModCapsulePool = {
   })),
 };
 
+if (params.get("hubSettings") === "1") {
+  modCapsulePool.capsules = ["LiteHub", "MyBoAudio", "NullHub"].map((name, index) => ({
+    id: `cn:${name}`, edition: "CN", name, origin: "scanned",
+    launch_arguments: `-mod ${name} -txt -assettestmode 1`, default_launch_arguments: `-mod ${name} -txt -assettestmode 1`,
+    lightweight_profile: (["main", "filler", "min"] as const)[index], source_mod_name: index === 1 ? "BoHub" : null,
+    feature_groups: index === 1 ? ["audio_telemetry", "in_game_room_tools"] : [], processed: index === 1,
+    source_eligible: true, update_required: false, ready: true, deletable: true, assigned_account_ids: [],
+  }));
+}
+let hubSettingsVersion = "93854";
+let hubWaypoints = [...waypointCatalog.defaults];
+
 const accountSettings: SettingsMap = {
   "Window Mode": 0,
   "Screen Resolution (Windowed)": "1280x720",
@@ -500,6 +513,19 @@ function installIpcMock() {
       case "update_mod_capsule":
       case "delete_mod_capsule":
         return modCapsulePool;
+      case "get_hub_mod_settings":
+      case "save_hub_mod_data_version": {
+        const args = payload as { modName: string; gameDataVersion?: string };
+        if (args.gameDataVersion) hubSettingsVersion = args.gameDataVersion;
+        return { base_mod: args.modName === "MyBoAudio" ? "BoHub" : args.modName,
+          game_data_version: hubSettingsVersion, etag: hubSettingsVersion, waypoints_supported: args.modName !== "NullHub" };
+      }
+      case "get_mod_waypoints":
+      case "save_mod_waypoints": {
+        const args = payload as { selected?: string[] };
+        if (args.selected) hubWaypoints = args.selected;
+        return { ...waypointCatalog, selected: hubWaypoints, etag: JSON.stringify(hubWaypoints) };
+      }
       case "assign_mod_capsule_to_account":
         return null;
       case "check_software_update":

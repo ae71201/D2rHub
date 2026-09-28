@@ -27,6 +27,13 @@
 .mod-library-entry-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
 .mod-waypoint-settings { border-bottom: 1px solid var(--border-default); padding-bottom: 16px; margin-bottom: 8px; }
 .mod-waypoint-settings h4 { margin: 0 0 6px; font-size: 13px; }
+.hub-mod-version { border-bottom: 1px solid var(--border-default); padding-bottom: 12px; margin-bottom: 4px; min-width: 0; }
+.hub-mod-version-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hub-mod-version-row > label { font-size: 13px; font-weight: 600; margin-right: auto; }
+.hub-mod-version-controls { display: flex; align-items: center; gap: 6px; }
+.hub-mod-version-controls input { width: 116px; min-width: 0; font-variant-numeric: tabular-nums; }
+.hub-mod-version-row button { min-width: 32px; height: 32px; padding: 6px; }
+.hub-mod-version > p { padding-top: 5px; }
 .mod-waypoint-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 12px; }
 .mod-waypoint-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--text-secondary); }
 .mod-waypoint-grid select { width: 100%; min-width: 0; }

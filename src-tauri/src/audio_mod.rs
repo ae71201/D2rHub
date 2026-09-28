@@ -111,6 +111,36 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
     validation::installed_mods(mods_directory)
 }
 
+pub(crate) fn settings_source(mods: &Path, name: &str) -> Result<Option<String>, String> {
+    let root = mods.join(name);
+    let Some(path) = ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"]
+        .iter()
+        .map(|file| root.join(file))
+        .find(|path| path.exists())
+    else {
+        return Ok(None);
+    };
+    // Source inheritance does not depend on whether an installed feature recipe
+    // needs an update. Keep those feature permissions in the existing validators.
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&crate::hub_mod_settings::read(&path)?)
+            .map_err(|e| e.to_string())?;
+    if manifest["manifest_format"] != "d2r-audio-telemetry-mod"
+        || manifest["producer"] != "d2r-audio-mod"
+        || manifest["mod_name"] != name
+        || manifest["protocol_version"] != PROTOCOL_VERSION
+    {
+        return Err("无法验证加工 Mod 的来源凭证".into());
+    }
+    if manifest["build_mode"] != "augment" || manifest["source_mod_copied"] != true {
+        return Ok(None);
+    }
+    let source = manifest["source_mod_name"]
+        .as_str()
+        .ok_or("加工凭证缺少来源 Mod")?;
+    Ok(Some(arguments::plain_mod_name(source)?.to_string()))
+}
+
 pub(crate) fn set_auto_exit_on_death_enabled(
     mods_directory: &Path,
     mod_name: &str,
@@ -521,6 +551,7 @@ async fn prepare_audio_mod_impl(
     .await?;
     let generated =
         validate_generator_output(&mods_directory, &mod_name, &report, requested_features, &[])?;
+    crate::hub_mod_settings::inherit(source_directory.as_deref(), &generated.directory, &mod_name)?;
     emit_prepare_progress(
         &app,
         None,
@@ -849,6 +880,7 @@ async fn upgrade_audio_mod_impl(
         requested_features,
         &required_existing_groups,
     )?;
+    crate::hub_mod_settings::inherit(source_directory.as_deref(), &generated.directory, mod_name)?;
 
     if task.cancellation_requested() {
         return Err("识别 Mod 更新已取消".to_string());

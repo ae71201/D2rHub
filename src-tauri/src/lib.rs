@@ -10,6 +10,7 @@ mod error;
 #[cfg(test)]
 #[path = "../build_support/generated_permissions.rs"]
 mod generated_permission_lifecycle_tests;
+mod hub_mod_settings;
 #[doc(hidden)]
 pub mod infrastructure;
 mod input_listener;
@@ -324,6 +325,8 @@ pub fn run() {
             mod_catalog::set_mod_auto_exit_on_death_enabled,
             mod_waypoints::get_mod_waypoints,
             mod_waypoints::save_mod_waypoints,
+            hub_mod_settings::get_hub_mod_settings,
+            hub_mod_settings::save_hub_mod_data_version,
             mod_catalog::add_mod_capsule,
             mod_catalog::update_mod_capsule,
             mod_catalog::delete_mod_capsule,

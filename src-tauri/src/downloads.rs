@@ -722,7 +722,7 @@ mod tests {
     }
     #[test]
     fn older_software_indices_upgrade_to_current_release() {
-        for version in ["0.9.104", "0.9.105", "0.99.106", "0.9.107"] {
+        for version in ["0.9.104", "0.9.105", "0.99.106", "0.9.107", "0.9.108"] {
             let old = serde_json::json!({"revision":1,"assets":[{"id":"hub","version":version,"sequence":1,"sha256":"a","size":4}]});
             let new = serde_json::json!({"revision":2,"assets":[{"id":"hub","version":env!("CARGO_PKG_VERSION"),"sequence":2,"sha256":"b","size":4}]});
             assert!(version_newer(env!("CARGO_PKG_VERSION"), version));

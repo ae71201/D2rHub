@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { ChevronDown, PackageOpen, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
-import { ModWaypointSettings } from "./ModWaypointSettings";
+import { HubModSettings } from "./HubModSettings";
 import type { AccountMeta, ModCapsule } from "../../../store/types";
 import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/model";
 
@@ -55,8 +55,8 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
       </Button>
     </div>
     {expanded && <div id={detailsId} className="mod-library-entry-details">
-      {scanned && !capsule.requires_unpack && ["LiteHub", "BoHub"].includes(capsule.name) &&
-        <ModWaypointSettings edition={capsule.edition} modName={capsule.name} en={en} disabled={busy} />}
+      {scanned && !capsule.requires_unpack && (capsule.lightweight_profile || ["LiteHub", "BoHub", "NullHub"].includes(capsule.name) || ["LiteHub", "BoHub", "NullHub"].includes(capsule.source_mod_name ?? "")) &&
+        <HubModSettings key={`${capsule.edition}:${capsule.name}`} edition={capsule.edition} modName={capsule.name} en={en} disabled={busy} />}
       {supportsDeathExit && <div className="mod-catalog-feature-control">
         <span><b>{en ? "Auto-exit on death" : "死亡自动退房"}</b>
           <small id={`${detailsId}-death`}>{en ? "Close this Mod's game before changing; applies on the next launch." : "关闭使用此 Mod 的游戏后可修改，下次启动生效。"}</small></span>

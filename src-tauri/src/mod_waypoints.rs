@@ -33,15 +33,15 @@ fn catalog() -> Result<Catalog, String> {
 }
 #[derive(Serialize)]
 pub struct WaypointConfig {
-    selected: Vec<String>,
-    defaults: Vec<String>,
+    pub(crate) selected: Vec<String>,
+    pub(crate) defaults: Vec<String>,
     options: Vec<WaypointOption>,
-    etag: String,
+    pub(crate) etag: String,
 }
 #[derive(Serialize, Deserialize)]
 struct Journal {
     table: String,
-    manifest: String,
+    manifest: Option<String>,
 }
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -57,7 +57,7 @@ fn small_read(path: &Path) -> Result<Vec<u8>, String> {
     }
     fs::read(path).map_err(error)
 }
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if path.exists() {
         no_links(path)?;
     }
@@ -160,21 +160,12 @@ fn validate_selected(selected: &[String], c: &Catalog) -> Result<(), String> {
 }
 
 fn mod_root(state: &SharedState, edition: &str, name: &str) -> Result<PathBuf, String> {
-    if !matches!(name, "LiteHub" | "BoHub") {
-        return Err("此功能仅支持 LiteHub 和 BoHub".into());
+    let root = crate::hub_mod_settings::mod_root(state, edition, name)?;
+    crate::hub_mod_settings::recover(&root, name)?;
+    let identity = crate::hub_mod_settings::identity(root.parent().ok_or("缺少 mods 目录")?, name)?;
+    if !identity.is_some_and(|i| i.waypoints) {
+        return Err("此功能仅支持包含快捷传送的 LiteHub、BoHub 及其加工成品".into());
     }
-    let config = state.configuration().snapshot().ok_or("尚未配置游戏目录")?;
-    let game = match edition {
-        "CN" => config.cn_game_path,
-        "Global" => config.global_game_path,
-        _ => return Err("未知客户端版本".into()),
-    };
-    if game.trim().is_empty() {
-        return Err("尚未配置游戏目录".into());
-    }
-    let mods = Path::new(game.trim()).join("mods");
-    no_links(&mods)?;
-    let root = mods.join(name);
     for path in [
         &root,
         &root.join(format!("{name}.mpq")),
@@ -202,25 +193,32 @@ fn ensure_closed() -> Result<(), String> {
 fn table_path(root: &Path, name: &str) -> PathBuf {
     root.join(format!("{name}.mpq")).join(TABLE)
 }
-fn recover(root: &Path, name: &str) -> Result<(), String> {
+pub(crate) fn recover(root: &Path, name: &str) -> Result<(), String> {
     if !root.join(JOURNAL).exists() {
         return Ok(());
     }
     ensure_closed()?;
+    no_links(&root.join(format!("{name}.mpq/data/global/excel")))?;
     let journal: Journal =
         serde_json::from_slice(&small_read(&root.join(JOURNAL))?).map_err(error)?;
     // All destination paths are fixed here; the journal cannot supply a path.
     atomic_write(&table_path(root, name), journal.table.as_bytes())?;
-    atomic_write(&root.join(MANIFEST), journal.manifest.as_bytes())?;
+    if let Some(manifest) = journal.manifest {
+        atomic_write(&root.join(MANIFEST), manifest.as_bytes())?;
+    }
     fs::remove_file(root.join(JOURNAL)).map_err(error)
 }
-fn read_config(root: &Path, name: &str) -> Result<Option<WaypointConfig>, String> {
-    if !root.join(MARKER).exists() {
+pub(crate) fn read_config(root: &Path, name: &str) -> Result<Option<WaypointConfig>, String> {
+    if root.join(MARKER).exists() {
+        let marker: Value =
+            serde_json::from_slice(&small_read(&root.join(MARKER))?).map_err(error)?;
+        if marker["revision"] != 1 || marker["feature"] != "act4_waypoints" {
+            return Err("不支持的快捷传送配置版本".into());
+        }
+    } else if !crate::hub_mod_settings::identity(root.parent().ok_or("缺少 mods 目录")?, name)?
+        .is_some_and(|i| i.waypoints)
+    {
         return Ok(None);
-    }
-    let marker: Value = serde_json::from_slice(&small_read(&root.join(MARKER))?).map_err(error)?;
-    if marker["revision"] != 1 || marker["feature"] != "act4_waypoints" {
-        return Err("不支持的快捷传送配置版本".into());
     }
     recover(root, name)?;
     let bytes = small_read(&table_path(root, name))?;
@@ -247,7 +245,7 @@ pub fn get_mod_waypoints(
     read_config(&root, &mod_name)
 }
 
-fn save(
+pub(crate) fn save(
     root: &Path,
     name: &str,
     selected: &[String],
@@ -261,28 +259,36 @@ fn save(
     let path = table_path(root, name);
     let old = String::from_utf8(small_read(&path)?).map_err(error)?;
     let (next, _) = transform_table(&old, Some(selected))?;
-    let old_manifest = String::from_utf8(small_read(&root.join(MANIFEST))?).map_err(error)?;
-    let mut manifest: Value = serde_json::from_str(&old_manifest).map_err(error)?;
-    if manifest["mod_name"] != name {
-        return Err("Mod 清单名称不匹配".into());
-    }
-    let entry = manifest["files"]
-        .as_object_mut()
-        .and_then(|v| v.get_mut(TABLE))
-        .ok_or("清单缺少传送表校验值")?;
-    if entry["sha256"] != hash(old.as_bytes()) {
-        return Err("传送表校验值不一致，请先检查本地修改".into());
-    }
-    let prior_size = entry["bytes"].as_u64().ok_or("传送表大小记录无效")?;
-    *entry = serde_json::json!({"sha256":hash(next.as_bytes()),"bytes":next.len()});
-    let total = manifest["generated_bytes"]
-        .as_u64()
-        .ok_or("Mod 大小记录无效")?;
-    manifest["generated_bytes"] = serde_json::json!(
-        total.checked_sub(prior_size).ok_or("Mod 大小记录无效")? + next.len() as u64
-    );
-    manifest["features"]["act4_waypoints"]["selected"] = serde_json::json!(selected);
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(error)?;
+    let old_manifest = if root.join(MANIFEST).exists() {
+        Some(String::from_utf8(small_read(&root.join(MANIFEST))?).map_err(error)?)
+    } else {
+        None
+    };
+    let manifest_bytes = if let Some(old_manifest) = &old_manifest {
+        let mut manifest: Value = serde_json::from_str(old_manifest).map_err(error)?;
+        if manifest["mod_name"] != name {
+            return Err("Mod 清单名称不匹配".into());
+        }
+        let entry = manifest["files"]
+            .as_object_mut()
+            .and_then(|v| v.get_mut(TABLE))
+            .ok_or("清单缺少传送表校验值")?;
+        if entry["sha256"] != hash(old.as_bytes()) {
+            return Err("传送表校验值不一致，请先检查本地修改".into());
+        }
+        let prior_size = entry["bytes"].as_u64().ok_or("传送表大小记录无效")?;
+        *entry = serde_json::json!({"sha256":hash(next.as_bytes()),"bytes":next.len()});
+        let total = manifest["generated_bytes"]
+            .as_u64()
+            .ok_or("Mod 大小记录无效")?;
+        manifest["generated_bytes"] = serde_json::json!(
+            total.checked_sub(prior_size).ok_or("Mod 大小记录无效")? + next.len() as u64
+        );
+        manifest["features"]["act4_waypoints"]["selected"] = serde_json::json!(selected);
+        Some(serde_json::to_vec_pretty(&manifest).map_err(error)?)
+    } else {
+        None
+    };
     let journal = Journal {
         table: old,
         manifest: old_manifest,
@@ -294,9 +300,12 @@ fn save(
     )?;
     let result = (|| {
         atomic_write(&path, next.as_bytes())?;
-        atomic_write(&root.join(MANIFEST), &manifest_bytes)?;
+        if let Some(bytes) = &manifest_bytes {
+            atomic_write(&root.join(MANIFEST), bytes)?;
+        }
         if small_read(&path)? != next.as_bytes()
-            || small_read(&root.join(MANIFEST))? != manifest_bytes
+            || (manifest_bytes.is_some()
+                && Some(small_read(&root.join(MANIFEST))?) != manifest_bytes)
         {
             return Err("传送配置写入校验失败".into());
         }

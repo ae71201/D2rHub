@@ -147,6 +147,21 @@ fn scan_installations(config: &GlobalConfig) -> Vec<ScannedMod> {
                     &Path::new(game_directory).join("mods").join(&installed.name),
                     &installed.name,
                 )
+            } else if !installed.requires_unpack {
+                Ok(crate::hub_mod_settings::identity(
+                    &Path::new(game_directory).join("mods"),
+                    &installed.name,
+                )
+                .ok()
+                .flatten()
+                .and_then(|origin| {
+                    arguments_with_audio_mod("", &installed.name)
+                        .ok()
+                        .map(|arguments| crate::lightweight_mod::Metadata {
+                            profile: origin.profile,
+                            arguments,
+                        })
+                }))
             } else {
                 Ok(None)
             };
