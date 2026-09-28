@@ -10,11 +10,11 @@ use std::collections::HashSet;
 pub(crate) const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 28;
+pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 30;
 pub(crate) const ESC_NEXT_GAME_FEATURE_ID: &str = "esc_next_game";
 pub(crate) const ESC_NEXT_GAME_FINGERPRINT: &str = "esc-next-game-v2;window_ms=500;pause_timeout=1";
-pub(crate) const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 7] =
-    [21, 22, 23, 24, 25, 26, 27];
+pub(crate) const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 9] =
+    [21, 22, 23, 24, 25, 26, 27, 28, 29];
 pub(crate) const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 pub(crate) const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 pub(crate) const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str =

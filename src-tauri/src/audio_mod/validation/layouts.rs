@@ -630,6 +630,17 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
             ("D2RHubCommitCreateGamehd.json", "CreateGame:CreateGame"),
             ("D2RHubCommitJoinGamehd.json", "JoinGame:JoinGame"),
         ] {
+            // r30 separates room submission from exit; quick recreate above and
+            // older recipe validation retain their original timing.
+            let (commit_delay, close_delay) = if room_recipe_version >= 30 {
+                if native_message == "CreateGame:CreateGame" {
+                    (0.10, 0.15)
+                } else {
+                    (0.55, 0.60)
+                }
+            } else {
+                (commit_delay, close_delay)
+            };
             let commit = read_room_tool_layout(&layout_directory, name)?;
             if !layout_has_timed_child_message(
                 &commit,
@@ -875,6 +886,32 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
     }
     for (name, primary_input, input_names, native_submit, routed_submit) in form_specs {
         let form = read_room_tool_layout(&layout_directory, name)?;
+        if room_recipe_version >= 29 {
+            let timers: Vec<_> = form
+                .get("children")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|child| {
+                    child.get("name").and_then(serde_json::Value::as_str)
+                        == Some("D2RHubDefaultHell")
+                })
+                .collect();
+            if name == "D2RHubInGameCreateGamehd.json" {
+                let expected = serde_json::json!({
+                    "type": "TimerWidget",
+                    "name": "D2RHubDefaultHell",
+                    "fields": {"time": 0.05, "message": "CreateGame:SetDifficulty:2"}
+                });
+                if timers.len() != 1 || timers[0] != &expected {
+                    return Err(format!(
+                        "局内创建表单缺少有效的默认地狱初始化，请重新加工：{name}"
+                    ));
+                }
+            } else if !timers.is_empty() {
+                return Err(format!("默认地狱初始化只能用于局内创建表单：{name}"));
+            }
+        }
         let is_lobby_form = separate_in_game_forms && !name.starts_with("D2RHubInGame");
         let native_panel = if primary_input == "NameInput" {
             "JoinGamePanel"
