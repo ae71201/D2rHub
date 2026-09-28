@@ -601,6 +601,8 @@ mod tests {
             while !stopped.load(Ordering::SeqCst) {
                 if let Ok((mut s, _)) = listener.accept() {
                     count.fetch_add(1, Ordering::SeqCst);
+                    // Winsock may inherit the listener's nonblocking mode.
+                    s.set_nonblocking(false).unwrap();
                     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                     let mut buf = [0; 4096];
                     let mut request = Vec::new();
@@ -641,6 +643,30 @@ mod tests {
             sha256: format!("{:x}", Sha256::digest(b"good")),
             mirrors: vec![],
         }
+    }
+    #[test]
+    fn test_server_waits_for_delayed_and_fragmented_headers() {
+        let (url, hits, server) = server(200, b"good", 0);
+        let address = url
+            .strip_prefix("http://")
+            .unwrap()
+            .strip_suffix("/file")
+            .unwrap();
+        let mut socket = std::net::TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        thread::sleep(Duration::from_millis(50));
+        socket
+            .write_all(b"GET /file HTTP/1.1\r\nHost: localhost\r\n")
+            .unwrap();
+        thread::sleep(Duration::from_millis(50));
+        socket.write_all(b"\r\n").unwrap();
+        let mut response = String::new();
+        socket.read_to_string(&mut response).unwrap();
+        assert!(response.ends_with("\r\n\r\ngood"));
+        server.join().unwrap();
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
     fn run_failover(status: u16, body: &'static [u8], delay: u64) {
         let client = reqwest::Client::builder()
