@@ -144,16 +144,6 @@ pub async fn retry_task(
                 .await
                 .map(|_| ())
         }
-        "lightweight-mod-generate" => {
-            let payload = request
-                .retry_payload
-                .ok_or_else(|| AppError::Unknown("生成任务缺少重试数据".into()))?;
-            let payload = serde_json::from_str::<crate::lightweight_mod::GenerateRequest>(&payload)
-                .map_err(|e| AppError::Unknown(e.to_string()))?;
-            crate::lightweight_mod::retry(app, state, payload, task_id)
-                .await
-                .map_err(AppError::Unknown)
-        }
         "audio-mod-prepare" | "audio-mod-upgrade" => {
             let payload = request
                 .retry_payload

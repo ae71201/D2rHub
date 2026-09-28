@@ -1,0 +1,266 @@
+{
+  "revision": 1,
+  "game_data_version": "93854",
+  "defaults": [
+    "Act 3 - Travincal",
+    "Act 2 - Valley of the Kings",
+    "Act 1 - Catacombs 2",
+    "Act 3 - Mephisto 2",
+    "Act 2 - Arcane",
+    "Act 5 - Temple 2"
+  ],
+  "options": [
+    {
+      "id": "Act 1 - Town",
+      "act": 1,
+      "label_zh": "流亡者营地",
+      "label_en": "Rogue Encampment",
+      "string_key": "Rogue Encampment"
+    },
+    {
+      "id": "Act 1 - Wilderness 2",
+      "act": 1,
+      "label_zh": "冰冷之原",
+      "label_en": "Cold Plains",
+      "string_key": "Cold Plains"
+    },
+    {
+      "id": "Act 1 - Wilderness 3",
+      "act": 1,
+      "label_zh": "石块旷野",
+      "label_en": "Stony Field",
+      "string_key": "Stony Field"
+    },
+    {
+      "id": "Act 1 - Wilderness 4",
+      "act": 1,
+      "label_zh": "黑暗森林",
+      "label_en": "Dark Wood",
+      "string_key": "Dark Wood"
+    },
+    {
+      "id": "Act 1 - Wilderness 5",
+      "act": 1,
+      "label_zh": "黑色沼泽",
+      "label_en": "Black Marsh",
+      "string_key": "Black Marsh"
+    },
+    {
+      "id": "Act 1 - Courtyard 1",
+      "act": 1,
+      "label_zh": "外侧回廊",
+      "label_en": "Outer Cloister",
+      "string_key": "Outer Cloister"
+    },
+    {
+      "id": "Act 1 - Jail 1",
+      "act": 1,
+      "label_zh": "监牢一层",
+      "label_en": "Jail Level 1",
+      "string_key": "Jail Level 1"
+    },
+    {
+      "id": "Act 1 - Courtyard 2",
+      "act": 1,
+      "label_zh": "内侧回廊",
+      "label_en": "Inner Cloister",
+      "string_key": "Inner Cloister"
+    },
+    {
+      "id": "Act 1 - Catacombs 2",
+      "act": 1,
+      "label_zh": "地下墓穴二层",
+      "label_en": "Catacombs Level 2",
+      "string_key": "Catacombs Level 2"
+    },
+    {
+      "id": "Act 2 - Town",
+      "act": 2,
+      "label_zh": "鲁·高因",
+      "label_en": "Lut Gholein",
+      "string_key": "Lut Gholein"
+    },
+    {
+      "id": "Act 2 - Sewer 1 B",
+      "act": 2,
+      "label_zh": "下水道二层",
+      "label_en": "Sewers Level 2",
+      "string_key": "Sewers Level 2"
+    },
+    {
+      "id": "Act 2 - Desert 2",
+      "act": 2,
+      "label_zh": "干燥高地",
+      "label_en": "Dry Hills",
+      "string_key": "Dry Hills"
+    },
+    {
+      "id": "Act 2 - Tomb 2 B",
+      "act": 2,
+      "label_zh": "亡者大殿二层",
+      "label_en": "Halls of the Dead Level 2",
+      "string_key": "Halls of the Dead Level 2"
+    },
+    {
+      "id": "Act 2 - Desert 3",
+      "act": 2,
+      "label_zh": "偏远绿洲",
+      "label_en": "Far Oasis",
+      "string_key": "Far Oasis"
+    },
+    {
+      "id": "Act 2 - Desert 4",
+      "act": 2,
+      "label_zh": "失落之城",
+      "label_en": "Lost City",
+      "string_key": "Lost City"
+    },
+    {
+      "id": "Act 2 - Basement 1",
+      "act": 2,
+      "label_zh": "王宫监牢一层",
+      "label_en": "Palace Cellar Level 1",
+      "string_key": "Palace Cellar Level 1"
+    },
+    {
+      "id": "Act 2 - Arcane",
+      "act": 2,
+      "label_zh": "神秘避难所",
+      "label_en": "Arcane Sanctuary",
+      "string_key": "Arcane Sanctuary"
+    },
+    {
+      "id": "Act 2 - Valley of the Kings",
+      "act": 2,
+      "label_zh": "法师峡谷",
+      "label_en": "Canyon of the Magi",
+      "string_key": "Canyon of the Magi"
+    },
+    {
+      "id": "Act 3 - Town",
+      "act": 3,
+      "label_zh": "库拉斯特海港",
+      "label_en": "Kurast Docks",
+      "string_key": "Kurast Docktown"
+    },
+    {
+      "id": "Act 3 - Jungle 1",
+      "act": 3,
+      "label_zh": "蜘蛛森林",
+      "label_en": "Spider Forest",
+      "string_key": "Spider Forest"
+    },
+    {
+      "id": "Act 3 - Jungle 2",
+      "act": 3,
+      "label_zh": "庞大湿地",
+      "label_en": "Great Marsh",
+      "string_key": "Great Marsh"
+    },
+    {
+      "id": "Act 3 - Jungle 3",
+      "act": 3,
+      "label_zh": "翠绿丛林",
+      "label_en": "Flayer Jungle",
+      "string_key": "Flayer Jungle"
+    },
+    {
+      "id": "Act 3 - Kurast 1",
+      "act": 3,
+      "label_zh": "库拉斯特下层区",
+      "label_en": "Lower Kurast",
+      "string_key": "Lower Kurast"
+    },
+    {
+      "id": "Act 3 - Kurast 2",
+      "act": 3,
+      "label_zh": "库拉斯特集市",
+      "label_en": "Kurast Bazaar",
+      "string_key": "Kurast Bazaar"
+    },
+    {
+      "id": "Act 3 - Kurast 3",
+      "act": 3,
+      "label_zh": "库拉斯特上层区",
+      "label_en": "Upper Kurast",
+      "string_key": "Upper Kurast"
+    },
+    {
+      "id": "Act 3 - Travincal",
+      "act": 3,
+      "label_zh": "崔凡克",
+      "label_en": "Travincal",
+      "string_key": "Travincal"
+    },
+    {
+      "id": "Act 3 - Mephisto 2",
+      "act": 3,
+      "label_zh": "憎恨囚牢二层",
+      "label_en": "Durance of Hate Level 2",
+      "string_key": "Durance of Hate Level 2"
+    },
+    {
+      "id": "Act 5 - Town",
+      "act": 5,
+      "label_zh": "哈洛加斯",
+      "label_en": "Harrogath",
+      "string_key": "Harrogath"
+    },
+    {
+      "id": "Act 5 - Barricade 1",
+      "act": 5,
+      "label_zh": "冰冻高地",
+      "label_en": "Frigid Highlands",
+      "string_key": "Rigid Highlands"
+    },
+    {
+      "id": "Act 5 - Barricade 2",
+      "act": 5,
+      "label_zh": "亚瑞特高原",
+      "label_en": "Arreat Plateau",
+      "string_key": "Arreat Plateau"
+    },
+    {
+      "id": "Act 5 - Ice Cave 1",
+      "act": 5,
+      "label_zh": "水晶通道",
+      "label_en": "Crystalline Passage",
+      "string_key": "Crystalized Cavern Level 1"
+    },
+    {
+      "id": "Act 5 - Ice Cave 2",
+      "act": 5,
+      "label_zh": "冰川小径",
+      "label_en": "Glacial Trail",
+      "string_key": "Crystalized Cavern Level 2"
+    },
+    {
+      "id": "Act 5 - Temple 2",
+      "act": 5,
+      "label_zh": "苦痛大厅",
+      "label_en": "Halls of Pain",
+      "string_key": "Halls of Death's Calling"
+    },
+    {
+      "id": "Act 5 - Barricade Snow",
+      "act": 5,
+      "label_zh": "冰冻苔原",
+      "label_en": "Frozen Tundra",
+      "string_key": "Tundra Wastelands"
+    },
+    {
+      "id": "Act 5 - Ice Cave 3",
+      "act": 5,
+      "label_zh": "先祖之路",
+      "label_en": "The Ancients' Way",
+      "string_key": "Glacial Caves Level 1"
+    },
+    {
+      "id": "Act 5 - Baal Temple 2",
+      "act": 5,
+      "label_zh": "世界之石要塞二层",
+      "label_en": "Worldstone Keep Level 2",
+      "string_key": "The Worldstone Keep Level 2"
+    }
+  ]
+}

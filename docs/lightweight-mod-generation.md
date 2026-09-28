@@ -1,23 +1,19 @@
-# 轻量 Mod 与独立生成器
+# 轻量 Mod 成品
 
-默认入口：设置 → Mod 管理 → 下载 Mod 与加工器。标准成品从 Releases 下载并安装到当前国服/国际服游戏目录。独立生成器继续支持定制生成，以下记录生成清单和兼容性验证。完整下载与更新规则见 [资源分发方案](mod-resource-distribution.md)。
+LiteHub、BoHub、NullHub 直接制作、验证并发布成品。用户从“设置 → Mod 管理 → 下载与更新”安装，发布流程见 [资源分发方案](mod-resource-distribution.md)。独立加工器和 Hub 均不再提供这三个 Mod 的生成入口。
 
-| 方案 | 生成器配置 | 默认启动参数 |
+| 成品 | 兼容清单方案 | 默认启动参数 |
 | --- | --- | --- |
 | LiteHub | main | `-mod LiteHub -txt -assettestmode 1` |
 | BoHub | filler | `-mod BoHub -txt -assettestmode 1` |
 | NullHub | min | `-mod NullHub -txt -assettestmode 1` |
 
-Hub 为三个方案统一使用 `-txt -assettestmode 1`，同时兼容旧生成清单中缺少这些选项的原始启动参数。继续加工后的成品采用加工流程的完整启动参数。
+现有成品中的 `generation-manifest.json` 继续用于身份、数据版本和启动参数兼容校验；保留该格式不意味着仍支持现场生成。Mod 列表按清单识别方案，不根据名称猜测。成品可继续加工声纹、房间工具、双击 Esc 下一局和死亡退房功能。
 
-本地加工需要独立加工器及本机原版资源。加工器从资源页按需安装，不打入 Hub 安装包。游戏资源版本由生成器校验，成品数据版本随实际读取的原版资源。
+发布时使用 `.\release.ps1 -Target mods` 打包已确认的三个成品目录；加工器独立构建、发布。修改成品不需要更新或维护生成配方。
 
-后台任务支持进度、取消及失败重试。生成和音频加工共享互斥锁。成品先写入 mods 下本次任务的临时目录，检查报告、目录身份、数据版本、文件数量和总字节数后再改名发布。同名目录不会覆盖。任务失败或取消只清理自身目录；无法确认子进程退出时保留目录供诊断。
+验证：`npm test`、`cargo test --manifest-path src-tauri/Cargo.toml lightweight_mod::tests --lib`。
 
-列表根据生成清单识别轻量方案，不根据名称猜测。纯轻量成品按上表提供默认参数；实际继续加工后的成品沿用加工流程的参数。
+加工兼容性回归：设置 `D2RHUB_MOD_PROCESSOR` 为独立加工器 EXE，`D2RHUB_LIGHTWEIGHT_GAME_ROOT` 为游戏目录，`D2RHUB_MOD_PRODUCTS_ROOT` 为包含 LiteHub、BoHub、NullHub 成品的父目录，再运行 `cargo test --manifest-path src-tauri/Cargo.toml lightweight_all_processing_combinations --lib -- --ignored --nocapture`。测试直接读取现有成品作为来源，覆盖三个方案各 15 种功能组合及逐步增补、重复加工，不再调用生成命令。结果写入 `artifacts/lightweight-processing-<UUID>`，原成品保持不变。
 
-验证：`npm test`、`cargo test --manifest-path src-tauri/Cargo.toml lightweight_mod::tests --lib`。真实原版资源冒烟测试需先设置 `D2RHUB_MOD_PROCESSOR` 为独立 EXE，再设置 `D2RHUB_LIGHTWEIGHT_GAME_ROOT`，再运行 `cargo test --manifest-path src-tauri/Cargo.toml bundled_generator_outputs_pass_hub_validation --lib -- --ignored --nocapture`，三个方案在独立临时目录生成并接受 Hub 校验，不启动游戏或修改账号。
-
-加工兼容性回归：设置同一个游戏目录环境变量后，运行 `cargo test --manifest-path src-tauri/Cargo.toml lightweight_all_processing_combinations --lib -- --ignored --nocapture`。测试覆盖三个方案各 15 种功能组合及逐步增补、重复加工；四个单项和四项全选从纯轻量成品开始，其他包含声纹的组合从声纹成品增补，避免重复编码全部音频。每项调用由 `D2RHUB_MOD_PROCESSOR` 指定的独立加工器及 Hub 正式校验函数，同时检查版本和死亡退房开关。日志与结果写入 `artifacts/lightweight-processing-<UUID>`，保留基线及最终成品，便于资源对比。
-
-矩阵通过后，将 `D2RHUB_PROCESSING_TEST_RESUME` 设置为该结果目录，运行 `cargo test --manifest-path src-tauri/Cargo.toml lightweight_processed_same_name_replacement --lib -- --ignored --nocapture`，验证已加工成品的同名更新事务。上述测试不操作用户安装目录中的 Mod，也不修改账号配置；游戏内效果仍需实机验证。
+矩阵通过后，将 `D2RHUB_PROCESSING_TEST_RESUME` 设置为结果目录，运行 `cargo test --manifest-path src-tauri/Cargo.toml lightweight_processed_same_name_replacement --lib -- --ignored --nocapture`，验证已加工成品的同名更新事务。测试不启动游戏或修改账号，游戏内效果仍需实机验证。

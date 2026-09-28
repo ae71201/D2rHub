@@ -25,6 +25,11 @@
 .mod-library-argument-editor { display: flex; flex-wrap: wrap; gap: 8px; }
 .mod-library-argument-editor input { min-width: 150px; flex: 1; }
 .mod-library-entry-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
+.mod-waypoint-settings { border-bottom: 1px solid var(--border-default); padding-bottom: 16px; margin-bottom: 8px; }
+.mod-waypoint-settings h4 { margin: 0 0 6px; font-size: 13px; }
+.mod-waypoint-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 12px; }
+.mod-waypoint-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+.mod-waypoint-grid select { width: 100%; min-width: 0; }
 .mod-library-advanced { color: var(--text-muted); font-size: 12px; padding-top: 4px; }
 .mod-library-advanced summary { cursor: pointer; padding: 8px 0; width: fit-content; }
 .mod-library-advanced p { line-height: 1.6; margin: 5px 0; }

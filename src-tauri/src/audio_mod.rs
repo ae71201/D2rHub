@@ -39,6 +39,8 @@ pub struct InstalledMod {
     pub audio_ready: bool,
     pub update_required: bool,
     pub source_eligible: bool,
+    pub requires_unpack: bool,
+    pub unpack_recovery_required: bool,
     pub feature_groups: Vec<String>,
     pub audio_reusable: bool,
     pub auto_exit_on_death_enabled: bool,

@@ -717,6 +717,13 @@ pub(crate) fn preflight_account_meta(
             validate_bnet_snapshot(config, meta, context.installation.edition)?;
         }
     }
+    if purpose == ContextPurpose::LaunchGame {
+        crate::mpq_mod::ensure_no_pending_conversion(
+            &context.installation.game_directory.join("mods"),
+            &meta.mod_args,
+        )
+        .map_err(AppError::ConfigReadError)?;
+    }
     Ok(())
 }
 

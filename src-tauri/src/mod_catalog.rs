@@ -139,7 +139,10 @@ fn scan_installations(config: &GlobalConfig) -> Vec<ScannedMod> {
             continue;
         }
         for installed in installed_mods(&Path::new(game_directory).join("mods")) {
-            let light = if installed.feature_groups.is_empty() && !installed.update_required {
+            let light = if !installed.requires_unpack
+                && installed.feature_groups.is_empty()
+                && !installed.update_required
+            {
                 crate::lightweight_mod::inspect(
                     &Path::new(game_directory).join("mods").join(&installed.name),
                     &installed.name,
@@ -431,13 +434,19 @@ fn build_pool(
                 default_launch_arguments: Some(entry.default_arguments.clone()),
                 source_mod_name: entry.installed.source_mod_name.clone(),
                 lightweight_profile: entry.lightweight_profile.clone(),
-                issue: entry.issue.clone(),
+                issue: if entry.installed.unpack_recovery_required {
+                    Some("上次 MPQ 转换未完成，请点击解压恢复".to_string())
+                } else {
+                    entry.issue.clone()
+                },
+                requires_unpack: entry.installed.requires_unpack,
+                unpack_recovery_required: entry.installed.unpack_recovery_required,
                 feature_groups: entry.installed.feature_groups.clone(),
                 auto_exit_on_death_enabled: entry.installed.auto_exit_on_death_enabled,
                 processed,
                 source_eligible: entry.installed.source_eligible && entry.issue.is_none(),
                 update_required: entry.installed.update_required,
-                ready: entry.issue.is_none(),
+                ready: entry.issue.is_none() && !entry.installed.unpack_recovery_required,
                 deletable: true,
                 assigned_account_ids: Vec::new(),
             }
@@ -452,7 +461,17 @@ fn build_pool(
             source_eligible,
             auto_exit_on_death_enabled,
         ) = capsule_feature_metadata(scanned, &entry.edition, &entry.launch_arguments);
+        let linked = active_mod_name(&entry.launch_arguments)
+            .ok()
+            .flatten()
+            .and_then(|name| {
+                scanned.iter().find(|m| {
+                    m.edition == entry.edition && m.installed.name.eq_ignore_ascii_case(&name)
+                })
+            });
         ModCapsule {
+            requires_unpack: linked.is_some_and(|m| m.installed.requires_unpack),
+            unpack_recovery_required: linked.is_some_and(|m| m.installed.unpack_recovery_required),
             id: entry.id.clone(),
             edition: entry.edition.clone(),
             name: custom_display_name(&entry.launch_arguments),
@@ -467,7 +486,7 @@ fn build_pool(
             processed,
             source_eligible,
             update_required,
-            ready: true,
+            ready: !linked.is_some_and(|m| m.installed.unpack_recovery_required),
             deletable: true,
             assigned_account_ids: Vec::new(),
         }
@@ -930,6 +949,9 @@ pub fn delete_mod_capsule(
         .iter()
         .find(|entry| entry.id == current.id)
         .ok_or_else(|| "要删除的扫描 Mod 已不存在，请重新扫描后再试".to_string())?;
+    if scanned_mod.installed.unpack_recovery_required {
+        return Err("此 Mod 有未完成的解压事务，请先点击解压恢复，再删除".to_string());
+    }
     ensure_audio_mod_not_in_use(state.inner(), &config, &scanned_mod.installed.name)?;
     delete_scanned_mod_directory(&config, &scanned_mod.edition, &scanned_mod.installed.name)?;
     payload.argument_overrides.remove(&current.id);
@@ -981,6 +1003,30 @@ pub fn assign_mod_capsule_to_account(
     update_account_mods_inner(state.inner(), account_id, arguments, mod_list)
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// Resolve only scanned presets. The mutation lease is owned by the caller.
+pub(crate) fn resolve_unpack_target(
+    state: &SharedState,
+    capsule_id: &str,
+) -> Result<(GlobalConfig, PathBuf, String), String> {
+    let _catalog = lock_catalog()?;
+    let config = state.configuration().snapshot().ok_or("尚未完成首次配置")?;
+    let scanned = scan_installations(&config);
+    let target = scanned
+        .iter()
+        .find(|entry| entry.id == capsule_id)
+        .ok_or("只能解压游戏目录中扫描到的 Mod，请重新扫描")?;
+    let game = if target.edition == "CN" {
+        &config.cn_game_path
+    } else {
+        &config.global_game_path
+    };
+    let root = Path::new(game.trim())
+        .join("mods")
+        .join(&target.installed.name);
+    let name = target.installed.name.clone();
+    Ok((config, root, name))
 }
 
 #[cfg(test)]
@@ -1044,6 +1090,8 @@ mod tests {
 
     fn sample_capsule(edition: &str, origin: &str) -> ModCapsule {
         ModCapsule {
+            requires_unpack: false,
+            unpack_recovery_required: false,
             id: scanned_capsule_id(edition, "Sample"),
             edition: edition.into(),
             name: "Sample".into(),
@@ -1232,6 +1280,8 @@ mod tests {
             id: scanned_capsule_id("CN", "Sample"),
             edition: "CN".to_string(),
             installed: InstalledMod {
+                requires_unpack: false,
+                unpack_recovery_required: false,
                 name: "Sample".to_string(),
                 source_mod_name: None,
                 audio_ready: false,

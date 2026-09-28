@@ -64,6 +64,8 @@ pub struct ModCapsule {
     pub auto_exit_on_death_enabled: bool,
     pub processed: bool,
     pub source_eligible: bool,
+    pub requires_unpack: bool,
+    pub unpack_recovery_required: bool,
     pub update_required: bool,
     pub ready: bool,
     pub deletable: bool,

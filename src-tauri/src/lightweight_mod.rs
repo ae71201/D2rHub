@@ -1,8 +1,5 @@
-//! Generate shared lightweight Mods without an account or audio feature dependency.
-use crate::application::task_runtime::{TaskHandle, TaskRequest};
-use crate::infrastructure::managed_process;
+//! Recognize downloadable Mod products and legacy generation manifests.
 use crate::state::SharedState;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs,
@@ -11,30 +8,6 @@ use std::{
 
 const MANIFEST: &str = "generation-manifest.json";
 const PRODUCER: &str = "d2r-native-bundled-generator";
-pub const TASK_KIND: &str = "lightweight-mod-generate";
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GenerateRequest {
-    pub edition: String,
-    pub profile: String,
-    pub mod_name: String,
-}
-#[derive(Clone, Debug, Serialize)]
-pub struct GenerateResult {
-    pub edition: String,
-    pub profile: String,
-    pub mod_name: String,
-    pub mod_directory: String,
-    pub launch_arguments: String,
-    pub task_id: u64,
-}
-#[derive(Serialize)]
-pub struct GenerateContext {
-    pub edition: String,
-    pub game_directory: String,
-    pub available: bool,
-    pub reason: Option<String>,
-}
 #[derive(Clone, Debug)]
 pub(crate) struct Metadata {
     pub profile: String,
@@ -93,27 +66,6 @@ pub(crate) fn game_path(state: &SharedState, value: &str) -> Result<PathBuf, Str
         return Err("游戏目录缺少原版 Data 或版本信息，请检查运行环境设置".into());
     }
     root.canonicalize().map_err(|e| e.to_string())
-}
-#[tauri::command]
-pub fn get_lightweight_mod_context(
-    state: tauri::State<'_, SharedState>,
-    edition: String,
-) -> Result<GenerateContext, String> {
-    let normalized = self::edition(&edition)?.to_string();
-    Ok(match game_path(state.inner(), &normalized) {
-        Ok(path) => GenerateContext {
-            edition: normalized,
-            game_directory: path.to_string_lossy().into_owned(),
-            available: true,
-            reason: None,
-        },
-        Err(reason) => GenerateContext {
-            edition: normalized,
-            game_directory: String::new(),
-            available: false,
-            reason: Some(reason),
-        },
-    })
 }
 fn regular(path: &Path) -> Result<fs::Metadata, String> {
     let metadata = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -195,326 +147,9 @@ pub(crate) fn inspect(root: &Path, name: &str) -> Result<Option<Metadata>, Strin
     }
     metadata(&report, root, name).map(Some)
 }
-fn tree_totals(root: &Path) -> Result<(u64, u64), String> {
-    let m = regular(root)?;
-    if m.is_file() {
-        return Ok((1, m.len()));
-    }
-    if !m.is_dir() {
-        return Err("生成结果包含特殊文件".into());
-    }
-    let mut total = (0, 0);
-    for item in fs::read_dir(root).map_err(|e| e.to_string())? {
-        let value = tree_totals(&item.map_err(|e| e.to_string())?.path())?;
-        total.0 += value.0;
-        total.1 += value.1;
-    }
-    Ok(total)
-}
-fn validate_output(
-    root: &Path,
-    request: &GenerateRequest,
-    returned: &Value,
-) -> Result<Value, String> {
-    let report = read_report(root)?;
-    if &report != returned {
-        return Err("返回报告与磁盘清单不一致".into());
-    }
-    let info = metadata(&report, root, &request.mod_name)?;
-    if info.profile != request.profile {
-        return Err("生成结果方案不一致".into());
-    }
-    let returned_path = PathBuf::from(report["mod_directory"].as_str().ok_or("生成报告缺少目录")?)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    if returned_path != root.canonicalize().map_err(|e| e.to_string())? {
-        return Err("生成器返回了任务目录之外的路径".into());
-    }
-    tree_totals(root)?;
-    let (files, bytes) = tree_totals(&root.join(format!("{}.mpq", request.mod_name)))?;
-    if report["counts"]["verified_files"].as_u64() != Some(files)
-        || report["generated_bytes"].as_u64() != Some(bytes)
-    {
-        return Err("生成文件集合或体积与校验报告不一致".into());
-    }
-    Ok(report)
-}
-fn name_exists(root: &Path, name: &str) -> Result<bool, String> {
-    if !root.exists() {
-        return Ok(false);
-    }
-    for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
-        if entry
-            .map_err(|e| e.to_string())?
-            .file_name()
-            .to_string_lossy()
-            .eq_ignore_ascii_case(name)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-/// Only our UUID-owned job directory is eligible for cleanup, after child exit.
-fn cleanup(root: &Path, parent: &Path) -> Result<(), String> {
-    let actual = root.canonicalize().map_err(|e| e.to_string())?;
-    if actual.parent() != Some(parent)
-        || !actual
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with(".d2rhub-lightweight-"))
-    {
-        return Err("拒绝清理任务目录之外的路径".into());
-    }
-    tree_totals(root)?;
-    fs::remove_dir_all(root).map_err(|e| e.to_string())
-}
-#[tauri::command]
-pub async fn generate_lightweight_mod(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SharedState>,
-    edition: String,
-    profile: String,
-    mod_name: String,
-) -> Result<GenerateResult, String> {
-    run_task(
-        app,
-        state,
-        GenerateRequest {
-            edition,
-            profile,
-            mod_name,
-        },
-        None,
-    )
-    .await
-}
-pub(crate) async fn retry(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SharedState>,
-    request: GenerateRequest,
-    previous: u64,
-) -> Result<(), String> {
-    run_task(app, state, request, Some(previous))
-        .await
-        .map(|_| ())
-}
-async fn run_task(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SharedState>,
-    request: GenerateRequest,
-    retry_of: Option<u64>,
-) -> Result<GenerateResult, String> {
-    edition(&request.edition)?;
-    arguments(&request.profile, &request.mod_name)?;
-    let shared = state.inner().clone();
-    let _lease = shared.mod_mutations().try_acquire()?;
-    let mut descriptor = TaskRequest::new(TASK_KIND)
-        .for_subject(format!("{}:{}", request.edition, request.mod_name))
-        .with_conflict_key("audio-mod-build")
-        .with_retry_payload(serde_json::to_string(&request).map_err(|e| e.to_string())?)
-        .with_initial_status("preflight", "正在检查轻量 Mod 生成环境");
-    if let Some(id) = retry_of {
-        descriptor = descriptor.with_retry_of(id);
-    }
-    let task = shared
-        .tasks()
-        .begin(descriptor)
-        .map_err(|e| e.to_string())?;
-    let result = generate_impl(&app, &shared, &request, &task).await;
-    match &result {
-        Ok(_) => {
-            let _ = task.succeed("轻量 Mod 已生成，可分配给账号");
-        }
-        Err(e) if task.cancellation_requested() => {
-            let _ = task.cancelled(e);
-        }
-        Err(e) => {
-            let _ = task.fail("lightweight-generation-failed", e);
-        }
-    }
-    result
-}
-async fn generate_impl(
-    app: &tauri::AppHandle,
-    state: &SharedState,
-    request: &GenerateRequest,
-    task: &TaskHandle,
-) -> Result<GenerateResult, String> {
-    let game = game_path(state, &request.edition)?;
-    let mods = game.join("mods");
-    fs::create_dir_all(&mods).map_err(|e| e.to_string())?;
-    let mods = mods.canonicalize().map_err(|e| e.to_string())?;
-    if name_exists(&mods, &request.mod_name)? {
-        return Err("同名 Mod 已存在，请使用现有成品或修改名称".into());
-    }
-    let stage = mods.join(format!(".d2rhub-lightweight-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&stage).map_err(|e| e.to_string())?;
-    let mut report = None;
-    let mut reported_error = String::new();
-    let mut percent = 0u8;
-    let process_result = async {
-        let executable = crate::mod_resources::resolve_processor(app)?;
-        let mut command = managed_process::command(&executable);
-        command.args([
-            "lightweight",
-            "--game",
-            &game.to_string_lossy(),
-            "--profile",
-            &request.profile,
-            "--name",
-            &request.mod_name,
-            "--output",
-            &stage.to_string_lossy(),
-            "--events",
-        ]);
-        let output = managed_process::run(
-            &mut command,
-            None,
-            || task.cancellation_requested(),
-            |line| {
-                if let Ok(value) = serde_json::from_slice::<Value>(line) {
-                    match value["type"].as_str() {
-                        Some("progress") => {
-                            percent = percent.max(
-                                (value["percent"].as_u64().unwrap_or(0).min(100) * 90 / 100) as u8,
-                            );
-                            let _ = task.update(
-                                percent,
-                                "generating",
-                                value["message"].as_str().unwrap_or("正在生成资源"),
-                            );
-                        }
-                        Some("completed") => {
-                            if !value["report"].is_object() {
-                                return Err("生成器返回了无效报告".into());
-                            }
-                            report = Some(value["report"].clone());
-                        }
-                        Some("error") => {
-                            reported_error = managed_process::bounded_diagnostic(
-                                value["message"].as_str().unwrap_or("生成失败"),
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(())
-            },
-        )
-        .await?;
-        if output.exit_code != Some(0) {
-            let error = if reported_error.is_empty() {
-                output.stderr
-            } else {
-                reported_error
-            };
-            return Err(if error.is_empty() {
-                format!("生成器退出：{:?}", output.exit_code)
-            } else {
-                error
-            });
-        }
-        report.ok_or_else(|| "生成器未返回完整报告，请更新内置生成器".to_string())
-    }
-    .await;
-    let result = async {
-        let returned = process_result?;
-        let root = stage.join(&request.mod_name);
-        let _ = task.update(92, "validate", "正在校验生成结果");
-        let check_root = root.clone();
-        let check_request = request.clone();
-        let mut disk = tokio::task::spawn_blocking(move || {
-            validate_output(&check_root, &check_request, &returned)
-        })
-        .await
-        .map_err(|e| e.to_string())??;
-        if task.cancellation_requested() {
-            return Err("已取消生成".into());
-        }
-        if game_path(state, &request.edition)? != game {
-            return Err("生成期间游戏目录已改变，请重新生成".into());
-        }
-        if name_exists(&mods, &request.mod_name)? {
-            return Err("同名 Mod 在生成期间出现，未覆盖现有内容".into());
-        }
-        let destination = mods.join(&request.mod_name);
-        disk["mod_directory"] = Value::String(destination.to_string_lossy().into_owned());
-        fs::write(
-            root.join(MANIFEST),
-            serde_json::to_vec_pretty(&disk).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        let _ = task.update(98, "install", "正在加入 Mod 列表");
-        fs::rename(&root, &destination).map_err(|e| format!("安装失败，未覆盖现有 Mod：{e}"))?;
-        Ok(GenerateResult {
-            edition: request.edition.clone(),
-            profile: request.profile.clone(),
-            mod_name: request.mod_name.clone(),
-            mod_directory: destination.to_string_lossy().into_owned(),
-            launch_arguments: arguments(&request.profile, &request.mod_name)?,
-            task_id: task.task_id(),
-        })
-    }
-    .await;
-    if let Err(e) = cleanup(&stage, &mods) {
-        log::warn!("轻量 Mod 任务目录保留 {}: {e}", stage.display());
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    #[ignore = "requires an installed game and the bundled generator"]
-    fn bundled_generator_outputs_pass_hub_validation() {
-        let game = std::env::var("D2RHUB_LIGHTWEIGHT_GAME_ROOT").expect("game root");
-        let parent =
-            std::env::temp_dir().join(format!("hub-generator-smoke-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&parent).unwrap();
-        for (profile, name) in [("main", "LiteHub"), ("filler", "BoHub"), ("min", "NullHub")] {
-            let output = std::process::Command::new(
-                std::env::var("D2RHUB_MOD_PROCESSOR")
-                    .expect("Set D2RHUB_MOD_PROCESSOR to the independent processor EXE"),
-            )
-            .args([
-                "lightweight",
-                "--game",
-                &game,
-                "--profile",
-                profile,
-                "--name",
-                name,
-                "--output",
-            ])
-            .arg(&parent)
-            .arg("--events")
-            .output()
-            .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let report = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-                .find(|v| v["type"] == "completed")
-                .expect("completed event")["report"]
-                .clone();
-            let request = GenerateRequest {
-                edition: "Global".into(),
-                profile: profile.into(),
-                mod_name: name.into(),
-            };
-            validate_output(&parent.join(name), &request, &report).unwrap();
-            println!(
-                "{name}: {} files, {} bytes",
-                report["counts"]["verified_files"], report["generated_bytes"]
-            );
-        }
-        fs::remove_dir_all(parent).unwrap();
-    }
     #[test]
     fn all_profiles_default_to_txt_and_asset_test_mode() {
         assert_eq!(
@@ -538,7 +173,7 @@ mod tests {
         let report = serde_json::json!({"producer":PRODUCER,"mode":"bundled_rebuild","mod_name":"Wrong","profile":"min","launch_arguments":"-mod Wrong -txt","verified_output_integrity":true});
         assert!(metadata(&report, Path::new("unused"), "NullHub").is_err());
     }
-    fn fixture() -> (PathBuf, Value, GenerateRequest) {
+    fn fixture() -> (PathBuf, Value) {
         let root =
             std::env::temp_dir().join(format!("hub-lightweight-test-{}", uuid::Uuid::new_v4()));
         let mpq = root.join("NullHub.mpq");
@@ -549,63 +184,38 @@ mod tests {
         )
         .unwrap();
         fs::write(mpq.join("data/global/dataversionbuild.txt"), b"93854").unwrap();
-        let (files, bytes) = tree_totals(&mpq).unwrap();
-        let report = serde_json::json!({"producer":PRODUCER,"mode":"bundled_rebuild","profile":"min","mod_name":"NullHub","mod_directory":root.canonicalize().unwrap(),"launch_arguments":"-mod NullHub","game_data_version":"93854","verified_output_integrity":true,"counts":{"verified_files":files},"generated_bytes":bytes});
+        let report = serde_json::json!({"producer":PRODUCER,"mode":"bundled_rebuild","profile":"min","mod_name":"NullHub","mod_directory":root.canonicalize().unwrap(),"launch_arguments":"-mod NullHub","game_data_version":"93854","verified_output_integrity":true});
         fs::write(root.join(MANIFEST), serde_json::to_vec(&report).unwrap()).unwrap();
-        (
-            root,
-            report,
-            GenerateRequest {
-                edition: "Global".into(),
-                profile: "min".into(),
-                mod_name: "NullHub".into(),
-            },
-        )
+        (root, report)
     }
+
     #[test]
-    fn validates_disk_output_and_rejects_missing_files_and_wrong_directory() {
-        let (root, mut report, request) = fixture();
+    fn recognizes_product_flags_and_rejects_missing_version() {
+        let (root, mut report) = fixture();
         assert_eq!(
             inspect(&root, "NullHub").unwrap().unwrap().arguments,
             "-mod NullHub -txt -assettestmode 1"
         );
-        assert!(validate_output(&root, &request, &report).is_ok());
+        assert!(inspect(&root, "NullHub").is_ok());
         report["launch_arguments"] = Value::String("-mod NullHub -assettestmode 1".into());
         fs::write(root.join(MANIFEST), serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_output(&root, &request, &report).is_ok());
+        assert!(inspect(&root, "NullHub").is_ok());
         report["launch_arguments"] = Value::String(arguments("min", "NullHub").unwrap());
         fs::write(root.join(MANIFEST), serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_output(&root, &request, &report).is_ok());
+        assert!(inspect(&root, "NullHub").is_ok());
         let mut wrong_flags = report.clone();
         wrong_flags["launch_arguments"] =
             Value::String("-mod NullHub -txt -assettestmode 0".into());
         assert!(metadata(&wrong_flags, &root, "NullHub").is_err());
-        report["mod_directory"] =
-            Value::String(std::env::temp_dir().to_string_lossy().into_owned());
-        fs::write(root.join(MANIFEST), serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_output(&root, &request, &report)
-            .unwrap_err()
-            .contains("之外"));
         fs::remove_file(root.join("NullHub.mpq/data/global/dataversionbuild.txt")).unwrap();
         assert!(inspect(&root, "NullHub").is_err());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn names_alone_are_not_profile_identity_and_cleanup_stays_owned() {
-        let (root, _, _) = fixture();
+    fn names_alone_are_not_profile_identity() {
+        let (root, _) = fixture();
         fs::remove_file(root.join(MANIFEST)).unwrap();
         assert!(inspect(&root, "NullHub").unwrap().is_none());
-        assert!(cleanup(&root, &std::env::temp_dir().canonicalize().unwrap()).is_err());
-        assert!(root.exists());
-        assert!(name_exists(
-            root.parent().unwrap(),
-            &root
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_ascii_uppercase()
-        )
-        .unwrap());
         fs::remove_dir_all(root).unwrap();
     }
 }

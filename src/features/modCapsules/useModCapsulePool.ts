@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invokeCommand } from "../../platform/tauri";
-import type { ModCapsulePool } from "../../store/types";
+import { invokeCommand, listenEvent } from "../../platform/tauri";
+import type { ModCapsulePool, ModUnpackProgress, ModUnpackResult } from "../../store/types";
 
 interface UseModCapsulePoolOptions {
   active: boolean;
@@ -12,16 +12,22 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
   const [loading, setLoading] = useState(false);
   const [assigningAccountId, setAssigningAccountId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unpackingCapsuleId, setUnpackingCapsuleId] = useState<string | null>(null);
+  const [unpackProgress, setUnpackProgress] = useState<ModUnpackProgress | null>(null);
+  const [unpackResult, setUnpackResult] = useState<ModUnpackResult | null>(null);
+  const unpackLock = useRef(false);
+  const poolRevision = useRef(0);
   const refreshInFlight = useRef<Promise<ModCapsulePool | null> | null>(null);
 
   const refresh = useCallback((): Promise<ModCapsulePool | null> => {
     if (refreshInFlight.current) return refreshInFlight.current;
+    const version = poolRevision.current;
     const request = (async () => {
       setLoading(true);
       setError(null);
       try {
         const next = await invokeCommand<ModCapsulePool>("get_mod_capsule_pool");
-        setPool(next);
+        if (version === poolRevision.current) setPool(next);
         return next;
       } catch (reason) {
         setError(String(reason));
@@ -41,11 +47,12 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
   }, [active, refresh]);
 
   const scan = useCallback(async () => {
+    const version = poolRevision.current;
     setLoading(true);
     setError(null);
     try {
       const next = await invokeCommand<ModCapsulePool>("scan_mod_capsule_pool");
-      setPool(next);
+      if (version === poolRevision.current) setPool(next);
       return next;
     } catch (reason) {
       setError(String(reason));
@@ -78,6 +85,44 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
     }
   }, [onAssigned]);
 
+  const unpack = useCallback(async (capsuleId: string) => {
+    if (unpackLock.current) throw new Error("MPQ 解压任务正在进行中");
+    unpackLock.current = true;
+    setUnpackingCapsuleId(capsuleId);
+    setUnpackProgress(null);
+    setUnpackResult(null);
+    setError(null);
+    let unlisten: (() => void) | undefined;
+    try {
+      unlisten = await listenEvent<ModUnpackProgress>("mod-mpq-progress", ({ payload }) => {
+        if (payload.capsule_id === capsuleId) setUnpackProgress(payload);
+      });
+      // An earlier read must finish before the mutation, or it could restore stale buttons.
+      await refreshInFlight.current;
+      const result = await invokeCommand<ModUnpackResult>("unpack_mod_capsule", { capsuleId });
+      poolRevision.current += 1;
+      setPool(result.pool);
+      setUnpackResult(result);
+      return result;
+    } catch (reason) {
+      // A cancelled process may already have committed or rolled back. Rescan either way.
+      poolRevision.current += 1;
+      await refreshInFlight.current;
+      await refresh();
+      setError(String(reason));
+      throw reason;
+    } finally {
+      unlisten?.();
+      setUnpackingCapsuleId(null);
+      setUnpackProgress(null);
+      unpackLock.current = false;
+    }
+  }, [refresh]);
+
+  const cancelUnpack = useCallback(async () => {
+    if (unpackProgress) await invokeCommand("cancel_task", { taskId: unpackProgress.task_id });
+  }, [unpackProgress]);
+
   const assign = useCallback(async (accountId: string, capsuleId: string | null) => {
     setAssigningAccountId(accountId);
     setError(null);
@@ -95,6 +140,7 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
 
   return {
     pool,
+    unpack, unpackingCapsuleId, unpackProgress, unpackResult, cancelUnpack,
     loading,
     assigningAccountId,
     error,

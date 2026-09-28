@@ -652,7 +652,23 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 return None;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !entry.path().join(format!("{name}.mpq")).is_dir() {
+            let mpq = entry.path().join(format!("{name}.mpq"));
+            let pending = crate::mpq_mod::has_pending_conversion(&entry.path());
+            if mpq.is_file() || pending {
+                return Some(InstalledMod {
+                    name,
+                    source_mod_name: None,
+                    audio_ready: false,
+                    update_required: false,
+                    source_eligible: false,
+                    requires_unpack: true,
+                    unpack_recovery_required: pending,
+                    feature_groups: Vec::new(),
+                    audio_reusable: false,
+                    auto_exit_on_death_enabled: false,
+                });
+            }
+            if !mpq.is_dir() {
                 return None;
             }
             let has_processing_manifest = processing_manifest_path(&entry.path()).is_some();
@@ -706,6 +722,8 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 .as_ref()
                 .is_ok_and(|validated| validated.auto_exit_on_death_enabled);
             Some(InstalledMod {
+                requires_unpack: false,
+                unpack_recovery_required: false,
                 name,
                 source_mod_name,
                 audio_ready,
@@ -741,6 +759,16 @@ pub(super) fn resolve_source_directory(
     if let Some(source) = source_directory.as_ref() {
         if !source.is_dir() {
             return Err(format!("未找到源 Mod：{}", source.display()));
+        }
+        if crate::mpq_mod::has_pending_conversion(source)
+            || source
+                .join(format!(
+                    "{}.mpq",
+                    source_mod_name.as_deref().unwrap_or_default()
+                ))
+                .is_file()
+        {
+            return Err("请先在 Mod 库点击“解压”，完成后再加工这个 Mod".to_string());
         }
         if processing_manifest_path(source).is_some() {
             let source_name = source_mod_name.as_deref().unwrap_or_default();

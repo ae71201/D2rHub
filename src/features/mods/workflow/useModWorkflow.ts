@@ -45,7 +45,7 @@ export function useModWorkflow(options: Options) {
   const [autoStart, setAutoStart] = useState(false);
   const [processorReady, setProcessorReady] = useState(false);
   const target = options.accounts.find(account => account.id === draft?.accountId);
-  const inspectionIdentity = JSON.stringify([target?.initialized, target?.region, target?.mod_args, target?.is_running, target?.running_pid]);
+  const inspectionIdentity = JSON.stringify([target?.initialized, target?.region, target?.mod_args, target?.is_running, target?.running_pid, options.catalog.pool?.scanned_at]);
   const inspection = useModInspection(options.open && options.active && view === "processing" && target?.initialized === true, draft?.accountId ?? "", inspectionIdentity);
   const preparationTask = useModPreparationTask({ accountId: draft?.accountId ?? "", busy });
   const observedTask = useRef(preparationTask.currentTask);

@@ -22,7 +22,9 @@ export const modPool: ModCapsulePool = {
 export function testCatalog(pool = modPool): ModCapsuleController {
   return { pool, loading: false, assigningAccountId: null, error: null,
     refresh: vi.fn(async () => pool), scan: vi.fn(async () => pool), add: vi.fn(async () => pool), update: vi.fn(async () => pool),
-    remove: vi.fn(async () => pool), setAutoExitOnDeathEnabled: vi.fn(async () => pool), assign: vi.fn(async () => pool) };
+    remove: vi.fn(async () => pool), unpackingCapsuleId: null, unpackProgress: null, unpackResult: null, cancelUnpack: vi.fn(async () => {}),
+    unpack: vi.fn(async () => ({ pool, backup_path: null, escaped_name_count: 0 })),
+    setAutoExitOnDeathEnabled: vi.fn(async () => pool), assign: vi.fn(async () => pool) };
 }
 export function workflowFixture({ draft: draftOverrides, state = modState, en = false, ...overrides }: {
   draft?: Partial<ModProcessingDraft>; state?: AudioModSetupState; en?: boolean;

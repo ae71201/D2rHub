@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { ChevronDown, PackageOpen, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
+import { ModWaypointSettings } from "./ModWaypointSettings";
 import type { AccountMeta, ModCapsule } from "../../../store/types";
 import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/model";
 
@@ -14,11 +15,13 @@ interface Props {
   onUpdate: (arguments_: string) => Promise<boolean>;
   onDelete: () => void;
   onProcess: () => void;
+  onUnpack: () => void;
+  unpacking: boolean;
   onToggleDeathExit: (enabled: boolean) => void;
 }
 
 /** A library entry owns its disclosure and edit draft, never the shared catalog. */
-export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUpdate, onDelete, onProcess, onToggleDeathExit }: Props) {
+export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUpdate, onDelete, onProcess, onUnpack, unpacking, onToggleDeathExit }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(capsule.launch_arguments);
@@ -38,7 +41,7 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
       <PackageOpen size={18} aria-hidden="true" />
       <div className="mod-library-entry-copy">
         <h3>{capsule.name}</h3>
-        <p>{scanned ? (en ? "Installed Mod" : "已安装 Mod") : (en ? "Custom launch preset" : "自定义启动预设")}
+        <p>{scanned ? (capsule.requires_unpack ? (en ? "MPQ archive" : "MPQ 压缩包") : (en ? "Installed Mod" : "已安装 Mod")) : (en ? "Custom launch preset" : "自定义启动预设")}
           {capsule.processed && ` · ${capsuleBaseModLabel(capsule, en)}`}</p>
         {featureLabels.length > 0 && <p className="mod-library-feature-list">{featureLabels.join(" · ")}</p>}
         <small>{assignedNames ? `${en ? "Used by" : "使用账号"}：${assignedNames}` : (en ? "No accounts assigned" : "尚未分配给账号")}</small>
@@ -52,6 +55,8 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
       </Button>
     </div>
     {expanded && <div id={detailsId} className="mod-library-entry-details">
+      {scanned && !capsule.requires_unpack && ["LiteHub", "BoHub"].includes(capsule.name) &&
+        <ModWaypointSettings edition={capsule.edition} modName={capsule.name} en={en} disabled={busy} />}
       {supportsDeathExit && <div className="mod-catalog-feature-control">
         <span><b>{en ? "Auto-exit on death" : "死亡自动退房"}</b>
           <small id={`${detailsId}-death`}>{en ? "Close this Mod's game before changing; applies on the next launch." : "关闭使用此 Mod 的游戏后可修改，下次启动生效。"}</small></span>
@@ -73,8 +78,14 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>{en ? "Cancel" : "取消"}</Button>
       </div> : <code className="mod-library-arguments">{capsule.launch_arguments}</code>}
       <p>{en ? "Changes apply to accounts and launch groups that reference this preset." : "修改会同步到引用此预设的账号与启动方案。"}</p>
+      {scanned && capsule.requires_unpack && <p>{en
+        ? "Unpack first to process this Mod. The original MPQ is kept in the adjacent back folder; the Mod name stays the same."
+        : "先解压，再加工。原 MPQ 会保存在同目录 back 文件夹中，Mod 名称不变。"}</p>}
       <div className="mod-library-entry-actions">
-        {scanned && (capsule.source_eligible || capsule.update_required || capsule.processed) &&
+        {scanned && capsule.requires_unpack && <Button size="sm" variant="secondary" disabled={busy} onClick={onUnpack}>
+          {unpacking ? (en ? "Unpacking…" : "正在解压…") : (en ? "Unpack" : "解压")}
+        </Button>}
+        {scanned && !capsule.requires_unpack && (capsule.source_eligible || capsule.update_required || capsule.processed) &&
           <Button size="sm" variant="secondary" disabled={busy} onClick={onProcess}>{en ? "Add game features" : "加工功能"}</Button>}
         {scanned && capsule.default_launch_arguments && capsule.launch_arguments !== capsule.default_launch_arguments &&
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => void onUpdate(capsule.default_launch_arguments!)}><RotateCcw size={12} />{en ? "Restore arguments" : "恢复默认参数"}</Button>}

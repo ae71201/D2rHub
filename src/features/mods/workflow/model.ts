@@ -25,6 +25,7 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
   const nameError = draft.recipe.kind === "create" ? validateAudioModName(draft.recipe.name, state?.installed_mods.map(mod => mod.name) ?? []) : null;
   const blockedReason = !draft.accountId ? (en ? "Select an initialized account" : "请选择已初始化的账号")
     : !state || state.account_id !== draft.accountId ? (en ? "Inspect the target account before processing" : "请先检查目标账号的 Mod")
+      : selected?.requires_unpack ? (en ? "Unpack this MPQ in the Mod library before processing" : "请先在 Mod 库点击解压，完成后再加工")
       : selectedName && (!selected || (!augment && !selected.source_eligible)) ? (en ? "The selected Mod is unavailable; rescan and choose again" : "所选 Mod 已不可用，请重新扫描后再选择")
         : draft.recipe.kind === "create" && draft.recipe.source === "" ? (en ? "Select a source Mod" : "请选择源 Mod")
         : augment && !selected?.feature_groups.length && !selected?.update_required ? (en ? "Select a processed Mod to augment" : "请选择一个已加工 Mod")

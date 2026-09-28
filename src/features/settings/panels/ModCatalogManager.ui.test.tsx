@@ -71,6 +71,8 @@ function controller(overrides: Partial<ModCapsuleController> = {}): ModCapsuleCo
     add: vi.fn(async () => pool),
     update: vi.fn(async () => pool),
     remove: vi.fn(async () => pool),
+    unpackingCapsuleId: null, unpackProgress: null, unpackResult: null, cancelUnpack: vi.fn(async () => {}),
+    unpack: vi.fn(async () => ({ pool, backup_path: null, escaped_name_count: 0 })),
     setAutoExitOnDeathEnabled: vi.fn(async () => pool),
     assign: vi.fn(async () => pool),
     ...overrides,

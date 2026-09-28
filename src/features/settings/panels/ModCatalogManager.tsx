@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, FolderOpen, PackageOpen, PackagePlus, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
+import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
 import { ModResourceLibrary } from "./ModResourceLibrary";
 import { ModCatalogEntry } from "./ModCatalogEntry";
@@ -33,7 +34,7 @@ const COPY = {
     updateSuccess: "共享参数已更新，引用它的账号和启动方案已同步",
     autoExitEnabled: "死亡自动退房已启用，重新启动游戏后生效", autoExitDisabled: "死亡自动退房已停用，重新启动游戏后生效",
     deleteScannedTitle: (name: string) => `删除 Mod“${name}”？`,
-    deleteScannedDescription: (name: string) => `删除此参数会同时永久删除游戏目录中的 Mod 文件夹“mods\\${name}”。此操作不可撤销。`,
+    deleteScannedDescription: (name: string) => `删除此参数会同时永久删除游戏目录中的 Mod 文件夹“mods\\${name}”。其中的 back 备份也会被删除。此操作不可撤销。`,
     deleteScannedAction: "删除参数和 Mod", deleteScannedSuccess: (name: string) => `Mod“${name}”及其参数已删除`,
     deleteCustomTitle: "删除自定义参数？",
     deleteCustomDescription: "只会删除这条自定义参数，不会删除或修改任何 Mod 文件。",
@@ -49,7 +50,7 @@ const COPY = {
     updateSuccess: "Shared arguments updated across accounts and launch schemes",
     autoExitEnabled: "Auto-exit on death enabled; restart the game to apply", autoExitDisabled: "Auto-exit on death disabled; restart the game to apply",
     deleteScannedTitle: (name: string) => `Delete “${name}”?`,
-    deleteScannedDescription: (name: string) => `Deleting these arguments will also permanently delete the corresponding Mod folder, “mods\\${name}”. This cannot be undone.`,
+    deleteScannedDescription: (name: string) => `Deleting these arguments will also permanently delete the corresponding Mod folder, “mods\\${name}”. Any back backups inside this folder are also deleted. This cannot be undone.`,
     deleteScannedAction: "Delete arguments and Mod", deleteScannedSuccess: (name: string) => `“${name}” and its arguments were deleted`,
     deleteCustomTitle: "Delete custom arguments?",
     deleteCustomDescription: "Only these custom arguments will be deleted. No Mod files will be deleted or changed.",
@@ -70,7 +71,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
   const [downloadBusy, setDownloadBusy] = useState(false);
   const operationLock = useRef(false);
   const [operationBusy, setOperationBusy] = useState(false);
-  const busy = catalog.loading || operationBusy;
+  const busy = catalog.loading || operationBusy || catalog.unpackingCapsuleId !== null;
   const [addOpen, setAddOpen] = useState(false);
   const [addDraft, setAddDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ModCapsule | null>(null);
@@ -198,6 +199,17 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
         </section>
       )}
 
+      {catalog.unpackingCapsuleId && <section aria-label={isEnglish ? "MPQ unpacking" : "MPQ 解压"}>
+        <p role="status">{isEnglish ? "Unpacking MPQ…" : (catalog.unpackProgress?.message ?? "正在准备解压…")}</p>
+        <ProgressBar value={catalog.unpackProgress?.percent} label={isEnglish ? "MPQ unpacking progress" : "MPQ 解压进度"} />
+        <Button size="sm" variant="ghost" disabled={!catalog.unpackProgress} onClick={() => void catalog.cancelUnpack().catch(error => showToast("error", String(error)))}>
+          {isEnglish ? "Cancel unpacking" : "取消解压"}
+        </Button>
+      </section>}
+      {catalog.unpackResult && <p role="status">{isEnglish ? "Unpacked. You can now process this Mod." : "解压完成，现在可以加工此 Mod。"}
+        {catalog.unpackResult.backup_path && <><br />{isEnglish ? "Original MPQ backup: " : "原 MPQ 备份："}<code>{catalog.unpackResult.backup_path}</code></>}
+        {catalog.unpackResult.escaped_name_count > 0 && <><br />{isEnglish ? "Some resource names were escaped; the original names are recorded with the backup." : "部分资源文件名已转义，原始名称记录在备份清单中。"}</>}
+      </p>}
       {catalog.error && <p className="mod-catalog-error" role="status">{catalog.error}</p>}
       <div className="mod-catalog-list" aria-busy={busy}>
         {capsules.map(capsule => <ModCatalogEntry key={capsule.id} capsule={capsule}
@@ -205,6 +217,8 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           onUpdate={args => run(() => catalog.update(capsule.id, args), copy.updateSuccess)}
           onDelete={() => setDeleteTarget(capsule)}
           onProcess={() => void onProcess(capsule)}
+          unpacking={catalog.unpackingCapsuleId === capsule.id}
+          onUnpack={() => void run(() => catalog.unpack(capsule.id), isEnglish ? "Unpacked; ready to process" : "解压完成，可以加工了")}
           onToggleDeathExit={enabled => void run(() => catalog.setAutoExitOnDeathEnabled(capsule.id, enabled), enabled ? copy.autoExitEnabled : copy.autoExitDisabled)} />)}
         {!catalog.loading && capsules.length === 0 && (
           <div className="mod-catalog-empty">
