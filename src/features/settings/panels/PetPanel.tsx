@@ -5,7 +5,6 @@ import { LocateFixed } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
-import { useGlobalConfig } from "../../../store/globalConfig";
 import type { GlobalConfig } from "../../../store/types";
 
 interface PetPanelProps {
@@ -53,7 +52,7 @@ export function PetPanel({
               checked={!!config.enable_bongo_cat}
               onChange={async enabled => {
                 updateConfig(current => { current.enable_bongo_cat = enabled; });
-                const current = useGlobalConfig.getState().config;
+                const current = config;
                 if (current) await persistConfig({ ...current, enable_bongo_cat: enabled }, true);
               }}
             />
@@ -87,7 +86,7 @@ export function PetPanel({
                   const scale = parseFloat(event.target.value) / 10;
                   updateConfig(current => { current.bongo_cat_scale = scale; });
                   try {
-                    const current = useGlobalConfig.getState().config;
+                    const current = config;
                     if (current) await persistConfig({ ...current, bongo_cat_scale: scale }, true);
                   } catch (error) {
                     console.error("保存猫咪缩放失败", error);

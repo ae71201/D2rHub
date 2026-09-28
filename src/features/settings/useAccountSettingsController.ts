@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { showToast } from "../../components/ui/Toast";
-import type { SettingsMap } from "../../pages/SettingsEditor";
+import type { SettingsMap } from "./gameSettings/fields";
 import { emitEvent, invokeCommand, listenEvent } from "../../platform/tauri";
 import type { AccountMeta } from "../../store/types";
 import { FRAMERATE_CAP_KEY, writeFramerateCap } from "../../utils/gameSettings";

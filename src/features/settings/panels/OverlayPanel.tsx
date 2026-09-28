@@ -2,7 +2,6 @@ import { LocateFixed, MonitorUp } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
-import { useGlobalConfig } from "../../../store/globalConfig";
 import { THEME_OPTIONS } from "../../../store/themeCatalog";
 import type { GlobalConfig } from "../../../store/types";
 import { type AuxiliaryWindowLabel } from "../../../utils/windowPlacement";
@@ -48,7 +47,7 @@ export function OverlayPanel({
                 aria-pressed={active}
                 onClick={async () => {
                   updateConfig((current) => { current.theme_overlay = option.id; });
-                  const current = useGlobalConfig.getState().config;
+                  const current = config;
                   if (current) {
                     await persistGlobalDraft({ ...current, theme_overlay: option.id }, true);
                   }
@@ -136,7 +135,7 @@ export function OverlayPanel({
                   current.enable_tz_overlay = visible;
                   current.enable_overlay = visible || current.enable_stats_overlay;
                 });
-                const current = useGlobalConfig.getState().config;
+                const current = config;
                 if (current) {
                   await persistGlobalDraft({
                     ...current,
@@ -183,7 +182,7 @@ export function OverlayPanel({
                   current.enable_stats_overlay = visible;
                   current.enable_overlay = current.enable_tz_overlay || visible;
                 });
-                const current = useGlobalConfig.getState().config;
+                const current = config;
                 if (current) {
                   await persistGlobalDraft({
                     ...current,

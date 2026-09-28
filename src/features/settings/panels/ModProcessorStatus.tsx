@@ -1,21 +1,24 @@
-import { useEffect, useState } from "react";
-import { invokeCommand } from "../../../platform/tauri";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/ui/Button";
+import { modResourcesGateway } from "../../modResources/gateway";
+import type { ModProcessorState } from "../../modResources/types";
 import "./modResources.css";
 
 interface Props { edition: string; en: boolean; onReady: (ready: boolean) => void; onManage: () => void }
 export function ModProcessorStatus({ edition, en, onReady, onManage }: Props) {
-  const [status, setStatus] = useState<{ ready: boolean; update_available?: boolean } | null>(null);
+  const [status, setStatus] = useState<ModProcessorState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const readyCallback = useRef(onReady);
+  readyCallback.current = onReady;
   useEffect(() => {
     let live = true;
-    setStatus(null); setError(null); onReady(false);
+    setStatus(null); setError(null); readyCallback.current(false);
     // Only inspect local availability. The app's daily update check owns automatic networking.
-    void invokeCommand<{ processor: { ready: boolean; update_available?: boolean } }>("get_mod_resources", { edition, refresh: false })
-      .then(value => { if (live) { setStatus(value.processor); onReady(value.processor.ready); } })
+    void modResourcesGateway.read(edition)
+      .then(value => { if (live) { setStatus(value.processor); readyCallback.current(value.processor.ready); } })
       .catch(cause => { if (live) setError(String(cause)); });
     return () => { live = false; };
-  }, [edition, onReady]);
+  }, [edition]);
   if (status?.ready && !status.update_available) return null;
   return <div className="processor-status" role="status">
     <span>{error ?? (status ? status.ready

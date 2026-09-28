@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
+import { version as appVersion } from "../package.json";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
 import { APPLICATION_DISCLOSURE_REVISION } from "./features/disclosures/disclosureStorage";
@@ -367,14 +368,14 @@ const modCapsulePool: ModCapsulePool = {
     update_required: false,
     ready: true,
     deletable: false,
-    assigned_account_ids: ["sorc-01", "barb-02", "pala-03"],
+    assigned_account_ids: audioModState === "legacy" ? ["sorc-01", "barb-02", "pala-03"] : ["barb-02", "pala-03"],
   }],
   accounts: ["sorc-01", "barb-02", "pala-03"].map((accountId) => ({
     account_id: accountId,
     account_name: accounts.find((account) => account.id === accountId)?.display_name || accountId,
     edition: "Global",
-    selected_capsule_id: "global:jcy-tz",
-    legacy_mod_arguments: "-mod jcy-tz -txt -assettestmode 1",
+    selected_capsule_id: accountId === "sorc-01" && audioModState !== "legacy" ? null : "global:jcy-tz",
+    legacy_mod_arguments: accountId === "sorc-01" && audioModState !== "legacy" ? "" : "-mod jcy-tz -txt -assettestmode 1",
     issue: null,
   })),
 };
@@ -502,9 +503,9 @@ function installIpcMock() {
       case "assign_mod_capsule_to_account":
         return null;
       case "check_software_update":
-        return {version:"0.9.105",available:true,downloaded:false,path:"C:\\Users\\Player\\AppData\\Local\\com.d2rhub.app\\downloads\\installers\\D2RHub-0.9.105-setup.exe"};
+        return { version: appVersion, available: surface === "software-update" || params.get("update") === "available", downloaded: false };
       case "download_software_update":
-        return {version:"0.9.105",available:true,downloaded:true};
+        return { version: appVersion, available: true, downloaded: true };
       case "check_mod_resource_updates":
         return ["加工器 1.4.0-beta.17", "国服 LiteHub"];
       case "get_mod_resources":
@@ -520,7 +521,7 @@ function installIpcMock() {
       case "get_audio_mod_setup_state":
         if (audioModState === "legacy") {
           return {
-            account_id: "sorc-01",
+            account_id: String((payload as { accountId?: string })?.accountId ?? "sorc-01"),
             account_name: "Ladder Sorc",
             current_mod_name: "jcy-tz",
             launch_arguments: "-mod jcy-tz -txt -assettestmode 1",
@@ -546,7 +547,7 @@ function installIpcMock() {
           };
         }
         return {
-          account_id: "sorc-01",
+          account_id: String((payload as { accountId?: string })?.accountId ?? "sorc-01"),
           account_name: "Ladder Sorc",
           current_mod_name: null,
           launch_arguments: "-w",
@@ -561,6 +562,7 @@ function installIpcMock() {
           reason_code: "missing_mod",
           message: "当前账号还没有使用识别 Mod",
           installed_mods: [
+            { name: "jcy-tz", audio_ready: true, update_required: false, source_eligible: true, feature_groups: ["audio_telemetry", "in_game_room_tools"], audio_reusable: true },
             { name: "ReMoDDeD", audio_ready: false, update_required: false, source_eligible: true, feature_groups: [], audio_reusable: false },
             { name: "VanillaPlus", audio_ready: false, update_required: false, source_eligible: true, feature_groups: [], audio_reusable: false },
           ],
@@ -698,14 +700,14 @@ function installIpcMock() {
       case "check_saved_games_settings":
         return false;
       case "get_app_version":
-        return "0.7.2";
+        return appVersion;
       case "get_application_disclosure_acceptance":
         return acceptedDisclosureRevision;
       case "accept_application_disclosure":
         acceptedDisclosureRevision = APPLICATION_DISCLOSURE_REVISION;
         return null;
       case "check_cloud_version":
-        return { has_update: false, version: "0.7.2", download_url: "" };
+        return { has_update: false, version: appVersion, download_url: "" };
       case "create_account":
         return "audit-created-account";
       case "launch_accounts":
@@ -782,7 +784,7 @@ function AuditRuntime() {
         const statsStore = await primeStores();
         if (surface === "software-update") {
           const { default: UpdateConfirmModal } = await import("./components/ui/UpdateConfirmModal");
-          if (!cancelled) setContent(<UpdateConfirmModal open onClose={() => {}} version="0.9.105" />);
+          if (!cancelled) setContent(<UpdateConfirmModal open onClose={() => {}} version={appVersion} />);
           return;
         }
         if (surface === "mod-resources") {

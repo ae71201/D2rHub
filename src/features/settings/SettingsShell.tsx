@@ -3,13 +3,12 @@ import { Modal } from "../../components/ui/Modal";
 import type { CapabilityStatusSnapshot, GlobalConfig } from "../../store/types";
 import { initCapabilityStatusSync } from "../capabilities";
 import { SettingsNavigation } from "./SettingsNavigation";
-import { OptionalFeaturesNavigation } from "./OptionalFeaturesNavigation";
 import { isMinimalMode } from "../profile/featureProfile";
 import {
-  isOptionalSettingsTab,
   type OptionalModuleTabId,
   type SettingsTabId,
 } from "./settingsRegistry";
+import "./navigation.css";
 
 interface SettingsShellProps {
   open: boolean;
@@ -18,7 +17,7 @@ interface SettingsShellProps {
   config: GlobalConfig | null;
   installedModules: readonly OptionalModuleTabId[];
   onClose: () => void;
-  onTabChange: (tab: SettingsTabId) => boolean | void;
+  onTabChange: (tab: SettingsTabId) => boolean | void | Promise<boolean | void>;
   dismissible?: boolean;
   children: ReactNode;
 }
@@ -37,7 +36,6 @@ export function SettingsShell({
   const [capabilityStatus, setCapabilityStatus] = useState<CapabilityStatusSnapshot | null>(null);
   const [capabilityStatusUnavailable, setCapabilityStatusUnavailable] = useState(false);
   const minimalMode = isMinimalMode(config);
-  const optionalFeatureActive = !minimalMode && isOptionalSettingsTab(activeTab);
 
   useEffect(() => {
     if (!open || minimalMode) {
@@ -79,7 +77,7 @@ export function SettingsShell({
       closeOnContextMenu
       dismissible={dismissible}
     >
-      <div className="settings-center-shell flex flex-col">
+      <div className="settings-center-shell settings-workspace flex flex-col">
         <div className="settings-center-layout">
           <SettingsNavigation
             activeTab={activeTab}
@@ -91,17 +89,6 @@ export function SettingsShell({
             onSelect={onTabChange}
           />
           <div className="settings-panel-column">
-            {optionalFeatureActive && (
-              <OptionalFeaturesNavigation
-                activeTab={activeTab}
-                config={config}
-                capabilityStatus={capabilityStatus}
-                capabilityStatusUnavailable={capabilityStatusUnavailable}
-                language={config?.app_language}
-                installedModules={installedModules}
-                onSelect={onTabChange}
-              />
-            )}
             <div
               id={`settings-panel-${activeTab}`}
               role="tabpanel"

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 
 import { showToast } from "../../components/ui/Toast";
 import { invokeCommand } from "../../platform/tauri";
-import { useGlobalConfig } from "../../store/globalConfig";
 import type { GlobalConfig } from "../../store/types";
 import {
   acceptModuleDisclosure,
@@ -21,6 +20,7 @@ import {
 
 interface OptionalModuleControllerOptions {
   open: boolean;
+  config: GlobalConfig | null;
   installedModules: readonly OptionalModuleTabId[];
   language: SettingsLanguage;
   activeTab: SettingsTabId;
@@ -36,7 +36,7 @@ function installSuccessMessage(language: SettingsLanguage, module: OptionalModul
     if (module === "overlays") {
       return "Desktop Overlays was added. Terror Zone is now on; the statistics window keeps its current setting.";
     }
-    return `${module === "pet" ? "Desktop Companion" : "Room Automation"} was added to Optional Features.`;
+    return `${module === "pet" ? "Desktop Companion" : "Room Automation"} was added to Extensions.`;
   }
   if (module === "automation") {
     return "已添加“识别与统计”和所需的悬浮窗模块；场景统计与 TZ 播报窗口已开启";
@@ -44,7 +44,7 @@ function installSuccessMessage(language: SettingsLanguage, module: OptionalModul
   if (module === "overlays") {
     return "已添加“桌面悬浮窗”；TZ 播报窗口已开启，场景统计窗口保持原状态";
   }
-  return `“${module === "pet" ? "桌宠" : "自动跟房"}”已添加到可选功能导航`;
+  return `“${module === "pet" ? "桌宠" : "自动跟房"}”已添加到扩展功能`;
 }
 
 function uninstallSuccessMessage(
@@ -65,15 +65,15 @@ function uninstallSuccessMessage(
     return "The module was removed. Its settings are kept for the next time you add it.";
   }
   if (module === "automation") {
-    return "“识别与统计”已卸载，识别与场景统计已关闭；TZ 播报保持当前状态";
+    return "“识别与统计”已移除，识别与场景统计已关闭；TZ 播报保持当前状态";
   }
   if (cascadesRecognition) {
-    return "悬浮窗依赖已移除，“识别与统计”也已卸载，相关运行功能均已关闭";
+    return "悬浮窗依赖已移除，“识别与统计”也已移除，相关运行功能均已关闭";
   }
   if (module === "overlays") {
-    return "“桌面悬浮窗”已卸载，TZ 播报窗口已关闭";
+    return "“桌面悬浮窗”已移除，TZ 播报窗口已关闭";
   }
-  return "模块已卸载，配置内容会保留供下次添加时继续使用";
+  return "扩展已移除，配置内容会保留供下次添加时继续使用";
 }
 
 function actionFailureMessage(
@@ -86,11 +86,12 @@ function actionFailureMessage(
       ? "The module could not be added. Try again; if the problem continues, review the application logs."
       : "The module could not be removed. Try again; if the problem continues, review the application logs.";
   }
-  return `${action === "install" ? "添加" : "卸载"}模块失败：${error}`;
+  return `${action === "install" ? "添加" : "移除"}模块失败：${error}`;
 }
 
 export function useOptionalModuleController({
   open,
+  config,
   installedModules,
   language,
   activeTab,
@@ -109,7 +110,7 @@ export function useOptionalModuleController({
 
   const installModule = async (module: OptionalModuleTabId): Promise<boolean> => {
     try {
-      const current = useGlobalConfig.getState().config;
+      const current = config;
       if (!current) throw new Error("全局配置尚未加载");
       const nextModules = optionalModulesAfterInstall(installedModules, module);
       const candidate: GlobalConfig = {
@@ -161,7 +162,7 @@ export function useOptionalModuleController({
       || (module === "overlays" && installedModules.includes("automation"));
     let roomRollback: { generation: number; config: RoomAutomationConfig } | null = null;
     try {
-      const current = useGlobalConfig.getState().config;
+      const current = config;
       if (!current) throw new Error("全局配置尚未加载");
       const nextModules = optionalModulesAfterUninstall(installedModules, module);
       if (module === "room-automation") {
@@ -194,7 +195,7 @@ export function useOptionalModuleController({
           } catch (rollbackError) {
             showToast("error", language === "en-US"
               ? "The module change failed and Room Automation could not be restored. Reopen its settings before continuing."
-              : `模块卸载未提交，且自动跟房状态恢复失败：${rollbackError}`);
+              : `模块移除未提交，且自动跟房状态恢复失败：${rollbackError}`);
           }
         }
         return;
@@ -214,7 +215,7 @@ export function useOptionalModuleController({
         } catch (rollbackError) {
           showToast("error", language === "en-US"
             ? "Room Automation could not be restored after the failed module change. Reopen its settings before continuing."
-            : `卸载失败后无法恢复自动跟房状态：${rollbackError}`);
+            : `移除失败后无法恢复自动跟房状态：${rollbackError}`);
         }
       }
       showToast("error", actionFailureMessage(language, "uninstall", error));

@@ -9,22 +9,14 @@ import {
   selectedCapsuleForAccount,
 } from "../modCapsules/model";
 import type { ModCapsuleController } from "../modCapsules/useModCapsulePool";
-import { roomAutomationGateway } from "../roomAutomation/gateway";
-import type { ModProcessingPurpose } from "./panels/ModProcessingPanel";
-import type { AudioModProcessingMode } from "./audioModuleModel";
+import type { ModProcessingRequest } from "../mods/workflow/types";
 
 interface CoordinationOptions {
   accounts: AccountMeta[];
   trackingTargetId: string;
   modCatalog: ModCapsuleController;
   toggleAudio: (enabled: boolean, accountId?: string) => Promise<void>;
-  openProcessing: (
-    accountId: string,
-    purpose: Exclude<ModProcessingPurpose, "manage">,
-    autoStart?: boolean,
-    sourceModName?: string,
-    processingMode?: AudioModProcessingMode,
-  ) => void;
+  openProcessing: (request: ModProcessingRequest) => void;
   onGlobalCommitted: (config: GlobalConfig) => void;
 }
 
@@ -50,19 +42,18 @@ export function useModFeatureCoordination({
     const requiredFeature = purpose === "recognition"
       ? AUDIO_TELEMETRY_CAPSULE_FEATURE
       : ROOM_TOOLS_CAPSULE_FEATURE;
-    const assigned = await modCatalog.assign(accountId, capsule.id);
-    if (!assigned) return;
     if (capsule.feature_groups.includes(requiredFeature)) {
+      const assigned = await modCatalog.assign(accountId, capsule.id);
+      if (!assigned) return;
       if (purpose === "recognition") await toggleAudio(true, accountId);
       return;
     }
-    openProcessing(
-      accountId,
-      purpose,
-      autoStart && capsule.processed,
-      capsule.name,
-      capsule.processed ? "augment" : "create",
-    );
+    openProcessing({
+      accountId, edition: capsule.edition === "Global" ? "Global" : "CN",
+      origin: purpose === "recognition" ? "recognition" : "room-automation",
+      autoStart: autoStart && capsule.processed,
+      source: { name: capsule.name, processed: capsule.processed || capsule.update_required },
+    });
   }, [modCatalog, openProcessing, toggleAudio]);
 
   const toggleRecognition = useCallback(async (enabled: boolean): Promise<boolean> => {
@@ -70,15 +61,7 @@ export function useModFeatureCoordination({
       await toggleAudio(false);
       return true;
     }
-    let preferredAccountId = trackingTargetId || accounts.find((account) => account.initialized)?.id || "";
-    let roomEnabled = false;
-    try {
-      const room = await roomAutomationGateway.getConfig();
-      roomEnabled = room.config.enabled && !!room.config.primary_account_id;
-      if (roomEnabled) preferredAccountId = room.config.primary_account_id;
-    } catch {
-      // Recognition can still be configured when the optional room module is unavailable.
-    }
+    const preferredAccountId = trackingTargetId;
     if (!preferredAccountId) {
       await toggleAudio(true);
       return true;
@@ -88,12 +71,13 @@ export function useModFeatureCoordination({
       await toggleAudio(true, preferredAccountId);
       return true;
     }
-    if (roomEnabled && selected) {
-      await prepareFeature(preferredAccountId, selected.id, "recognition", true);
+    if (selected) {
+      await prepareFeature(preferredAccountId, selected.id, "recognition");
       return true;
     }
-    return false;
-  }, [accounts, modCatalog.pool, prepareFeature, toggleAudio, trackingTargetId]);
+    openProcessing({ origin: "recognition", accountId: preferredAccountId });
+    return true;
+  }, [modCatalog.pool, openProcessing, prepareFeature, toggleAudio, trackingTargetId]);
 
   const saveRoomLaunchScheme = useCallback(async (accountIds: string[]) => {
     const current = useGlobalConfig.getState().config;
