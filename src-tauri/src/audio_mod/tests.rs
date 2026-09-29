@@ -202,8 +202,7 @@ fn write_test_room_tool_layouts(mods_directory: &std::path::Path, mod_name: &str
             serde_json::json!({"children": [
                 {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
                 {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
-                {"fields": {"time": 0.10, "message": "CreateGame:CreateGame"}},
-                {"fields": {"time": 0.15, "message": "PanelManager:ClosePanel:D2RHubCommitCreateGame"}}
+                {"fields": {"time": 0.06, "message": "CreateGame:CreateGame"}}
             ]}),
         ),
         (
@@ -211,8 +210,7 @@ fn write_test_room_tool_layouts(mods_directory: &std::path::Path, mod_name: &str
             serde_json::json!({"children": [
                 {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
                 {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
-                {"fields": {"time": 0.55, "message": "JoinGame:JoinGame"}},
-                {"fields": {"time": 0.60, "message": "PanelManager:ClosePanel:D2RHubCommitJoinGame"}}
+                {"fields": {"time": 0.06, "message": "JoinGame:JoinGame"}}
             ]}),
         ),
         (
@@ -1022,6 +1020,38 @@ fn final_persisted_groups_control_audio_readiness() {
 }
 
 #[test]
+fn esc_layouts_reject_legacy_hud_cleanup_only_for_new_recipe() {
+    use super::validation::layouts::validate_esc_next_game_layouts;
+    let root = test_mods_directory("esc_hud_cleanup");
+    let name = "esc-probe";
+    write_test_room_tool_layouts(&root, name);
+    let directory = root
+        .join(name)
+        .join(format!("{name}.mpq/data/global/ui/layouts"));
+    for file in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
+        let path = directory.join(file);
+        let mut pause: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        pause["children"].as_array_mut().unwrap().extend([
+            serde_json::json!({"fields":{"time":0.01,"message":"PanelManager:OpenPanel:D2RHubQuickRecreateEscArm"}}),
+            serde_json::json!({"fields":{"time":0.5,"message":"PanelManager:ClosePanel:D2RHubQuickRecreateEscArm"}}),
+        ]);
+        std::fs::write(path, serde_json::to_vec(&pause).unwrap()).unwrap();
+    }
+    validate_esc_next_game_layouts(&root.join(name), name, 3).unwrap();
+    let path = directory.join("HudWarningshd.json");
+    let mut hud: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    hud["children"].as_array_mut().unwrap().push(serde_json::json!({"fields":{"time":0.001,"message":"PanelManager:ClosePanel:D2RHubQuickRecreateEscArm"}}));
+    std::fs::write(path, serde_json::to_vec(&hud).unwrap()).unwrap();
+    assert!(validate_esc_next_game_layouts(&root.join(name), name, 3)
+        .unwrap_err()
+        .contains("HUD"));
+    validate_esc_next_game_layouts(&root.join(name), name, 2).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn room_tools_validate_delayed_submission_and_legacy_timing() {
     let root = test_mods_directory("submission_delays");
     let name = "room-tools";
@@ -1037,18 +1067,44 @@ fn room_tools_validate_delayed_submission_and_legacy_timing() {
         let path = directory.join(file);
         let original: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        // Reject both the old same-tick submission and premature controller close.
-        for index in [2, 3] {
+        // Reject previous submission timings, including the same-tick variant.
+        for delay in [0.05, 0.10, 0.55] {
             let mut changed = original.clone();
-            changed["children"][index]["fields"]["time"] = serde_json::json!(0.05);
+            changed["children"][2]["fields"]["time"] = serde_json::json!(delay);
             std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
             assert!(
                 validate_in_game_room_tool_layouts(&root.join(name), name).is_err(),
-                "{file}: {index}"
+                "{file}: {delay}"
             );
         }
+        let mut closing = original.clone();
+        closing["children"].as_array_mut().unwrap().push(serde_json::json!({
+            "fields": {"time": 0.15, "message": format!("PanelManager:ClosePanel:{}", file.trim_end_matches("hd.json"))}
+        }));
+        std::fs::write(&path, serde_json::to_vec(&closing).unwrap()).unwrap();
+        assert!(validate_in_game_room_tool_layouts(&root.join(name), name).is_err());
         std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
     }
+    // Previously generated r30 Mods remain readable as upgrade sources.
+    for (file, submit, close) in [
+        ("D2RHubCommitCreateGamehd.json", 0.10, 0.15),
+        ("D2RHubCommitJoinGamehd.json", 0.55, 0.60),
+    ] {
+        let path = directory.join(file);
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        legacy["children"][2]["fields"]["time"] = serde_json::json!(submit);
+        legacy["children"].as_array_mut().unwrap().push(serde_json::json!({
+            "fields": {"time": close, "message": format!("PanelManager:ClosePanel:{}", file.trim_end_matches("hd.json"))}
+        }));
+        std::fs::write(path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    }
+    super::validation::layouts::validate_in_game_room_tool_layouts_for_version(
+        &root.join(name),
+        name,
+        30,
+    )
+    .unwrap();
     for file in [
         "D2RHubCommitCreateGamehd.json",
         "D2RHubCommitJoinGamehd.json",
@@ -1056,9 +1112,8 @@ fn room_tools_validate_delayed_submission_and_legacy_timing() {
         let path = directory.join(file);
         let mut legacy: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        for index in [2, 3] {
-            legacy["children"][index]["fields"]["time"] = serde_json::json!(0.05);
-        }
+        legacy["children"][2]["fields"]["time"] = serde_json::json!(0.05);
+        legacy["children"][3]["fields"]["time"] = serde_json::json!(0.05);
         std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
     }
     super::validation::layouts::validate_in_game_room_tool_layouts_for_version(
@@ -1147,9 +1202,8 @@ fn room_tools_validate_default_hell_initialization() {
         let commit_path = directory.join(file);
         let mut commit: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&commit_path).unwrap()).unwrap();
-        for index in [2, 3] {
-            commit["children"][index]["fields"]["time"] = serde_json::json!(0.05);
-        }
+        commit["children"][2]["fields"]["time"] = serde_json::json!(0.05);
+        commit["children"].as_array_mut().unwrap().push(serde_json::json!({"fields": {"time": 0.05, "message": format!("PanelManager:ClosePanel:{}", file.trim_end_matches("hd.json"))}}));
         std::fs::write(commit_path, serde_json::to_vec(&commit).unwrap()).unwrap();
     }
     super::validation::layouts::validate_in_game_room_tool_layouts_for_version(

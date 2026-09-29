@@ -10,11 +10,13 @@ use std::collections::HashSet;
 pub(crate) const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 30;
+pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 31;
 pub(crate) const ESC_NEXT_GAME_FEATURE_ID: &str = "esc_next_game";
-pub(crate) const ESC_NEXT_GAME_FINGERPRINT: &str = "esc-next-game-v2;window_ms=500;pause_timeout=1";
-pub(crate) const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 9] =
-    [21, 22, 23, 24, 25, 26, 27, 28, 29];
+pub(crate) const ESC_NEXT_GAME_FINGERPRINT: &str =
+    "esc-next-game-v3;window_ms=500;pause_timeout=1;hud_cleanup=0";
+const LEGACY_ESC_NEXT_GAME_FINGERPRINT: &str = "esc-next-game-v2;window_ms=500;pause_timeout=1";
+pub(crate) const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 10] =
+    [21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
 pub(crate) const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 pub(crate) const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 pub(crate) const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str =
@@ -226,6 +228,10 @@ pub(crate) fn validate_upgrade_source_feature_group_entries(
             if group.fingerprint != format!("room-tools-v{}", group.recipe_version) {
                 return Err("上一版局内房间工具指纹无效，不能作为原位升级来源".to_string());
             }
+        } else if group.id == ESC_NEXT_GAME_FEATURE_ID && group.recipe_version == 2 {
+            if group.fingerprint != LEGACY_ESC_NEXT_GAME_FINGERPRINT {
+                return Err("上一版双击 Esc 功能组指纹无效，不能作为升级来源".to_string());
+            }
         } else {
             validate_supported_feature_group(group, audio_protocol_version)?;
         }
@@ -239,6 +245,15 @@ pub(crate) fn validate_preserved_feature_groups(
 ) -> Result<(), String> {
     for required in existing {
         let preserved = candidate.iter().any(|actual| {
+            if required.id == ESC_NEXT_GAME_FEATURE_ID
+                && required.recipe_version == 2
+                && required.fingerprint == LEGACY_ESC_NEXT_GAME_FINGERPRINT
+                && actual.id == ESC_NEXT_GAME_FEATURE_ID
+                && actual.recipe_version == 3
+                && actual.fingerprint == ESC_NEXT_GAME_FINGERPRINT
+            {
+                return true;
+            }
             actual.id == required.id
                 && actual.recipe_version == required.recipe_version
                 && (actual.fingerprint == required.fingerprint
@@ -290,7 +305,7 @@ fn validate_supported_feature_group(
             Ok(())
         }
         ESC_NEXT_GAME_FEATURE_ID => {
-            if group.recipe_version != 2 || group.fingerprint != ESC_NEXT_GAME_FINGERPRINT {
+            if group.recipe_version != 3 || group.fingerprint != ESC_NEXT_GAME_FINGERPRINT {
                 return Err("双击 Esc 下一局地狱功能组无效，请重新加工".to_string());
             }
             Ok(())
@@ -397,6 +412,40 @@ mod tests {
             reused_from_source: false,
         };
         assert!(requested.all_present(&[audio, room]));
+    }
+
+    #[test]
+    fn legacy_esc_can_upgrade_but_is_not_a_current_result() {
+        let old = GeneratorFeatureGroup {
+            id: ESC_NEXT_GAME_FEATURE_ID.to_string(),
+            recipe_version: 2,
+            fingerprint: LEGACY_ESC_NEXT_GAME_FINGERPRINT.to_string(),
+            reused_from_source: false,
+        };
+        let current = GeneratorFeatureGroup {
+            recipe_version: 3,
+            fingerprint: ESC_NEXT_GAME_FINGERPRINT.to_string(),
+            ..old.clone()
+        };
+        validate_upgrade_source_feature_group_entries(
+            std::slice::from_ref(&old),
+            TEST_AUDIO_PROTOCOL,
+        )
+        .unwrap();
+        assert!(
+            validate_feature_group_entries(std::slice::from_ref(&old), TEST_AUDIO_PROTOCOL)
+                .is_err()
+        );
+        validate_feature_group_entries(std::slice::from_ref(&current), TEST_AUDIO_PROTOCOL)
+            .unwrap();
+        validate_preserved_feature_groups(
+            std::slice::from_ref(&old),
+            std::slice::from_ref(&current),
+        )
+        .unwrap();
+        let mut corrupt = current;
+        corrupt.fingerprint = "invalid".to_string();
+        assert!(validate_preserved_feature_groups(&[old], &[corrupt]).is_err());
     }
 
     #[test]

@@ -313,10 +313,18 @@ pub(in crate::audio_mod) fn validate_lobby_return_hint(
 pub(in crate::audio_mod) fn validate_esc_next_game_layouts(
     mod_directory: &Path,
     mod_name: &str,
+    recipe_version: u32,
 ) -> Result<(), String> {
     let directory = mod_directory
         .join(format!("{mod_name}.mpq"))
         .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    if recipe_version >= 3 {
+        let hud = read_room_tool_layout(&directory, "HudWarningshd.json")?;
+        if layout_field_value_count(&hud, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm") != 0
+        {
+            return Err("HUD 仍包含会取消双击 Esc 的旧清理动作，请重新加工".to_string());
+        }
+    }
     let arm = read_room_tool_layout(&directory, "D2RHubQuickRecreateEscArmhd.json")?;
     let receiver = find_layout_node(&arm, "D2RHubEscNextGame")
         .ok_or_else(|| "缺少双击 Esc 下一局入口".to_string())?;
@@ -630,16 +638,18 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
             ("D2RHubCommitCreateGamehd.json", "CreateGame:CreateGame"),
             ("D2RHubCommitJoinGamehd.json", "JoinGame:JoinGame"),
         ] {
-            // r30 separates room submission from exit; quick recreate above and
-            // older recipe validation retain their original timing.
-            let (commit_delay, close_delay) = if room_recipe_version >= 30 {
+            // r31 experiments with a 10ms exit-to-submit gap and no self-close.
+            // Keep the older contracts when inspecting upgrade sources.
+            let (commit_delay, close_delay) = if room_recipe_version >= 31 {
+                (0.06, None)
+            } else if room_recipe_version >= 30 {
                 if native_message == "CreateGame:CreateGame" {
-                    (0.10, 0.15)
+                    (0.10, Some(0.15))
                 } else {
-                    (0.55, 0.60)
+                    (0.55, Some(0.60))
                 }
             } else {
-                (commit_delay, close_delay)
+                (commit_delay, Some(close_delay))
             };
             let commit = read_room_tool_layout(&layout_directory, name)?;
             if !layout_has_timed_child_message(
@@ -654,17 +664,20 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
             {
                 return Err(format!("局内房间提交控制器无效：{name}"));
             }
-            if requires_input_safety
-                && !layout_has_timed_child_message(
-                    &commit,
-                    &format!(
-                        "PanelManager:ClosePanel:{}",
-                        name.trim_end_matches("hd.json")
-                    ),
-                    close_delay,
-                )
-            {
-                return Err(format!("局内房间提交控制器未延后关闭，请重新加工：{name}"));
+            let close_message = format!(
+                "PanelManager:ClosePanel:{}",
+                name.trim_end_matches("hd.json")
+            );
+            if let Some(close_delay) = close_delay {
+                if requires_input_safety
+                    && !layout_has_timed_child_message(&commit, &close_message, close_delay)
+                {
+                    return Err(format!("局内房间提交控制器未延后关闭，请重新加工：{name}"));
+                }
+            } else if layout_field_value_count(&commit, &close_message) != 0 {
+                return Err(format!(
+                    "局内房间提交控制器仍包含主动关闭动作，请重新加工：{name}"
+                ));
             }
             let messages = commit
                 .get("children")

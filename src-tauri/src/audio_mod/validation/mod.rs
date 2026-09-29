@@ -330,12 +330,11 @@ fn validate_compatible_audio_mod_directory_with_policy(
             validate_lobby_return_hint(&mod_directory, mod_name)?;
         }
     }
-    if current_feature_protocol
-        && feature_groups
-            .iter()
-            .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID)
+    if let Some(group) = feature_groups
+        .iter()
+        .find(|group| current_feature_protocol && group.id == ESC_NEXT_GAME_FEATURE_ID)
     {
-        validate_esc_next_game_layouts(&mod_directory, mod_name)?;
+        validate_esc_next_game_layouts(&mod_directory, mod_name, group.recipe_version)?;
     }
     if current_feature_protocol
         && feature_groups
