@@ -603,84 +603,62 @@ pub fn count_bnet_processes_for_path(battle_net_path: &str) -> usize {
 const VK_SPACE: usize = 0x20;
 const VK_RETURN: usize = 0x0D;
 
-/// 纯 Rust 将窗口前台激活并置顶
-/// 使用 AttachThreadInput 绕过 Windows 前台窗口权限限制
+/// Serialize the entire restore/focus operation without attaching input queues.
+/// Foreground denial is allowed; never force focus with synchronous queue sharing.
 #[cfg(target_os = "windows")]
 pub fn bring_window_to_foreground_raw(hwnd: isize) {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static SWITCH: Mutex<()> = Mutex::new(());
+    let _switch = SWITCH.lock().unwrap_or_else(|error| error.into_inner());
+    #[link(name = "user32")]
     extern "system" {
-        fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
-        fn SetForegroundWindow(hWnd: isize) -> i32;
-        fn SetActiveWindow(hWnd: isize) -> isize;
-        fn BringWindowToTop(hWnd: isize) -> i32;
-        fn IsIconic(hWnd: isize) -> i32;
+        fn ShowWindowAsync(hwnd: isize, command: i32) -> i32;
+        fn SetForegroundWindow(hwnd: isize) -> i32;
         fn GetForegroundWindow() -> isize;
-        fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
-        fn GetCurrentThreadId() -> u32;
-        fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: i32) -> i32;
-        fn SetWindowPos(
-            hWnd: isize,
-            hWndInsertAfter: isize,
-            X: i32,
-            Y: i32,
-            cx: i32,
-            cy: i32,
-            uFlags: u32,
-        ) -> i32;
+        fn IsIconic(hwnd: isize) -> i32;
+        fn IsWindow(hwnd: isize) -> i32;
     }
-    const SW_SHOW: i32 = 5;
-    const SW_RESTORE: i32 = 9;
-    const HWND_TOP: isize = 0;
-    const SWP_NOSIZE: u32 = 0x0001;
-    const SWP_NOMOVE: u32 = 0x0002;
-    const SWP_SHOWWINDOW: u32 = 0x0040;
-
     unsafe {
-        let current_thread_id = GetCurrentThreadId();
-        let target_thread_id = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
-        let foreground_hwnd = GetForegroundWindow();
-        let foreground_thread_id = if foreground_hwnd != 0 {
-            GetWindowThreadProcessId(foreground_hwnd, std::ptr::null_mut())
-        } else {
-            0
-        };
-
-        // Attach 到前台线程和目标线程以获取 SetForegroundWindow 权限
-        if foreground_thread_id != 0 && foreground_thread_id != current_thread_id {
-            AttachThreadInput(current_thread_id, foreground_thread_id, 1);
+        if hwnd == 0 || IsWindow(hwnd) == 0 {
+            return;
         }
-        if target_thread_id != current_thread_id && target_thread_id != foreground_thread_id {
-            AttachThreadInput(current_thread_id, target_thread_id, 1);
+        if GetForegroundWindow() == hwnd && IsIconic(hwnd) == 0 {
+            return;
         }
-
-        // 最小化则恢复，否则显示
         if IsIconic(hwnd) != 0 {
-            ShowWindow(hwnd, SW_RESTORE);
-        } else {
-            ShowWindow(hwnd, SW_SHOW);
+            if ShowWindowAsync(hwnd, 9 /* SW_RESTORE */) == 0 {
+                return;
+            }
+            let deadline = Instant::now() + Duration::from_millis(300);
+            while IsIconic(hwnd) != 0 {
+                if IsWindow(hwnd) == 0 || Instant::now() >= deadline {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "Shortcut",
+                        "窗口异步恢复未完成，已结束本次切换等待",
+                    );
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
-
-        // 置顶 Z 序
-        BringWindowToTop(hwnd);
-        SetWindowPos(
-            hwnd,
-            HWND_TOP,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-        );
-
-        // 激活前台
+        if IsWindow(hwnd) == 0 || GetForegroundWindow() == hwnd {
+            return;
+        }
         SetForegroundWindow(hwnd);
-        SetActiveWindow(hwnd);
-
-        // 分离线程
-        if foreground_thread_id != 0 && foreground_thread_id != current_thread_id {
-            AttachThreadInput(current_thread_id, foreground_thread_id, 0);
-        }
-        if target_thread_id != current_thread_id && target_thread_id != foreground_thread_id {
-            AttachThreadInput(current_thread_id, target_thread_id, 0);
+        // Activation across independent input queues can complete asynchronously.
+        let deadline = Instant::now() + Duration::from_millis(150);
+        while GetForegroundWindow() != hwnd {
+            if IsWindow(hwnd) == 0 || Instant::now() >= deadline {
+                crate::logger::log_msg(
+                    "WARN",
+                    "Shortcut",
+                    "窗口尚未获得前台焦点，已结束本次切换等待",
+                );
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 }

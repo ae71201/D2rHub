@@ -110,7 +110,15 @@ pub(super) fn initialize(app: AppHandle) -> Result<(), String> {
                     if let Some(key) = registrations.keys.get(&(msg.wParam.0 as i32)).cloned() {
                         // Never run window operations or configuration reads in this pump.
                         let app = app.clone();
-                        std::thread::spawn(move || dispatch_registered_shortcut(&app, &key));
+                        let is_focus = matches!(
+                            capability_shortcuts().read().core.get(&key),
+                            Some(CoreShortcutAction::FocusAccount(_))
+                        );
+                        if is_focus {
+                            super::focus_requests::submit(app, key);
+                        } else {
+                            std::thread::spawn(move || dispatch_registered_shortcut(&app, &key));
+                        }
                     }
                 }
             }
