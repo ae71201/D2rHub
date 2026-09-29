@@ -21,6 +21,7 @@ mod mod_catalog;
 mod mod_resources;
 mod mod_waypoints;
 mod mpq_mod;
+mod processor_pairing;
 mod resource_install;
 mod rune_audio;
 mod rune_data;

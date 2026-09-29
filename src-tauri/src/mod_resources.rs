@@ -59,6 +59,7 @@ pub struct ProcessorStatus {
     pub installed_path: Option<String>,
     pub install_directory: String,
     pub legacy: bool,
+    pub blocking_reason: Option<String>,
 }
 #[derive(Serialize)]
 pub struct ResourceState {
@@ -395,30 +396,17 @@ fn verify_file(path: &Path, a: &Asset) -> Result<(), String> {
     }
     Ok(())
 }
-pub(crate) fn resolve_processor(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) async fn resolve_processor(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let c = catalog()?;
     let a = processor_asset(&c);
     let path = processor_path(&tools_root(app)?, a);
     if verify_file(&path, a).is_ok() {
+        crate::processor_pairing::verify(&path, &a.version).await?;
         return Ok(path);
     }
-    // A compatible installed version remains usable while an optional update waits.
-    if let Ok(bytes) = fs::read(tools_root(app)?.join("installed.json")) {
-        if let Ok(old) = serde_json::from_slice::<Catalog>(&bytes) {
-            if validate_catalog(&old).is_ok() {
-                let previous = processor_asset(&old);
-                let installed = processor_path(&tools_root(app)?, previous);
-                if !crate::downloads::version_newer("1.4.0-beta.17", &previous.version)
-                    && verify_file(&installed, previous).is_ok()
-                {
-                    return Ok(installed);
-                }
-            }
-        }
-    }
     Err(format!(
-        "请先在 Mod 资源下载中安装或更新加工器至 {}",
-        a.version
+        "禁止加工：D2RHub {} 所需的配套加工器 {} 未安装或文件校验失败。请先在“下载与更新”安装或更新加工器。",
+        env!("CARGO_PKG_VERSION"), a.version
     ))
 }
 async fn probe_version(_app: &tauri::AppHandle, path: &Path) -> Option<String> {
@@ -449,17 +437,26 @@ async fn processor_status(app: &tauri::AppHandle, c: &Catalog) -> Result<Process
     let root = tools_root(app)?;
     let a = processor_asset(c);
     let path = processor_path(&root, a);
-    let ready = verify_file(&path, a).is_ok();
+    let verified = verify_file(&path, a).is_ok();
+    let pairing_error = if verified {
+        crate::processor_pairing::verify(&path, &a.version)
+            .await
+            .err()
+    } else {
+        Some(format!("禁止加工：当前 D2RHub {} 需要配套加工器 {}。请在“下载与更新”安装或更新；互认成功后才能加工。", env!("CARGO_PKG_VERSION"), a.version))
+    };
+    let ready = verified && pairing_error.is_none();
     let mut status = ProcessorStatus {
         ready,
         update_available: !ready,
-        installed_version: ready.then(|| a.version.clone()),
+        installed_version: verified.then(|| a.version.clone()),
         recommended_version: a.version.clone(),
-        installed_path: ready.then(|| path.to_string_lossy().into_owned()),
+        installed_path: verified.then(|| path.to_string_lossy().into_owned()),
         install_directory: root.to_string_lossy().into_owned(),
         legacy: false,
+        blocking_reason: pairing_error,
     };
-    if ready {
+    if verified {
         return Ok(status);
     }
     // Check the previous managed version and the historical bundled location.
@@ -488,11 +485,7 @@ async fn processor_status(app: &tauri::AppHandle, c: &Catalog) -> Result<Process
             status.installed_version = probe_version(app, &path).await;
             status.installed_path = Some(path.to_string_lossy().into_owned());
             status.legacy = legacy;
-            status.ready = !legacy
-                && status
-                    .installed_version
-                    .as_ref()
-                    .is_some_and(|v| !crate::downloads::version_newer("1.4.0-beta.17", v));
+            status.blocking_reason = Some(format!("禁止加工：当前 D2RHub {}，已安装加工器 {}；需要配套加工器 {}。请在“下载与更新”更新加工器，互认成功后再加工。", env!("CARGO_PKG_VERSION"), status.installed_version.as_deref().unwrap_or("未知"), a.version));
             break;
         }
     }
@@ -864,6 +857,7 @@ pub async fn install_mod_resource(
             if probe_version(&app, &executable).await.as_deref() != Some(&a.version) {
                 return Err("加工器实际版本与清单不一致".into());
             }
+            crate::processor_pairing::verify(&executable, &a.version).await?;
         } else {
             extract(&payload, &stage, &a.id, &task)?;
             let info =
@@ -964,7 +958,10 @@ pub async fn check_mod_resource_updates(
     let global = read_mod_resources(app, state, "Global".into(), false, false).await?;
     let mut notices = Vec::new();
     if cn.processor.update_available && cn.processor.installed_path.is_some() {
-        notices.push(format!("加工器 {}", cn.processor.recommended_version));
+        notices.push(format!(
+            "加工器 {}（必须配套更新，互认成功前禁止加工）",
+            cn.processor.recommended_version
+        ));
     }
     for (edition, status) in [("国服", cn), ("国际服", global)] {
         for m in status.mods {
@@ -1354,9 +1351,11 @@ mod tests {
         let max = semver::Version::parse(&c.hub_max_exclusive).unwrap();
         let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
         assert!(min <= current && current < max);
-        // beta19 emits room r31 / Esc r3; previous stable clients cannot
+        // beta20 requires mutual pairing and emits room r32 / Esc r3; older clients cannot
         // validate those recipes and must retain their compatible catalog.
-        for previous in ["0.9.104", "0.9.105", "0.9.107", "0.9.108", "0.9.109"] {
+        for previous in [
+            "0.9.104", "0.9.105", "0.9.107", "0.9.108", "0.9.109", "0.9.110",
+        ] {
             assert!(semver::Version::parse(previous).unwrap() < min);
         }
         let mut bad = c.clone();

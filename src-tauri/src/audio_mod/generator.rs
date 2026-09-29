@@ -8,6 +8,7 @@ use std::path::Path;
 use tauri::Emitter;
 
 pub(super) struct GeneratorInvocation<'a> {
+    pub(super) processor: &'a Path,
     pub(super) account_id: &'a str,
     pub(super) game_directory: &'a Path,
     pub(super) output_directory: &'a Path,
@@ -46,6 +47,7 @@ pub(super) async fn run_audio_mod_generator(
     invocation: GeneratorInvocation<'_>,
 ) -> Result<GeneratorReport, String> {
     let GeneratorInvocation {
+        processor,
         account_id,
         game_directory,
         output_directory,
@@ -80,7 +82,7 @@ pub(super) async fn run_audio_mod_generator(
     }
     arguments.push("--events".to_string());
 
-    let mut command = managed_process::command(&crate::mod_resources::resolve_processor(app)?);
+    let mut command = crate::processor_pairing::command(processor);
     command.args(arguments);
     let mut report: Option<GeneratorReport> = None;
     let mut reported_error = String::new();

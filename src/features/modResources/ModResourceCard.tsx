@@ -28,7 +28,7 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
   const profile = LIGHTWEIGHT_PROFILES.find(value => value.name === asset.id);
   const location = resourceInstallLocation(asset, state);
   const incompatible = !processor && state.game_data_version !== asset.game_data_version;
-  const current = processor ? state.processor.ready && !state.processor.update_available
+  const current = processor ? state.processor.ready && !state.processor.update_available && !state.processor.blocking_reason
     : (local ? !!local.installed_version && !local.update_available : installed);
   const blocked = controller.busy || current || local?.protected || incompatible || (!processor && !location);
   const status = resourceStatusMessage(local, en);
@@ -60,7 +60,7 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
       <MemoryStick size={13} aria-hidden="true" /><span>{en ? "Memory reference" : "内存参考"}</span>
       <strong>{en ? "~" : "约 "}{MEMORY_REFERENCE[asset.id]} MB</strong>
     </div>}
-    <small>{processor ? `${en ? "Recommended" : "推荐版本"} ${state.processor.recommended_version}`
+    <small>{processor ? `${en ? "Required paired version" : "所需配套版本"} ${state.processor.recommended_version}`
       : `${en ? "Game data" : "游戏数据版本"} ${asset.game_data_version}`}</small>
     {processor && state.processor.installed_path && <p className="resource-note">
       {state.processor.legacy ? (en ? "Legacy bundled processor found" : "检测到旧版内置加工器") : (en ? "Installed processor" : "已安装加工器")}
@@ -68,8 +68,8 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
       {!state.processor.ready && (en ? ". Install the compatible version below before processing." : "。请安装兼容版本后再加工。")}
     </p>}
     {status && <p className="resource-note">{status}</p>}
-    {processor && state.processor.ready && state.processor.update_available && <p className="resource-note">
-      {en ? "Your installed processor remains usable while an update is available." : "有兼容新版本，当前加工器仍可使用。"}
+    {processor && (!state.processor.ready || state.processor.update_available || state.processor.blocking_reason) && <p className="resource-note">
+      {state.processor.blocking_reason ?? (en ? "Processing is blocked until Hub and the required processor recognize each other. Install the paired processor; update Hub if requested." : "已禁止加工。请安装所需配套加工器；若提示 Hub 版本不匹配，请更新 D2RHub。双方互认成功后才能加工。")}
     </p>}
     {incompatible && <p className="resource-note">{en
       ? `Current game: ${state.game_data_version ?? "not configured"}. This package requires ${asset.game_data_version}.`

@@ -509,6 +509,7 @@ async fn prepare_audio_mod_impl(
     let (_config, _account, context) = configured_account(&shared_state, &account_id)?;
     let game_directory = context.installation.game_directory;
     let mods_directory = game_directory.join("mods");
+    let processor = crate::mod_resources::resolve_processor(&app).await?;
     std::fs::create_dir_all(&mods_directory)
         .map_err(|error| format!("创建 mods 目录失败: {error}"))?;
     recover_audio_mod_replacements(&mods_directory)?;
@@ -539,6 +540,7 @@ async fn prepare_audio_mod_impl(
         &app,
         task,
         GeneratorInvocation {
+            processor: &processor,
             account_id: &account_id,
             game_directory: &game_directory,
             output_directory: &mods_directory,
@@ -741,6 +743,7 @@ async fn upgrade_audio_mod_impl(
     let _lease = shared_state.mod_mutations().try_acquire()?;
     let (config, account, context) = configured_account(&shared_state, &account_id)?;
     let mods_directory = context.installation.game_directory.join("mods");
+    let processor = crate::mod_resources::resolve_processor(&app).await?;
     recover_audio_mod_replacements(&mods_directory)?;
     let current = if let Some(requested_mod_name) = requested_mod_name.as_deref() {
         let requested_arguments = arguments_with_audio_mod("", requested_mod_name)?;
@@ -863,6 +866,7 @@ async fn upgrade_audio_mod_impl(
         &app,
         task,
         GeneratorInvocation {
+            processor: &processor,
             account_id: &account_id,
             game_directory: &context.installation.game_directory,
             output_directory: temporary_output.path(),

@@ -55,17 +55,7 @@ async fn require_capabilities(processor: &Path) -> Result<(), String> {
 }
 
 async fn resolve_processor(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    // Debug builds can exercise the sibling processor without publishing resources.
-    // Production always uses the existing verified resource resolver.
-    #[cfg(debug_assertions)]
-    {
-        let local = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../d2r-audio-mod/target/release/d2r-audio-mod.exe");
-        if local.is_file() && require_capabilities(&local).await.is_ok() {
-            return Ok(local);
-        }
-    }
-    let processor = crate::mod_resources::resolve_processor(app)?;
+    let processor = crate::mod_resources::resolve_processor(app).await?;
     require_capabilities(&processor).await?;
     Ok(processor)
 }
@@ -78,7 +68,7 @@ async fn invoke_cli(
     cancelled: &(dyn Fn() -> bool + Sync),
     progress: &mut (dyn FnMut(&str, u8) + Send),
 ) -> Result<Value, String> {
-    let mut command = managed_process::command(processor);
+    let mut command = crate::processor_pairing::command(processor);
     let operation = if recovery {
         "recover_mpq"
     } else {

@@ -15,15 +15,15 @@ export function ModProcessorStatus({ edition, en, onReady, onManage }: Props) {
     setStatus(null); setError(null); readyCallback.current(null);
     // Only inspect local availability. The app's daily update check owns automatic networking.
     void modResourcesGateway.read(edition)
-      .then(value => { if (live) { setStatus(value.processor); readyCallback.current(value.processor.ready); } })
+      .then(value => { if (live) { setStatus(value.processor); readyCallback.current(value.processor.ready && !value.processor.update_available && !value.processor.blocking_reason); } })
       .catch(cause => { if (live) { setError(String(cause)); readyCallback.current(false); } });
     return () => { live = false; };
   }, [edition]);
-  if (status?.ready && !status.update_available) return null;
+  if (status?.ready && !status.update_available && !status.blocking_reason) return null;
   return <div className="processor-status" role="status">
-    <span>{error ?? (status ? status.ready
-      ? (en ? "A processor update is available. You can continue processing." : "加工器有新版本，当前版本仍可继续加工。")
-      : (en ? "Install a compatible processor before processing." : "加工前需要安装兼容的加工器。")
+    <span>{error ?? (status ? status.blocking_reason ?? (en
+      ? `Processing blocked. Installed processor: ${status.installed_version ?? "not installed"}; required: ${status.recommended_version}. Open Downloads & updates to install the paired version. Hub and processor must recognize each other before processing.`
+      : `已禁止加工。当前加工器：${status.installed_version ?? "未安装"}；所需配套版本：${status.recommended_version}。请前往“下载与更新”安装配套版本，Hub 与加工器互认成功后才能加工。`)
       : (en ? "Checking local processor…" : "正在读取本地加工器状态…"))}</span>
     {(status || error) && <Button size="sm" variant="secondary" onClick={onManage}>{en ? "Downloads & updates" : "下载与更新"}</Button>}
   </div>;

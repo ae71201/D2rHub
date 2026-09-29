@@ -116,6 +116,25 @@ describe("Mod resources", () => {
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("get_mod_resources", { edition: "CN", refresh: false });
   });
+  it("blocks processing while a required processor update is pending", async () => {
+    invoke.mockResolvedValue({ ...state(), processor: { ...state().processor, ready: true, update_available: true } });
+    const ready = vi.fn();
+    render(<ModProcessorStatus edition="CN" en={false} onReady={ready} onManage={vi.fn()} />);
+    await waitFor(() => expect(ready).toHaveBeenLastCalledWith(false));
+    expect(screen.getByText(/已禁止加工。当前加工器/)).toBeTruthy();
+    expect(screen.queryByText(/仍可/)).toBeNull();
+  });
+  it("shows the handshake failure and update direction", async () => {
+    const reason = "禁止加工：该加工器要求 D2RHub 0.9.111，请更新 D2RHub。";
+    invoke.mockResolvedValue({ ...state(), processor: { ...state().processor, ready: false, blocking_reason: reason } });
+    const ready = vi.fn();
+    const manage = vi.fn();
+    render(<ModProcessorStatus edition="CN" en={false} onReady={ready} onManage={manage} />);
+    expect(await screen.findByText(reason)).toBeTruthy();
+    expect(ready).toHaveBeenLastCalledWith(false);
+    await userEvent.click(screen.getByRole("button", { name: "下载与更新" }));
+    expect(manage).toHaveBeenCalledOnce();
+  });
   it("shows immediate feedback inside the clicked resource card before a task arrives", async () => {
     invoke.mockImplementation((cmd: string) => cmd === "get_mod_resources" ? Promise.resolve(state()) : new Promise(() => {}));
     render(<ModResourceLibrary edition="CN" en={false} />);

@@ -15,6 +15,7 @@ export interface ModProcessorState {
   installed_path: string | null;
   install_directory: string;
   legacy: boolean;
+  blocking_reason?: string | null;
 }
 
 export interface InstalledModResource {

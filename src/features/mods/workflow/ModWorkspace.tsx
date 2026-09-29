@@ -27,7 +27,7 @@ export function ModWorkspace({ workflow }: { workflow: ModWorkflowController }) 
         const edition = capsule.edition === "Global" ? "Global" : "CN";
         try {
           const local = await modResourcesGateway.read(edition);
-          if (!local.processor.ready) { setProcessorEdition(edition); return; }
+          if (!local.processor.ready || local.processor.update_available || local.processor.blocking_reason) { setProcessorEdition(edition); return; }
           actions.requestProcessing({ origin: "library", edition,
             source: { name: capsule.name, processed: capsule.processed || capsule.update_required } });
         } catch (error) { showToast("error", String(error)); }
