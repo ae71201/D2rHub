@@ -38,7 +38,7 @@ export function workflowFixture({ draft: draftOverrides, state = modState, en = 
     analysis, blockedReason: analysis.blockedReason, busy: false, progress: null, error: null, notice: null,
     prepared: false, processorReady: true, en, minimalMode: false, accounts: [testAccount], readyCapsules: [], catalog: testCatalog(),
     preparationTask: { currentTask: null, cancel: vi.fn(async () => {}), cancelError: null, cancelling: false },
-    actions: { requestProcessing: vi.fn(), openLibrary: vi.fn(), changeRecipe: vi.fn(), changeFeatures: vi.fn(), chooseTarget: vi.fn(),
+    actions: { requestProcessing: vi.fn(), openLibrary: vi.fn(), discardDraft: vi.fn(), changeRecipe: vi.fn(), changeFeatures: vi.fn(), chooseTarget: vi.fn(),
       prepare: vi.fn(async () => {}), back: vi.fn(), setProcessorReady: vi.fn(), setLibraryEdition: vi.fn(),
       refresh: vi.fn(async () => state), openResources: vi.fn(), resume: vi.fn() }, ...overrides };
 }

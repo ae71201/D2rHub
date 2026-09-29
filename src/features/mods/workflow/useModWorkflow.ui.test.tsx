@@ -192,3 +192,27 @@ describe("Mod workflow", () => {
     expect(vi.mocked(invokeCommand).mock.calls.filter(([command]) => command === "apply_audio_mod_to_account")).toHaveLength(1);
   });
 });
+
+
+it("drops a processing form that was only opened then left", async () => {
+  const { result } = mount();
+  act(() => result.current.actions.requestProcessing({ origin: "library", edition: "CN" }));
+  await waitFor(() => expect(result.current.inspection.loading).toBe(false));
+  act(() => result.current.actions.back());
+  expect(result.current.view).toBe("library");
+  expect(result.current.draft).toBeNull();
+  expect(vi.mocked(invokeCommand).mock.calls.some(([name]) => name === "prepare_audio_mod")).toBe(false);
+});
+it("retains intentional edits as a draft and allows explicit discard without starting processing", async () => {
+  const { result } = mount();
+  act(() => result.current.actions.requestProcessing({ origin: "library", edition: "CN" }));
+  act(() => result.current.actions.changeRecipe({ kind: "create", source: null, name: "My draft" }));
+  act(() => result.current.actions.back());
+  expect(result.current.draft?.recipe).toMatchObject({ name: "My draft" });
+  act(() => result.current.actions.resume());
+  expect(result.current.view).toBe("processing");
+  act(() => result.current.actions.discardDraft());
+  expect(result.current.draft).toBeNull();
+  expect(result.current.view).toBe("library");
+  expect(vi.mocked(invokeCommand).mock.calls.some(([name]) => name === "prepare_audio_mod")).toBe(false);
+});

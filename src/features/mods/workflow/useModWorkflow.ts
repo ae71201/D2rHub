@@ -31,6 +31,7 @@ export function useModWorkflow(options: Options) {
   const [libraryEdition, setLibraryEdition] = useState<ModEdition>("CN");
   const [openAdd, setOpenAdd] = useState(false);
   const [draft, setDraft] = useState<ModProcessingDraft | null>(null);
+  const initialDraft = useRef<string | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const accountDrafts = useRef(new Map<string, ModProcessingDraft>());
@@ -66,13 +67,22 @@ export function useModWorkflow(options: Options) {
     accountDrafts.current.set(`${next.origin}:${next.accountId}`, next);
   }, []);
 
+  const discardDraft = useCallback(() => {
+    if (operation.current) return;
+    draftRef.current = null; setDraft(null); accountDrafts.current.clear();
+    initialDraft.current = null; receiptRef.current = null; setReceipt(null);
+    setProgress(null); setError(null); setNotice(null); setAutoStart(false);
+    setView("library");
+  }, []);
+
   const openLibrary = useCallback((edition?: ModEdition, add = false) => {
     if (operation.current) return;
+    if (draftRef.current && JSON.stringify(draftRef.current) === initialDraft.current && !receiptRef.current && !progress && !error && !notice) discardDraft();
     if (edition) setLibraryEdition(edition);
     setOpenAdd(add);
     setView("library");
     latest.current.onNavigate("library");
-  }, []);
+  }, [discardDraft, progress, error, notice]);
 
   const editionForAccount = (account: AccountMeta | undefined): ModEdition | undefined => {
     const region = normalizeAccountRegion(account?.region);
@@ -101,6 +111,7 @@ export function useModWorkflow(options: Options) {
       features: initialModFeatures(request.origin),
     };
     accountDrafts.current.clear();
+    initialDraft.current = JSON.stringify(next);
     writeDraft(next);
     setReceipt(null);
     setProgress(null);
@@ -136,9 +147,10 @@ export function useModWorkflow(options: Options) {
     setAutoStart(false);
     if (view === "resources") { setView("processing"); return; }
     const origin = draftRef.current?.origin ?? "library";
+    if (JSON.stringify(draftRef.current) === initialDraft.current && !receiptRef.current && !progress && !error && !notice) discardDraft();
     if (origin === "library") setView("library");
     latest.current.onNavigate(origin);
-  }, [view]);
+  }, [view, discardDraft, progress, error, notice]);
 
   useEffect(() => {
     if ((!options.open || !options.active || view !== "processing") && !busy) return;
@@ -233,7 +245,7 @@ export function useModWorkflow(options: Options) {
     readyCapsules: options.catalog.pool?.capsules.filter(capsule => capsule.ready && capsule.processed && capsule.edition === draft?.edition) ?? [],
     catalog: options.catalog,
     actions: {
-      requestProcessing, openLibrary, changeRecipe, changeFeatures, chooseTarget, prepare, back, setProcessorReady,
+      requestProcessing, openLibrary, discardDraft, changeRecipe, changeFeatures, chooseTarget, prepare, back, setProcessorReady,
       setLibraryEdition, refresh: async () => {
         const [state] = await Promise.all([inspection.refresh(), latest.current.catalog.refresh()]);
         return state;

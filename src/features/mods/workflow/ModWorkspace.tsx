@@ -16,8 +16,9 @@ export function ModWorkspace({ workflow }: { workflow: ModWorkflowController }) 
     onBack={actions.back} onEditionChange={() => { /* Resources belong to the processing target edition. */ }} />;
   if (view === "processing" && draft) return <ModProcessingPanel workflow={workflow} />;
   return <>
-    {draft && <div className="flex items-center justify-end pb-2">
-      <Button size="sm" variant="ghost" onClick={actions.resume}>{en ? "Resume processing draft" : "继续未完成的加工"}</Button>
+    {draft && <div className="mod-draft-notice">
+      <Button size="sm" variant="ghost" onClick={actions.resume}>{en ? "Continue editing draft" : "继续编辑加工草稿"}</Button>
+      <Button size="sm" variant="ghost" disabled={workflow.busy} onClick={actions.discardDraft}>{en ? "Discard draft" : "放弃草稿"}</Button>
     </div>}
     <ModCatalogManager catalog={workflow.catalog} accounts={workflow.accounts} language={en ? "en-US" : "zh-CN"}
       minimalMode={workflow.minimalMode} autoOpenAdd={workflow.openAdd} edition={workflow.libraryEdition}
