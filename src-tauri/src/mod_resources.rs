@@ -1352,9 +1352,12 @@ mod tests {
         validate_catalog(&c).unwrap();
         let min = semver::Version::parse(&c.hub_min).unwrap();
         let max = semver::Version::parse(&c.hub_max_exclusive).unwrap();
-        for supported in ["0.9.104", "0.9.105", "0.99.106", env!("CARGO_PKG_VERSION")] {
-            let version = semver::Version::parse(supported).unwrap();
-            assert!(min <= version && version < max);
+        let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        assert!(min <= current && current < max);
+        // beta19 emits room r31 / Esc r3; previous stable clients cannot
+        // validate those recipes and must retain their compatible catalog.
+        for previous in ["0.9.104", "0.9.105", "0.9.107", "0.9.108", "0.9.109"] {
+            assert!(semver::Version::parse(previous).unwrap() < min);
         }
         let mut bad = c.clone();
         bad.assets[0].url = "https://github.com/attacker/releases/tool.exe".into();
