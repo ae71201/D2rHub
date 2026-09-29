@@ -1,11 +1,11 @@
 {
   "schema": 2,
   "channel": "v7-r25-r28-lightweight-v1",
-  "revision": 20260929085436,
+  "revision": 20260929101751,
   "release_url": "https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-20260927.1",
   "kind": "resources",
-  "hub_min": "0.9.110",
-  "hub_max_exclusive": "0.99.107",
+  "hub_min": "0.9.111",
+  "hub_max_exclusive": "0.9.112",
   "assets": [
     {
       "id": "LiteHub",
@@ -72,24 +72,24 @@
     },
     {
       "id": "processor",
-      "version": "1.4.0-beta.19",
+      "version": "1.4.0-beta.20",
       "mod_name": null,
       "profile": null,
       "game_data_version": null,
-      "size": 2131968,
-      "sha256": "4230a3b9e2024145e9c71b9d09591ff415ce6e248d6036b37d61561353bec9dd",
+      "size": 2136064,
+      "sha256": "02d6a3d007b6bf428f70106c8c49dce16101b6e9e81893bf4ce965dd9d8d9736",
       "mirrors": [
         {
           "platform": "github",
-          "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.19/d2r-audio-mod-1.4.0-beta.19-windows-x64.exe"
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.20/d2r-audio-mod-1.4.0-beta.20-windows-x64.exe"
         },
         {
           "platform": "gitee",
-          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/processor-v1.4.0-beta.19/d2r-audio-mod-1.4.0-beta.19-windows-x64.exe"
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/processor-v1.4.0-beta.20/d2r-audio-mod-1.4.0-beta.20-windows-x64.exe"
         }
       ],
-      "sequence": 2,
-      "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.19/d2r-audio-mod-1.4.0-beta.19-windows-x64.exe"
+      "sequence": 3,
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.20/d2r-audio-mod-1.4.0-beta.20-windows-x64.exe"
     }
   ]
 }

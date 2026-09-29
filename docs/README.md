@@ -16,6 +16,8 @@
 - [发布指南](release-workflow.md)：唯一维护者入口，负责准备、发布与补传。
 - [双源更新协议](dual-source-updates.md)：清单、兼容、下载与事务边界。
 - [资源分发](mod-resource-distribution.md)：软件、加工器和 Mod 的归属。
+- [加工器配套互认](processor-pairing.md)：阻止不兼容加工与配套发布要求。
+- [小号补发回车](room-follower-enter.md)：默认时序、范围和取消行为。
 - [音频遥测 v7](AUDIO_TELEMETRY_V7.md)：Hub 端当前解码协议。
 - [轻量 Mod](lightweight-mod-generation.md)、[桌宠衣柜](PET_WARDROBE.md)：领域专项说明。
 

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="dark">
 <head>
-  <meta name="d2rhub-version" content="0.9.110">
+  <meta name="d2rhub-version" content="0.9.111">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark light">
@@ -292,7 +292,7 @@
 <div class="shell">
   <aside class="sidebar guide-sidebar">
     <div id="guideNav">
-      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.110</span></div></div>
+      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.111</span></div></div>
       <div class="nav-title">你想做什么</div>
       <a class="nav-link" href="#guide-multi">打开多个游戏账号</a>
       <a class="nav-link" href="#guide-audio">自动记录刷图与掉落</a>
@@ -305,7 +305,7 @@
     <div id="referenceNav">
     <div class="brand">
       <div class="brand-mark">D2</div>
-      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.110</span></div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.111</span></div>
     </div>
     <nav id="nav">
       <div class="nav-title">开始</div>
@@ -371,10 +371,10 @@
 
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-09</p>
-      <h1>D2RHub v0.9.110<br>使用手册</h1>
-      <p class="lede">面向 v0.9.110 桌面版本的操作说明，覆盖正常 / 纯净模式、国服 / 国际服双客户端、多账号认证、Mod 加工、自动跟房、音频声纹、悬浮窗与本地统计。</p>
+      <h1>D2RHub v0.9.111<br>使用手册</h1>
+      <p class="lede">面向 v0.9.111 桌面版本的操作说明，覆盖正常 / 纯净模式、国服 / 国际服双客户端、多账号认证、Mod 加工、自动跟房、音频声纹、悬浮窗与本地统计。</p>
       <div class="meta-row">
-        <span class="badge accent">适用版本 v0.9.110</span>
+        <span class="badge accent">适用版本 v0.9.111</span>
         <span class="badge">Windows 11</span>
         <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
@@ -561,6 +561,9 @@
       <p>入口是“设置中心 → Mod 管理”。在识别或跟房页面遇到“开始准备”“前往加工”，也会进入对应的准备流程。Mod 可通过“下载与更新”进入同级下载页，直接下载并自动安装；进度显示在对应资源按钮附近。加工器缺失或不兼容时，点击条目“加工功能”会进入下载页；加工页也提供“下载加工器”按钮。已就绪时不再重复展示下载卡片。下载页按 NullHub、BoHub、LiteHub 排列，以内存参考标签辅助选择；实际占用随场景和设置变化，文件可通过“打开目录”查看。自动更新检查沿用每日检查设置，也可在下载页手动检查。浏览器下载的文件也可通过“导入已下载文件”校验后自动安装。下载会按“设置 → 启动策略 → 下载源”的选择优先使用 Gitee 或 GitHub，失败自动切源。未修改的Mod 可以校验后原位更新并保留备份；已加工或手动修改的 Mod 不会被纯净包覆盖。</p>
       <p>“已安装”显示游戏目录中的 Mod；点击条目“设置”查看详细选项，需要添加能力时使用“加工功能”。“下载与更新”负责获取成品和独立加工器。</p>
       <p>从识别或跟房进入加工时，页面会保留目标账号，并提供返回原页面的入口；中途下载加工器也不会丢失配方。目标账号已删除或不可用时，需要重新选择，不会自动改用其他账号。“检查更新”会验证受管 Mod 的本地文件，检测到手动修改时先保留现有内容。</p>
+      <h3>先完成 Hub 与加工器配套更新</h3>
+      <p>本版 D2RHub 0.9.111 配套加工器 1.4.0-beta.20。先更新 Hub，再进入“Mod 管理 → 下载与更新”安装配套加工器。加工页和下载页会说明当前版本、所需版本及更新要求；缺失、文件损坏、版本或配套协议不匹配、无法完成互认时，禁止加工、增补、升级和 MPQ 转换，不再回退旧加工器继续运行。</p>
+      <p>提示更新加工器时，点击“下载与更新”安装所需版本；提示 Hub 版本不匹配时，先更新 D2RHub，再返回检查。导入本地 EXE 仍需校验清单和配套身份，不能通过手动导入绕过检查。更新 Hub 或加工器不会自动改写已有 Mod；要使用新的房间工具，请重新加工并重启使用该成品的全部游戏账号。</p>
       <h3>先决定怎么加工</h3>
       <div class="table-wrap"><table>
         <thead><tr><th>你的情况</th><th>选择</th><th>结果</th></tr></thead>
@@ -639,10 +642,13 @@
       </table></div>
       <p>在正常模式下添加“自动跟房”模块，阅读模块说明后，选择一个主号和需要跟随的小号。账号需已初始化并正在运行，且使用包含局内房间工具的 Mod。设置房名前缀、密码、下一房序号及创建 / 加入快捷键；每次主号建房会产生新房号，小号使用最近一组房号和密码。</p>
       <h3>先准备房间工具</h3>
-      <p>在 Mod 管理中加工“局内房间工具”，再重启使用该 Mod 的游戏。当前 r31 保留大厅原生表单与局内表单分离，并从本机游戏重建两份高清暂停菜单；源 Mod 在这两份菜单上的自定义外观和 Esc 行为不会继承。旧成品按更新引导重建并在校验后同名替换；完成后请重启所有使用该成品的账号。</p>
-      <p>r31 局内房间工具的下一局、创建、加入三个按钮始终隐藏，不再提供显示开关。“双击 Esc 下一局地狱”现为独立可选模块，默认不勾选，可单独加工或与局内房间工具组合。启用后，局内 0.5 秒内双击 Esc 快速进入下一局地狱；单击打开暂停菜单，超时后 Esc 正常返回游戏。后台跟房通过 Esc 和方向键打开表单。旧成品需重新加工并重启游戏。</p>
-      <h3>方案一：后台按键</h3>
+      <p>在 Mod 管理中加工“局内房间工具”，再重启使用该 Mod 的游戏。当前 r32 保留大厅原生表单与局内表单分离，并从本机游戏重建两份高清暂停菜单；源 Mod 在这两份菜单上的自定义外观和 Esc 行为不会继承。旧成品按更新引导重建并在校验后同名替换；完成后请重启所有使用该成品的账号。</p>
+      <p>r32 局内房间工具的下一局、创建、加入三个按钮始终隐藏，不再提供显示开关。“双击 Esc 下一局地狱”现为独立可选模块，默认不勾选，可单独加工或与局内房间工具组合。启用后，局内 0.5 秒内双击 Esc 快速进入下一局地狱；单击打开暂停菜单，超时后 Esc 正常返回游戏。后台跟房通过 Esc 和方向键打开表单。旧成品需重新加工并重启游戏。</p>
+      <p>r32 在确认后 10ms 打开暂停菜单，50ms 按顺序发送退出、提交和关闭控制器；局内创建默认地狱难度，仍可手动切换。双击 Esc 模块保持 r3。该时序不是服务器入房确认，任务完成后仍需查看游戏实际状态。</p>
+      <h3>后台按键与小号补发回车</h3>
       <p>后台方案直接打开并填写房间表单，不调用或管理游戏聊天键。创建时主号保持前台，同步预填可用账号，小号跟随阶段只提交回车。按住时间默认 50ms，可与松开间隔分别调整。</p>
+      <p>“高级输入时序”新增小号补发回车：首次等待默认 1000ms、间隔默认 1000ms、补发默认 4 次（不包含原本首次提交）。每个小号独立计时，不重复填写表单，也不向主号补发。首次等待可设 0–60000ms，间隔 100–60000ms，次数 0–20；次数设为 0 即关闭。旧配置自动补齐默认值，恢复默认时序也会重置这三项。</p>
+      <p>补发过程中可取消任务；关闭模块、发送失败或目标进程/窗口变化时停止。补发是固定次数按键，不代表检测到入房成功；小号同时或间隔派发仍由原跟随设置控制。</p>
       <h3>跟随、取消与升级</h3>
       <p>可手动触发小号跟随，或设置建房后自动跟随延时；小号可同时派发或按固定间隔派发。任务面板支持取消与查看错误。修改 Mod 后请重启游戏。旧前台方案配置自动迁移为后台方案，账号、房号和快捷键等设置保留。</p>
     </section>
@@ -751,7 +757,7 @@
 
     </div>
     <footer class="footer">
-      D2RHub v0.9.110 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+      D2RHub v0.9.111 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
   </main>
 </div>
