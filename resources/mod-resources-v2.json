@@ -1,33 +1,12 @@
 {
   "schema": 2,
   "channel": "v7-r25-r28-lightweight-v1",
-  "revision": 20260928165045,
+  "revision": 20260929085436,
   "release_url": "https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-20260927.1",
   "kind": "resources",
-  "hub_min": "0.9.104",
+  "hub_min": "0.9.110",
   "hub_max_exclusive": "0.99.107",
   "assets": [
-    {
-      "id": "processor",
-      "version": "1.4.0-beta.18",
-      "mod_name": null,
-      "profile": null,
-      "game_data_version": null,
-      "size": 2132992,
-      "sha256": "f9881c39157e5830b4732f2e7f2a2fa4781d412a7ef034ad1ff7ff792692c464",
-      "mirrors": [
-        {
-          "platform": "github",
-          "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.18/d2r-audio-mod-1.4.0-beta.18-windows-x64.exe"
-        },
-        {
-          "platform": "gitee",
-          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/processor-v1.4.0-beta.18/d2r-audio-mod-1.4.0-beta.18-windows-x64.exe"
-        }
-      ],
-      "sequence": 1,
-      "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.18/d2r-audio-mod-1.4.0-beta.18-windows-x64.exe"
-    },
     {
       "id": "LiteHub",
       "version": "mod-resources-20260928164931",
@@ -90,6 +69,27 @@
       ],
       "sequence": 1,
       "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/NullHub-mod-resources-20260928164931.zip"
+    },
+    {
+      "id": "processor",
+      "version": "1.4.0-beta.19",
+      "mod_name": null,
+      "profile": null,
+      "game_data_version": null,
+      "size": 2131968,
+      "sha256": "4230a3b9e2024145e9c71b9d09591ff415ce6e248d6036b37d61561353bec9dd",
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.19/d2r-audio-mod-1.4.0-beta.19-windows-x64.exe"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/processor-v1.4.0-beta.19/d2r-audio-mod-1.4.0-beta.19-windows-x64.exe"
+        }
+      ],
+      "sequence": 2,
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/processor-v1.4.0-beta.19/d2r-audio-mod-1.4.0-beta.19-windows-x64.exe"
     }
   ]
 }
