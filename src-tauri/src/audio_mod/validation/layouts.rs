@@ -638,9 +638,11 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
             ("D2RHubCommitCreateGamehd.json", "CreateGame:CreateGame"),
             ("D2RHubCommitJoinGamehd.json", "JoinGame:JoinGame"),
         ] {
-            // r31 experiments with a 10ms exit-to-submit gap and no self-close.
-            // Keep the older contracts when inspecting upgrade sources.
-            let (commit_delay, close_delay) = if room_recipe_version >= 31 {
+            // r32 restores same-deadline exit, submit and close in child order.
+            // Keep r30/r31 contracts when inspecting upgrade sources.
+            let (commit_delay, close_delay) = if room_recipe_version >= 32 {
+                (0.05, Some(0.05))
+            } else if room_recipe_version >= 31 {
                 (0.06, None)
             } else if room_recipe_version >= 30 {
                 if native_message == "CreateGame:CreateGame" {
@@ -703,6 +705,17 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
                 .ok_or_else(|| format!("局内房间提交控制器缺少原生提交消息：{name}"))?;
             if exit_index >= submit_index {
                 return Err(format!("局内房间提交控制器必须先退出再提交：{name}"));
+            }
+            if room_recipe_version >= 32 {
+                let close_index = messages.iter().position(|child| {
+                    child
+                        .pointer("/fields/message")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(close_message.as_str())
+                });
+                if close_index.is_none_or(|index| submit_index >= index) {
+                    return Err(format!("局内房间提交控制器必须在提交之后关闭：{name}"));
+                }
             }
         }
     }

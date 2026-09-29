@@ -69,7 +69,10 @@ function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
       key_hold_ms: config.flow.key_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.key_hold_ms,
       chord_hold_ms: config.flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
       form_settle_ms: config.flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
-      physical_ctrl_settle_ms: config.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms },
+      physical_ctrl_settle_ms: config.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms,
+      follower_enter_delay_ms: config.flow.follower_enter_delay_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_delay_ms,
+      follower_enter_interval_ms: config.flow.follower_enter_interval_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_interval_ms,
+      follower_enter_repeat_count: config.flow.follower_enter_repeat_count ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_repeat_count },
   };
 }
 
@@ -770,6 +773,15 @@ export function RoomAutomationPanel({
             <NumberField label={copy.characterDelay} value={draft.flow.character_delay_ms ?? DEFAULT_ROOM_FLOW_TIMING.character_delay_ms} min={0} max={250}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, character_delay_ms } }))} />
+            <NumberField label={copy.followerEnterDelay} value={draft.flow.follower_enter_delay_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_delay_ms} min={0} max={60000}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(follower_enter_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, follower_enter_delay_ms } }))} />
+            <NumberField label={copy.followerEnterInterval} value={draft.flow.follower_enter_interval_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_interval_ms} min={100} max={60000}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(follower_enter_interval_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, follower_enter_interval_ms } }))} />
+            <NumberField label={copy.followerEnterCount} value={draft.flow.follower_enter_repeat_count ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_repeat_count} min={0} max={20}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(follower_enter_repeat_count) => updateDraft((current) => ({ ...current, flow: { ...current.flow, follower_enter_repeat_count } }))} />
             <ChoiceField label={copy.backgroundStrategy} value={draft.background_text_strategy}
               options={[{ value: "post_keys", label: copy.postKeys }, { value: "send_keys", label: copy.sendKeys }]}
               disabled={editorDisabled}
@@ -778,6 +790,7 @@ export function RoomAutomationPanel({
               }))} />
           </div>
           <p className="room-automation-consent-copy">{copy.inputTimingHelp}</p>
+          <p className="room-automation-consent-copy">{copy.followerEnterHelp}</p>
           <div className="mt-3">
             <Button size="sm" variant="ghost"
               onClick={() => updateDraft((current) => ({ ...current, flow: { ...current.flow, ...DEFAULT_ROOM_FLOW_TIMING } }))}

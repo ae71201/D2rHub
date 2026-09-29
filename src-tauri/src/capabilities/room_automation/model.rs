@@ -43,6 +43,16 @@ fn default_ctrl_settle_ms() -> u64 {
     50
 }
 
+fn default_follower_enter_delay_ms() -> u64 {
+    1_000
+}
+fn default_follower_enter_interval_ms() -> u64 {
+    1_000
+}
+fn default_follower_enter_repeat_count() -> u8 {
+    4
+}
+
 /// Keyboard pacing for one room-form workflow profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -61,6 +71,13 @@ pub struct FlowStrategy {
     /// Delay from Ctrl-down to A-down.
     #[serde(default = "default_ctrl_settle_ms")]
     pub physical_ctrl_settle_ms: u64,
+    #[serde(default = "default_follower_enter_delay_ms")]
+    pub follower_enter_delay_ms: u64,
+    #[serde(default = "default_follower_enter_interval_ms")]
+    pub follower_enter_interval_ms: u64,
+    /// Additional Enter presses after the initial follower submission; zero disables them.
+    #[serde(default = "default_follower_enter_repeat_count")]
+    pub follower_enter_repeat_count: u8,
 }
 
 impl FlowStrategy {
@@ -72,6 +89,9 @@ impl FlowStrategy {
             chord_hold_ms: DEFAULT_CHORD_HOLD_MS,
             form_settle_ms: default_form_settle_ms(),
             physical_ctrl_settle_ms: default_ctrl_settle_ms(),
+            follower_enter_delay_ms: default_follower_enter_delay_ms(),
+            follower_enter_interval_ms: default_follower_enter_interval_ms(),
+            follower_enter_repeat_count: default_follower_enter_repeat_count(),
         }
     }
 
@@ -84,9 +104,18 @@ impl FlowStrategy {
         self.chord_hold_ms = self.chord_hold_ms.min(1_000);
         self.form_settle_ms = self.form_settle_ms.min(MAX_STEP_DELAY_MS);
         self.physical_ctrl_settle_ms = self.physical_ctrl_settle_ms.min(MAX_STEP_DELAY_MS);
+        self.follower_enter_delay_ms = self.follower_enter_delay_ms.min(60_000);
+        self.follower_enter_interval_ms = self.follower_enter_interval_ms.clamp(100, 60_000);
+        self.follower_enter_repeat_count = self.follower_enter_repeat_count.min(20);
     }
 
     fn validate(&self, profile: &'static str) -> Result<(), RoomAutomationConfigError> {
+        if self.follower_enter_delay_ms > 60_000
+            || !(100..=60_000).contains(&self.follower_enter_interval_ms)
+            || self.follower_enter_repeat_count > 20
+        {
+            return Err(RoomAutomationConfigError::InvalidFollowerEnterTiming);
+        }
         if self.step_delay_ms > MAX_STEP_DELAY_MS
             || !(MIN_CHARACTER_DELAY_MS..=MAX_CHARACTER_DELAY_MS).contains(&self.character_delay_ms)
             || !(10..=250).contains(&self.key_hold_ms)
@@ -262,6 +291,8 @@ pub enum ShortcutValidationError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RoomAutomationConfigError {
+    #[error("follower Enter timing requires delay 0..60000 ms, interval 100..60000 ms and repeat count 0..20")]
+    InvalidFollowerEnterTiming,
     #[error("room automation strategy v{found} is newer than supported v{supported}")]
     UnsupportedStrategyVersion { found: u8, supported: u8 },
     #[error("room name prefix is empty")]
@@ -748,6 +779,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_flow_gains_follower_repeats_without_resetting_existing_timings() {
+        let mut flow: FlowStrategy = serde_json::from_value(serde_json::json!({
+            "step_delay_ms": 123, "key_hold_ms": 80
+        }))
+        .unwrap();
+        assert_eq!(flow.step_delay_ms, 123);
+        assert_eq!(flow.key_hold_ms, 80);
+        assert_eq!(flow.follower_enter_delay_ms, 1000);
+        assert_eq!(flow.follower_enter_interval_ms, 1000);
+        assert_eq!(flow.follower_enter_repeat_count, 4);
+        flow.follower_enter_repeat_count = 0;
+        flow.validate("standard").unwrap();
+        let restored: FlowStrategy =
+            serde_json::from_value(serde_json::to_value(&flow).unwrap()).unwrap();
+        assert_eq!(restored.follower_enter_repeat_count, 0);
+        flow.follower_enter_interval_ms = 0;
+        assert!(flow.validate("standard").is_err());
+        flow.normalize();
+        assert_eq!(flow.follower_enter_interval_ms, 100);
+    }
+
+    #[test]
     fn v25_configuration_resets_legacy_delivery_and_timing_once() {
         let mut legacy = RoomAutomationConfig {
             strategy_version: 25,
@@ -759,6 +812,7 @@ mod tests {
                 chord_hold_ms: 50,
                 form_settle_ms: 600,
                 physical_ctrl_settle_ms: 120,
+                ..FlowStrategy::standard()
             },
             ..RoomAutomationConfig::default()
         };
