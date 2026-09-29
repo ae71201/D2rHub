@@ -123,7 +123,7 @@ export function PathsPanel({
   applyDetectedPath,
 }: PathsPanelProps) {
   return (
-    <div className="settings-content-grid">
+    <div className="settings-content-grid settings-paths-grid">
       <div className="spatial-panel p-3 space-y-2">
         <h3 className="text-xs font-bold text-text-primary">核心程序路径</h3>
         <InstallationProfileFields

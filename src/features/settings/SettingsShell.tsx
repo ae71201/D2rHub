@@ -5,6 +5,7 @@ import { initCapabilityStatusSync } from "../capabilities";
 import { SettingsNavigation } from "./SettingsNavigation";
 import { isMinimalMode } from "../profile/featureProfile";
 import {
+  SETTINGS_COPY,
   type OptionalModuleTabId,
   type SettingsTabId,
 } from "./settingsRegistry";
@@ -36,6 +37,8 @@ export function SettingsShell({
   const [capabilityStatus, setCapabilityStatus] = useState<CapabilityStatusSnapshot | null>(null);
   const [capabilityStatusUnavailable, setCapabilityStatusUnavailable] = useState(false);
   const minimalMode = isMinimalMode(config);
+  const pageCopy = SETTINGS_COPY[config?.app_language === "en-US" ? "en-US" : "zh-CN"][activeTab];
+  const hasOwnHeading = ["module-management", "mod-processing", "room-automation", "tasks"].includes(activeTab);
 
   useEffect(() => {
     if (!open || minimalMode) {
@@ -95,6 +98,12 @@ export function SettingsShell({
               aria-labelledby={`settings-tab-${activeTab}`}
               className="settings-panel-scroll space-y-3"
             >
+              {!hasOwnHeading && (
+                <header className="settings-page-heading">
+                  <h2>{pageCopy.label}</h2>
+                  <p>{pageCopy.description}</p>
+                </header>
+              )}
               {children}
             </div>
           </div>

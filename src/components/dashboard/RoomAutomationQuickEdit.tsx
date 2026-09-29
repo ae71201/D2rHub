@@ -6,7 +6,7 @@ import {
   LoaderCircle,
   Settings2,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { roomAutomationGateway } from "../../features/roomAutomation/gateway";
 import type {
@@ -17,6 +17,7 @@ import {
   normalizeSettingsLanguage,
   type SettingsLanguage,
 } from "../../features/settings/settingsRegistry";
+import { AnchoredPanel } from "../ui/AnchoredPanel";
 import { showToast } from "../ui/Toast";
 
 interface RoomAutomationQuickEditProps {
@@ -60,7 +61,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     trigger: "跟房配置",
     triggerTitle: "修改下一局跟房配置",
     title: "下一局房间",
-    description: "只改房名与密码；参与账号、快捷键等仍在完整设置中管理。",
+    description: "设置下一局的房间名称和密码。",
     preview: "预览",
     prefix: "房名开头",
     sequence: "下一个序号",
@@ -82,7 +83,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     trigger: "Follow Config",
     triggerTitle: "Edit the next room automation settings",
     title: "Next room",
-    description: "Edit naming here; manage accounts and shortcuts in full settings.",
+    description: "Set the name and password for the next room.",
     preview: "Preview",
     prefix: "Room prefix",
     sequence: "Next sequence",
@@ -143,8 +144,6 @@ export function RoomAutomationQuickEdit({
 }: RoomAutomationQuickEditProps) {
   const locale = normalizeSettingsLanguage(language);
   const copy = QUICK_EDIT_COPY[locale];
-  const dialogTitleId = useId();
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const openRef = useRef(false);
   const draftDirtyRef = useRef(false);
@@ -193,24 +192,6 @@ export function RoomAutomationQuickEdit({
       stopSync?.();
     };
   }, [active]);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeFromPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const closeFromKeyboard = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeFromPointer, true);
-    document.addEventListener("keydown", closeFromKeyboard);
-    return () => {
-      document.removeEventListener("pointerdown", closeFromPointer, true);
-      document.removeEventListener("keydown", closeFromKeyboard);
-    };
-  }, [open]);
 
   const preview = useMemo(() => {
     if (!draft) return "";
@@ -273,7 +254,7 @@ export function RoomAutomationQuickEdit({
   };
 
   return (
-    <div ref={rootRef} className="room-automation-quick">
+    <div className="room-automation-quick">
       <button
         ref={triggerRef}
         type="button"
@@ -290,12 +271,11 @@ export function RoomAutomationQuickEdit({
         <ChevronDown size={12} strokeWidth={1.9} aria-hidden="true" />
       </button>
 
-      {open && draft && (
+      {draft && (
+        <AnchoredPanel open={open} anchor={triggerRef} title={copy.title} width={420}
+          className="room-naming-panel" closeLabel={locale === "en-US" ? "Close" : "关闭"} onClose={() => { if (!saving) setOpen(false); }}>
         <form
           className="room-automation-quick-popover"
-          role="dialog"
-          aria-modal="false"
-          aria-labelledby={dialogTitleId}
           onSubmit={(event) => {
             event.preventDefault();
             void save();
@@ -303,7 +283,6 @@ export function RoomAutomationQuickEdit({
         >
           <header className="room-automation-quick-header">
             <div>
-              <h2 id={dialogTitleId}>{copy.title}</h2>
               <p>{copy.description}</p>
             </div>
             <div className="room-automation-quick-preview">
@@ -316,7 +295,6 @@ export function RoomAutomationQuickEdit({
             <label>
               <span>{copy.prefix}</span>
               <input
-                autoFocus
                 type="text"
                 className="line-input"
                 maxLength={15}
@@ -393,6 +371,7 @@ export function RoomAutomationQuickEdit({
             </div>
           </footer>
         </form>
+        </AnchoredPanel>
       )}
     </div>
   );

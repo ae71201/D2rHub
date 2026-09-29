@@ -21,7 +21,7 @@ export function Dashboard({
   onShareReport, sharingReport, children, onMiniMode, miniModeDisabled,
 }: DashboardProps) {
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="dashboard-surface flex-1 flex flex-col min-h-0">
       <TopNav
         onMiniMode={onMiniMode}
         miniModeDisabled={miniModeDisabled}

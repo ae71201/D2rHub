@@ -161,6 +161,15 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
         </div>
       </div>
 
+      {!generateOpen && <div className="mod-library-custom-actions">
+        {onCreate && <Button size="sm" disabled={busy} onClick={() => void onCreate(edition)}>
+          <PackagePlus size={13} />{isEnglish ? "Process a new Mod" : "加工新 Mod"}
+        </Button>}
+        <Button size="sm" disabled={busy} onClick={() => { setGenerateOpen(false); setAddOpen(true); setAddDraft(""); }}>
+          <Plus size={13} />{isEnglish ? "Custom launch preset" : "自定义启动预设"}
+        </Button>
+      </div>}
+
       {generateOpen ? <ModResourceLibrary edition={edition} en={isEnglish} catalog={catalog} onBusy={setDownloadBusy} /> : <>
       {addOpen && (
         <section className="mod-catalog-add" aria-label={copy.addLabel}>
@@ -229,14 +238,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           </div>
         )}
       </div>
-      <details className="mod-library-advanced" open={addOpen || undefined}>
-        <summary>{isEnglish ? "Custom processing & launch presets" : "自定义加工与启动预设"}</summary>
-        {onCreate && <Button size="sm" variant="secondary" disabled={busy} onClick={() => void onCreate(edition)}>
-          <PackagePlus size={13} />{isEnglish ? "Process a new Mod" : "加工新 Mod"}
-        </Button>}
-        <p>{copy.customHelp}</p>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setAddOpen(true); setAddDraft(""); }}><Plus size={13} />{copy.add}</Button>
-      </details>
+
       </>}
       <Modal
         open={deleteTarget !== null}

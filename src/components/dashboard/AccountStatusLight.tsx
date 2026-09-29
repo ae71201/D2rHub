@@ -1,5 +1,5 @@
 import type { BatchMode } from "../../hooks/useAccountBatch";
-import { useMemo, type CSSProperties } from "react";
+import { Check, Wrench } from "lucide-react";
 import "../../styles/accountStatusLight.css";
 
 export interface AccountStatusLightProps {
@@ -16,8 +16,6 @@ export interface AccountStatusLightProps {
   activity?: string;
 }
 export function AccountStatusLight({ name, running, issue, selected, mode, disabled, uncertain, paused, onToggle, onRepair, activity }: AccountStatusLightProps) {
-  // Align all selected lights to one clock without JS animation timers.
-  const phase = useMemo(() => -performance.now(), [selected]);
   const action = running ? "关闭" : "启动";
   const mismatch = !!mode && mode !== (running ? "close" : "launch");
   const unknown = uncertain || issue === undefined;
@@ -26,6 +24,8 @@ export function AccountStatusLight({ name, running, issue, selected, mode, disab
     : mismatch ? "请先取消当前选择" : issue && !running ? `配置异常：${issue}，点击配置`
     : `${running ? "运行中" : "未运行"}，点击选择${action}${issue ? `；配置异常：${issue}` : ""}`;
   return <div className="account-status-control" data-paused={paused || undefined}>
+    <span className="account-status-dot" aria-hidden="true" data-running={running} data-error={!!issue}
+      data-selection={selected ? running ? "close" : "launch" : undefined} />
     {label && <span className="account-status-label">{label}</span>}
     <button type="button" className="account-status-button" title={title}
       aria-label={`${name}：${title}`} aria-pressed={!!selected}
@@ -35,9 +35,9 @@ export function AccountStatusLight({ name, running, issue, selected, mode, disab
       onTouchStart={event => event.stopPropagation()}
       onKeyDown={event => { if (event.key === " " || event.key === "Enter") event.stopPropagation(); }}
       onClick={event => { event.stopPropagation(); if (issue && !running && !selected) onRepair?.(); else onToggle?.(); }}>
-      <span className="account-status-dot" data-running={running} data-error={!!issue}
-        style={{ "--status-phase": `${phase}ms` } as CSSProperties}
-        data-selection={selected ? running ? "close" : "launch" : undefined} />
+      {issue && !running && !selected
+        ? <Wrench size={12} aria-hidden="true" />
+        : <span className="account-select-check" aria-hidden="true">{selected && <Check size={11} />}</span>}
     </button>
   </div>;
 }

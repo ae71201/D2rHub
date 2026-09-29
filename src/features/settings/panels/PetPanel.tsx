@@ -26,7 +26,7 @@ export function PetPanel({
   const tabs = [["wardrobe", english ? "Wardrobe" : "装扮衣柜"], ["progress", english ? "Achievements & stats" : "成就与统计"], ["settings", english ? "Behavior" : "行为设置"]];
   return (
     <div className="space-y-4">
-      <nav className="flex flex-wrap gap-1 border-b border-border-default pb-2" aria-label={english ? "Pet sections" : "小猫设置分页"}>{tabs.map(([id, label]) => <button key={id} type="button" aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${tab === id ? "bg-surface-active text-accent" : "text-text-muted hover:bg-surface-hover"}`}>{label}</button>)}</nav>
+      <nav className="settings-section-tabs flex flex-wrap" aria-label={english ? "Pet sections" : "小猫设置分页"}>{tabs.map(([id, label]) => <button key={id} type="button" aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${tab === id ? "bg-surface-active text-accent" : "text-text-muted hover:bg-surface-hover"}`}>{label}</button>)}</nav>
       {tab === "wardrobe" && <PetWardrobePanel english={english} />}
       {tab === "progress" && <PetProgressPanel english={english} />}
       {tab === "settings" && (

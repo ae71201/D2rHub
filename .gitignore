@@ -26,3 +26,13 @@ src-tauri/permissions/*
 /config/
 /stateData/
 /.codex-tmp/
+
+# Local superseded design proposals; production preview remains src/visual-audit.tsx.
+/dev/previews/build-hub-preview.mjs
+/dev/previews/hub-preview-notes.md
+/dev/previews/hub-preview.css
+/dev/previews/hub-preview.js
+/dev/previews/hub-unified.html
+/dev/previews/settings-unified.html
+/docs/design/quiet-workbench.md
+/docs/design/implementation-review.md

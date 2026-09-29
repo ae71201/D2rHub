@@ -241,6 +241,10 @@ export function AccountModEditor({
           {!poolLoading && !poolError && modCapsulePool && capsules.length === 0 && <p className="account-mod-picker-empty">
             {isEnglish ? "No Mods are available for this edition. Scan or add one in Mod Management." : "当前版本还没有可用 Mod，请前往 Mod 管理扫描或新增。"}
           </p>}
+          {onOpenModManager && <button type="button" role="menuitem" className="account-mod-picker-manage"
+            onClick={() => { close(false); onOpenModManager("add", selection?.edition); }}>
+            <PackagePlus size={13} />{isEnglish ? "Manage Mods & custom arguments" : "管理 Mod 与自定义参数"}
+          </button>}
         </div>,
         document.body,
       )}

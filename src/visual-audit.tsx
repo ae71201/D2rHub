@@ -3,6 +3,9 @@ import ReactDOM from "react-dom/client";
 import { version as appVersion } from "../package.json";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
+import { normalizeTheme } from "./store/themeCatalog";
+import { PET_ITEMS, PET_ITEM_BY_ID } from "./features/pet/catalog";
+import type { PetAction, PetOutcome } from "./features/pet/types";
 import { APPLICATION_DISCLOSURE_REVISION } from "./features/disclosures/disclosureStorage";
 import waypointCatalog from "../src-tauri/resources/waypoint-catalog.json";
 import type {
@@ -31,7 +34,8 @@ const params = new URLSearchParams(window.location.search);
 let acceptedDisclosureRevision: number | null = params.get("batch") === "1"
   ? APPLICATION_DISCLOSURE_REVISION : null;
 const surface = ((params.get("surface") as Surface | null) || "main") as Surface;
-const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
+const requestedTheme = normalizeTheme(params.get("theme") === "dark" ? "onyx" : params.get("theme"));
+const requestedFont = ["small", "large"].includes(params.get("font") || "") ? params.get("font")! : "default";
 const requestedLanguage = params.get("lang") === "en" ? "en-US" : "zh-CN";
 const auditFrame = params.get("frame");
 const settingsState = params.get("settingsState");
@@ -49,7 +53,16 @@ const currentWindowLabel =
         ? "bongo-cat"
         : "main";
 
+const petPreview: PetOutcome = {
+  snapshot: { generation: 1, revision: 1, wardrobe: {
+    owned: PET_ITEMS.filter(item => item.source === "starter").map(item => item.id),
+    equipped: {}, presets: [{}, {}, {}], seconds: 3660, inputs: 3000, days: 3,
+    last_day: "2026-09-29", daily_rolls: 0, roll_seconds: 120, misses: 2, fragments: 14, tone: "mixed",
+  } }, rewards: [],
+};
+
 document.documentElement.setAttribute("data-theme", requestedTheme);
+document.documentElement.dataset.fontScale = requestedFont;
 if (auditFrame) {
   document.documentElement.setAttribute("data-visual-audit-frame", auditFrame);
 }
@@ -270,7 +283,7 @@ const baseConfig: GlobalConfig = {
   hide_main_window_shortcut: "",
   overlay_opacity: 94,
   main_opacity: 96,
-  font_scale: "default",
+  font_scale: requestedFont,
   app_language: requestedLanguage,
   agent_mode: 1,
   agent_delay_secs: 4,
@@ -458,6 +471,26 @@ function installIpcMock() {
     }
 
     switch (cmd) {
+      case "pet_get_wardrobe":
+      case "pet_settle_activity":
+        return structuredClone(petPreview);
+      case "pet_wardrobe_action": {
+        const { action } = payload as { action: PetAction };
+        const wardrobe = petPreview.snapshot.wardrobe;
+        if (action.kind === "equip") {
+          const item = PET_ITEM_BY_ID.get(action.id);
+          if (!item || !wardrobe.owned.includes(item.id)) throw new Error("尚未拥有此饰品");
+          wardrobe.equipped[item.slot] = item.id;
+        } else if (action.kind === "unequip") delete wardrobe.equipped[action.slot];
+        else if (action.kind === "clear") wardrobe.equipped = {};
+        else if (action.kind === "tone") wardrobe.tone = action.tone;
+        else if (action.kind === "save_preset") wardrobe.presets[action.index] = { ...wardrobe.equipped };
+        else if (action.kind === "load_preset") wardrobe.equipped = { ...(wardrobe.presets[action.index] || {}) };
+        else throw new Error("浏览器预览不执行饰品兑换，请在桌面程序中操作。");
+        petPreview.snapshot.revision += 1;
+        petPreview.snapshot.generation += 1;
+        return structuredClone(petPreview);
+      }
       case "get_global_config":
         return { ...persistedGlobalConfig, first_run_complete: surface !== "setup" };
       case "get_capability_statuses":
@@ -920,7 +953,9 @@ function AuditRuntime() {
   return <>{content}</>;
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+const auditWindow = window as Window & { __d2rAuditRoot?: ReturnType<typeof ReactDOM.createRoot> };
+auditWindow.__d2rAuditRoot ??= ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
+auditWindow.__d2rAuditRoot.render(
   <React.StrictMode>
     <AuditRuntime />
   </React.StrictMode>,

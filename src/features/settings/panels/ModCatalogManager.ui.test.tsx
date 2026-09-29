@@ -85,7 +85,7 @@ describe("ModCatalogManager", () => {
   it("opens downloads as a sibling page without nesting another modal", async () => {
     render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "下载与更新" }));
-    expect(screen.getByRole("heading", { name: "下载与安装" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Mod 资源下载" })).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByText("Plain")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "已安装" }));

@@ -6,7 +6,7 @@ import { ModResourceCard } from "../../modResources/ModResourceCard";
 import { useModResources } from "../../modResources/useModResources";
 import "./modResources.css";
 
-const RESOURCE_ORDER = ["processor", "NullHub", "BoHub", "LiteHub"];
+const RESOURCE_ORDER = ["NullHub", "BoHub", "LiteHub", "processor"];
 
 interface Props {
   edition: string;
@@ -26,7 +26,7 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
   return <section className="mod-resources" aria-label={en ? "Mod resources" : "Mod 资源下载"}>
     <header>
       <div>
-        <h3>{processorOnly ? (en ? "Mod processor" : "Mod 加工器") : (en ? "Download and install" : "下载与安装")}</h3>
+        {processorOnly && <h3>{en ? "Mod processor" : "Mod 加工器"}</h3>}
         <p>{processorOnly
           ? (en ? "Install the compatible processor to add game features to your Mods." : "安装兼容的加工器，为 Mod 添加所需的游戏功能。")
           : (en ? "Choose a ready-to-use Mod. The processor is only needed for custom features." : "选择成品即可安装；需要自定义游戏功能时，再添加加工器。")}</p>

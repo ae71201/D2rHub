@@ -1,4 +1,5 @@
 @import "./tokens.css";
+@import "./flat-ui.css";
 
 @tailwind base;
 @tailwind components;

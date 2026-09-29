@@ -1,3 +1,4 @@
+import { LaunchGroupEditor } from "./components/dashboard/LaunchGroupEditor";
 import { useEffect, useRef, useState } from "react";
 import { useAccountBatch, refreshBatchRunning } from "./hooks/useAccountBatch";
 import { flushAccountQuickSettings } from "./hooks/useAccountQuickSettings";
@@ -637,6 +638,31 @@ function App() {
           )}
 
           <div className="dashboard-workspace">
+            {(launchGroupPanelOpen || launchGroupDraft) && (
+              <LaunchGroupPanel
+                editor={launchGroupDraft ? <LaunchGroupEditor launchGroups={launchGroups} /> : undefined}
+                groups={config?.launch_groups ?? []}
+                accounts={accounts}
+                config={config}
+                modCapsulePool={modCapsules.pool}
+                favoriteGroupIds={config?.favorite_launch_group_ids}
+                disabled={launching || configSaving || killing || dispatchingBatch || !!batch.selection.mode || !!launchGroupDraft}
+                onClose={() => { launchGroups.cancelDraft(); setLaunchGroupPanelOpen(false); }}
+                onLaunch={group => {
+                  setLaunchGroupPanelOpen(false);
+                  launchGroups.launch(group);
+                }}
+                onCreate={() => {
+                  setLaunchGroupPanelOpen(true);
+                  launchGroups.create();
+                }}
+                onEdit={group => {
+                  setLaunchGroupPanelOpen(true);
+                  launchGroups.edit(group);
+                }}
+                onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
+              />
+            )}
             {initialLoading ? (
               <AccountGridLoading />
             ) : accounts.length === 0 ? (
@@ -694,34 +720,12 @@ function App() {
               </AccountGrid>
             )}
 
-            {launchGroupPanelOpen && !launchGroupDraft && (
-              <LaunchGroupPanel
-                groups={config?.launch_groups ?? []}
-                accounts={accounts}
-                config={config}
-                modCapsulePool={modCapsules.pool}
-                favoriteGroupIds={config?.favorite_launch_group_ids}
-                disabled={launching || configSaving || killing || dispatchingBatch || !!batch.selection.mode}
-                onClose={() => setLaunchGroupPanelOpen(false)}
-                onLaunch={group => {
-                  setLaunchGroupPanelOpen(false);
-                  launchGroups.launch(group);
-                }}
-                onCreate={() => {
-                  setLaunchGroupPanelOpen(false);
-                  launchGroups.create();
-                }}
-                onEdit={group => {
-                  setLaunchGroupPanelOpen(false);
-                  launchGroups.edit(group);
-                }}
-                onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
-              />
-            )}
+
           </div>
 
           {accounts.length > 0 && (
             <LaunchProgressView
+              language={config?.app_language}
               accounts={accounts}
               logs={logs}
               onClear={clearLogs}

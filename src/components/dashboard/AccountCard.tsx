@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { invokeCommand } from "../../platform/tauri";
 import {
   AlertTriangle,
+  ChevronDown,
+  MoreHorizontal,
   FolderOpen,
   Globe2,
   Locate,
@@ -11,6 +13,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { AnchoredPanel } from "../ui/AnchoredPanel";
+import { Modal } from "../ui/Modal";
+import { Button } from "../ui/Button";
 
 import type {
   AccountMeta,
@@ -43,6 +48,7 @@ const stepLabels: Record<string, string> = {
 };
 
 export interface GridItemProps {
+  dragHandle?: React.ReactNode;
   runtimeStatus?: Omit<AccountStatusLightProps, "name" | "running">;
   account: AccountMeta;
   onRename: (id: string, name: string) => Promise<boolean>;
@@ -168,7 +174,7 @@ export function AccountGridItem({
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
   modCapsuleLoading, modCapsuleError, onRequestModCapsules,
-  getPositionSchemeUsage, onUpdateToken, onReinitialize, config, runtimeStatus,
+  getPositionSchemeUsage, onUpdateToken, onReinitialize, config, runtimeStatus, dragHandle,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -187,6 +193,15 @@ export function AccountGridItem({
 
   // ── 抽屉配置面板 ──
   const [expanded, setExpanded] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [quickClosing, setQuickClosing] = useState(false);
+  const quickAnchor = useRef<HTMLButtonElement>(null);
+  const moreAnchor = useRef<HTMLButtonElement>(null);
+  const deleteCancel = useRef<HTMLButtonElement>(null);
+  const positionAdd = useRef<HTMLButtonElement>(null);
+  const cancelledRename = useRef(false);
+  const closingQuick = useRef<Promise<boolean> | null>(null);
+  const english = config?.app_language === "en-US";
   const quickSettingsEnabled = account.initialized
     && (expanded || (Boolean(isSelectionMode) && Boolean(selected)));
   const {
@@ -246,6 +261,11 @@ export function AccountGridItem({
     updateDrawerSettings({ [key]: value });
   };
 
+  const leavePositionEditor = () => {
+    setPositionEditing(false);
+    positionAdd.current?.focus({ preventScroll: true });
+  };
+
   const commitPosition = async () => {
     const name = positionNameDraft.trim();
     const x = Number(positionXDraft);
@@ -275,7 +295,7 @@ export function AccountGridItem({
         position_configured: true,
       });
     }
-    setPositionEditing(false);
+    leavePositionEditor();
     setPositionNameDraft("");
   };
 
@@ -311,6 +331,24 @@ export function AccountGridItem({
     setExpanded(!expanded);
   };
 
+  const closeQuick = () => {
+    if (closingQuick.current) return closingQuick.current;
+    setQuickClosing(true);
+    const attempt = (async () => {
+      try {
+        await flushDrawerSettings();
+        setExpanded(false);
+        return true;
+      } catch {
+        // Do not hide unsaved changes; the hook retains the patch and error.
+        return false;
+      }
+    })();
+    closingQuick.current = attempt;
+    void attempt.finally(() => { closingQuick.current = null; setQuickClosing(false); });
+    return attempt;
+  };
+
   const handleReinit = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if ((account.auth_mode === "token" || requiresTokenMigration(account.auth_mode, account.region, config)) && onUpdateToken) {
@@ -329,11 +367,12 @@ export function AccountGridItem({
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirmDel) { setConfirmDel(true); setTimeout(() => setConfirmDel(false), 4000); return; }
-    onDelete(account.id);
+    setMoreOpen(false);
+    setConfirmDel(true);
   };
 
   const commitName = async () => {
+    if (cancelledRename.current) { cancelledRename.current = false; return; }
     if (nameCommitInFlightRef.current) return;
     const v = nameDraft.trim() || account.id;
     setEditingName(false);
@@ -368,7 +407,6 @@ export function AccountGridItem({
   const effectiveFps = isSelectionMode
     ? schemeMember?.fps ?? drawer.fps
     : drawer.fps;
-  const performanceLabel = `${effectiveResolution} · ${effectiveFps === 0 ? "unlimited" : `${effectiveFps}fps`}`;
   const configModeLabel = isSelectionMode
     ? "方案画质"
     : account.has_customized_settings ? "独立配置" : "系统配置";
@@ -391,197 +429,14 @@ export function AccountGridItem({
         ? "补全 Token 完成初始化"
         : "初始化账号";
 
-  return (
-    <div
-      onClick={handleCardClick}
-      className="spatial-tile group account-tile flex min-h-[152px] flex-col animate-card-in"
-      data-expanded={expanded ? "true" : "false"}
-      data-selected={selected ? "true" : "false"}
-      data-batch-selected={runtimeStatus?.selected || undefined}
-      data-scheme-edit={isSelectionMode ? "true" : undefined}
-      style={{
-        cursor: isSelectionMode
-          ? (selected || (account.initialized && !tokenMigrationRequired) ? "pointer" : "not-allowed")
-          : (account.initialized ? "pointer" : "default"),
-      }}
-    >
-      <div className="tile-core">
-        <div className="tile-top">
-          <div className="min-w-0">
-            <div className="name-row">
-              {isSelectionMode ? (
-                <>
-                  <input
-                    type="checkbox"
-                    checked={!!selected}
-                    disabled={!selected && (!account.initialized || tokenMigrationRequired)}
-                    onChange={() => onToggleSelect && onToggleSelect(account.id)}
-                    onClick={stop}
-                    title={!account.initialized
-                      ? "请先初始化账号"
-                      : tokenMigrationRequired
-                        ? "请先迁移为 Token 直启"
-                        : undefined}
-                    className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-                  />
-                  {selected && <span className="scheme-context-label">方案配置</span>}
-                </>
-              ) : (
-                <span className="tile-index index">{String(account.order + 1).padStart(2, "0")}</span>
-              )}
-            </div>
-
-            <div className="title-mod-row">
-              {editingName ? (
-                <input
-                  className="line-input h-8 min-w-[128px] flex-1 px-2.5 text-base font-semibold"
-                  value={nameDraft}
-                  onChange={e => setNameDraft(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") void commitName(); if (e.key === "Escape") { setNameDraft(display); setEditingName(false); } }}
-                  onBlur={() => { void commitName(); }}
-                  onClick={stop}
-                  autoFocus
-                />
-              ) : (
-                <button
-                  className="tile-name name min-w-0 max-w-full text-left transition-colors duration-200 hover:text-text-secondary"
-                  onClick={e => {
-                    if (isSelectionMode) return;
-                    e.stopPropagation();
-                    setEditingName(true);
-                  }}
-                >
-                  <span data-i18n-skip>{display}</span>
-                </button>
-              )}
-
-              {(!isSelectionMode || selected) && (
-                <AccountModEditor
-                  account={account}
-                  isSelectionMode={isSelectionMode}
-                  schemeMember={schemeMember}
-                  onSchemeMemberChange={onSchemeMemberChange}
-                  modCapsulePool={modCapsulePool}
-                  poolLoading={modCapsuleLoading}
-                  poolError={modCapsuleError}
-                  onRequestPool={onRequestModCapsules}
-                  assigning={modCapsuleAssigningAccountId === account.id}
-                  onAssign={onAssignModCapsule}
-                  onOpenModManager={onOpenModManager}
-                />
-              )}
-            </div>
-          </div>
-          <AccountStatusLight
-            name={display} running={account.is_running}
-            issue={!account.initialized ? "账号尚未初始化" : tokenMigrationRequired ? "请先迁移为 Token 直启" : null}
-            {...runtimeStatus}
-            activity={runtimeStatus?.activity || (progress?.status === "running" ? "启动中" : undefined)}
-            disabled={isSelectionMode || runtimeStatus?.disabled}
-            onRepair={() => {
-              if ((!account.initialized && account.auth_mode === "token") || tokenMigrationRequired) onUpdateToken?.(account);
-              else if (!account.initialized) onReinitialize?.(account);
-              else onConfigure(account);
-            }}
-          />
-
-        </div>
-
-        <div className="tag-row tag-row-offset">
-          <span className="hig-badge hig-badge-neutral">{lastLaunchText || (account.initialized ? "已就绪" : "待配置")}</span>
-          {canSwitchInternationalRegion && !isSelectionMode ? (
-            <AccountRegionSwitcher
-              accountId={account.id}
-              currentRegion={account.region}
-              isRunning={account.is_running}
-            />
-          ) : (
-            <span className="hig-badge hig-badge-neutral">{regionLabel}</span>
-          )}
-          {account.auth_mode === "token" ? (
-            <span className="hig-badge hig-badge-violet">网页 Token</span>
-          ) : (
-            <span className="hig-badge hig-badge-blue">战网认证</span>
-          )}
-          {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">需迁移 Token</span>}
-          {account.auth_mode === "token" && <span className="hig-badge hig-badge-green">长期</span>}
-          {!account.initialized && <span className="hig-badge hig-badge-red">未初始化</span>}
-        </div>
-
-        <div className="tag-row tag-row-secondary tag-row-offset">
-          {drawerLoaded && account.initialized && <span className="hig-badge hig-badge-neutral performance-chip">{performanceLabel}</span>}
-          {account.initialized && (
-            <span className={`hig-badge config-chip ${isSelectionMode
-              ? "hig-badge-blue"
-              : account.has_customized_settings ? "hig-badge-green" : "hig-badge-neutral"}`}>
-              {configModeLabel}
-            </span>
-          )}
-        </div>
-
-        <div className="bottom-row">
-          {!isSelectionMode && (
-            <div className="account-card-actions">
-              {tokenMigrationRequired && onUpdateToken ? (
-                <button
-                  onClick={e => { stop(e); onUpdateToken(account); }}
-                  className="primary-cta"
-                  title="国际服已停用战网模式，请迁移为 Token 直启"
-                >
-                  <AlertTriangle size={12} />
-                  迁移 Token
-                </button>
-              ) : account.initialized && (
-                <button
-                  onClick={e => { stop(e); onLaunch(account.id); }}
-                  disabled={runtimeStatus?.disabled || !!runtimeStatus?.mode || runtimeStatus?.uncertain || !!runtimeStatus?.issue || account.is_running}
-                  className="primary-cta"
-                >
-                  <Play size={12} />
-                  启动
-                </button>
-              )}
-            <div className="spatial-tools account-card-tools tools">
-              {account.initialized && account.auth_mode !== "token" && !tokenMigrationRequired && (
-                <button disabled={runtimeStatus?.disabled || !!runtimeStatus?.mode} onClick={e => { stop(e); onBattleNetOnly(account.id); }} className="mini-action icon-btn" title="仅启动战网">
-                  <Globe2 size={12} strokeWidth={1.8} aria-hidden="true" />
-                </button>
-              )}
-              {account.initialized && (
-                <>
-                  <button onClick={e => { stop(e); onConfigure(account); }} className="mini-action icon-btn relative" title="高级设置">
-                    <Sliders size={12} strokeWidth={1.8} />
-                  </button>
-                  <button onClick={handleOpenFolder} className="mini-action icon-btn" title="打开配置目录">
-                    <FolderOpen size={12} strokeWidth={1.8} />
-                  </button>
-                </>
-              )}
-              {/* 未初始化账号同样需要这个入口：待完成 Token 账号可以在这里补 Token，
-                  尚未完成首次初始化的战网账号可以在这里重新走初始化事务。 */}
-              <button onClick={handleReinit} disabled={reinit} className="mini-action icon-btn disabled:opacity-40" title={reinitializeTitle}>
-                <RotateCw size={12} strokeWidth={1.8} className={reinit ? "animate-spin" : ""} />
-              </button>
-              <button onClick={handleDelete} className={`mini-action icon-btn ${confirmDel ? "!bg-error/10 !text-error" : "hover:!bg-error/10 hover:!text-error"}`} title={confirmDel ? "确认删除" : "删除"}>
-                <Trash2 size={12} strokeWidth={1.8} />
-              </button>
-            </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {progress ? (
-        <div className="mt-0 px-[15px] pb-2">
-          <ProgressWrapper progress={progress} accountId={account.id} />
-        </div>
-      ) : null}
-
+  const quickFields = (
       <div
         className="grid"
+        inert={!drawerExpanded}
+        aria-hidden={!drawerExpanded}
         style={{
           gridTemplateRows: drawerExpanded ? "1fr" : "0fr",
-          transition: "grid-template-rows 0.32s cubic-bezier(0.16, 1, 0.3, 1)",
+          transition: "grid-template-rows 180ms cubic-bezier(0.2, 0.8, 0.2, 1)",
         }}
       >
         <div style={{ overflow: "hidden", minHeight: 0 }}>
@@ -598,6 +453,7 @@ export function AccountGridItem({
                 <div className="drawer-field">
                   <label className="micro-meta mb-1.5 block">分辨率</label>
                   <select
+                    aria-label={`${display} ${english ? "resolution" : "分辨率"}`}
                     value={effectiveResolution}
                     onChange={e => selectDrawerSetting("resolution", e.target.value)}
                     onBlur={() => void flushDrawerSettings().catch(() => undefined)}
@@ -614,6 +470,7 @@ export function AccountGridItem({
                   <div className="combo-input">
                     <input
                       type="number"
+                      aria-label={`${display} FPS`}
                       min={0}
                       max={500}
                       list={`fps-options-${account.id}`}
@@ -685,6 +542,7 @@ export function AccountGridItem({
                       setPositionEditing(true);
                     }}
                     className="hig-badge mod-chip position-add-chip"
+                    ref={positionAdd}
                     title="添加位置"
                   >
                     +
@@ -708,7 +566,9 @@ export function AccountGridItem({
                   </button>}
                 </div>
                 {positionEditing && (
-                  <div className="position-preset-editor" onClick={stop}>
+                  <div className="position-preset-editor" onClick={stop} onKeyDown={event => {
+                    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); leavePositionEditor(); }
+                  }}>
                     <label>
                       <span>名称</span>
                       <input
@@ -738,14 +598,13 @@ export function AccountGridItem({
                         onChange={event => setPositionYDraft(event.target.value)}
                         onKeyDown={event => {
                           if (event.key === "Enter") void commitPosition();
-                          if (event.key === "Escape") setPositionEditing(false);
                         }}
                       />
                     </label>
                     <button type="button" className="primary-cta" onClick={() => void commitPosition()}>
                       保存位置
                     </button>
-                    <button type="button" className="control-btn" onClick={() => setPositionEditing(false)}>
+                    <button type="button" className="control-btn" onClick={leavePositionEditor}>
                       取消
                     </button>
                   </div>
@@ -755,6 +614,229 @@ export function AccountGridItem({
           </div>
         </div>
       </div>
+  );
+
+  return (
+    <div
+      onClick={isSelectionMode ? handleCardClick : undefined}
+      className="spatial-tile group account-tile flex min-h-[152px] flex-col animate-card-in"
+      data-expanded={expanded ? "true" : "false"}
+      data-selected={selected ? "true" : "false"}
+      data-batch-selected={runtimeStatus?.selected || undefined}
+      data-scheme-edit={isSelectionMode ? "true" : undefined}
+      style={{
+        cursor: isSelectionMode
+          ? (selected || (account.initialized && !tokenMigrationRequired) ? "pointer" : "not-allowed")
+          : "default",
+      }}
+    >
+      <div className="tile-core">
+        <div className="tile-top">
+          <div className="min-w-0">
+            <div className="name-row">
+              {isSelectionMode ? (
+                <>
+                  <input
+                    type="checkbox"
+                    aria-label={`将 ${display} 加入启动方案`}
+                    checked={!!selected}
+                    disabled={!selected && (!account.initialized || tokenMigrationRequired)}
+                    onChange={() => onToggleSelect && onToggleSelect(account.id)}
+                    onClick={stop}
+                    title={!account.initialized
+                      ? "请先初始化账号"
+                      : tokenMigrationRequired
+                        ? "请先迁移为 Token 直启"
+                        : undefined}
+                    className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                  />
+
+                </>
+              ) : (
+                <>{dragHandle}</>
+              )}
+            </div>
+
+            <div className="title-mod-row">
+              {editingName ? (
+                <input
+                  className="line-input h-8 min-w-[128px] flex-1 px-2.5 text-base font-semibold"
+                  value={nameDraft}
+                  onChange={e => setNameDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") void commitName(); if (e.key === "Escape") { cancelledRename.current = true; setNameDraft(display); setEditingName(false); } }}
+                  onBlur={() => { void commitName(); }}
+                  onClick={stop}
+                  autoFocus
+                />
+              ) : (
+                <button
+                  title={lastLaunchText ? `最近启动：${lastLaunchText}` : undefined}
+                  className="tile-name name min-w-0 max-w-full text-left transition-colors duration-200 hover:text-text-secondary"
+                  onClick={e => {
+                    if (isSelectionMode) return;
+                    e.stopPropagation();
+                    cancelledRename.current = false;
+                    setEditingName(true);
+                  }}
+                >
+                  <span data-i18n-skip>{display}</span>
+                </button>
+              )}
+
+
+            </div>
+          </div>
+          <AccountStatusLight
+            name={display} running={account.is_running}
+            issue={!account.initialized ? "账号尚未初始化" : tokenMigrationRequired ? "请先迁移为 Token 直启" : null}
+            {...runtimeStatus}
+            activity={runtimeStatus?.activity || (progress?.status === "running" ? "启动中" : undefined)}
+            disabled={isSelectionMode || runtimeStatus?.disabled}
+            onRepair={() => {
+              if ((!account.initialized && account.auth_mode === "token") || tokenMigrationRequired) onUpdateToken?.(account);
+              else if (!account.initialized) onReinitialize?.(account);
+              else onConfigure(account);
+            }}
+          />
+
+        </div>
+
+        <div className="tag-row tag-row-offset">
+              {(!isSelectionMode || selected) && (
+                <AccountModEditor
+                  account={account}
+                  isSelectionMode={isSelectionMode}
+                  schemeMember={schemeMember}
+                  onSchemeMemberChange={onSchemeMemberChange}
+                  modCapsulePool={modCapsulePool}
+                  poolLoading={modCapsuleLoading}
+                  poolError={modCapsuleError}
+                  onRequestPool={onRequestModCapsules}
+                  assigning={modCapsuleAssigningAccountId === account.id}
+                  onAssign={onAssignModCapsule}
+                  onOpenModManager={onOpenModManager}
+                />
+              )}
+          {canSwitchInternationalRegion && !isSelectionMode ? (
+            <AccountRegionSwitcher
+              accountId={account.id}
+              currentRegion={account.region}
+              isRunning={account.is_running}
+            />
+          ) : (
+            <span className="hig-badge hig-badge-neutral">{regionLabel}</span>
+          )}
+          {account.auth_mode === "token" ? (
+            <span className="hig-badge hig-badge-violet">网页 Token</span>
+          ) : (
+            <span className="hig-badge hig-badge-blue">战网认证</span>
+          )}
+          {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">需迁移 Token</span>}
+          {!account.initialized && <span className="hig-badge hig-badge-red">未初始化</span>}
+          {account.initialized && (
+            <span className={`hig-badge config-chip ${isSelectionMode
+              ? "hig-badge-blue"
+              : account.has_customized_settings ? "hig-badge-green" : "hig-badge-neutral"}`}>
+              {configModeLabel}
+            </span>
+          )}
+        </div>
+
+        <div className="bottom-row">
+          {!isSelectionMode && (
+            <div className="account-card-actions">
+              {tokenMigrationRequired && onUpdateToken ? (
+                <button
+                  onClick={e => { stop(e); onUpdateToken(account); }}
+                  className="primary-cta"
+                  title="国际服已停用战网模式，请迁移为 Token 直启"
+                >
+                  <AlertTriangle size={12} />
+                  迁移 Token
+                </button>
+              ) : account.initialized ? (
+                <button
+                  onClick={e => {
+                    stop(e);
+                    if (account.is_running) {
+                      void invokeCommand("focus_game_window", { accountId: account.id })
+                        .catch(error => showToast("error", `聚焦窗口失败: ${error}`));
+                    } else onLaunch(account.id);
+                  }}
+                  disabled={runtimeStatus?.disabled || !!runtimeStatus?.mode || runtimeStatus?.uncertain || (!account.is_running && !!runtimeStatus?.issue)}
+                  className="primary-cta"
+                >
+                  {account.is_running ? <Locate size={12} /> : <Play size={12} />}
+                  {account.is_running ? (english ? "Focus" : "聚焦") : (english ? "Launch" : "启动")}
+                </button>
+              ) : (
+                <button onClick={handleReinit} disabled={reinit} className="primary-cta">
+                  {english ? "Continue setup" : "继续配置"}
+                </button>
+              )}
+              {account.initialized && (
+                <button
+                  type="button"
+                  ref={quickAnchor}
+                  className="account-quick-toggle"
+                  aria-label={english ? `${display}: ${drawerExpanded ? "Close" : "Open"} quick settings` : `${display}：${drawerExpanded ? "收起" : "展开"}快捷配置`}
+                  aria-expanded={drawerExpanded}
+                  aria-haspopup="dialog"
+                  onClick={e => { stop(e); if (expanded) void closeQuick(); else { setMoreOpen(false); handleCardClick(); } }}
+                >
+                  {english ? "Quick settings" : "快捷配置"} <ChevronDown size={13} aria-hidden="true" />
+                </button>
+              )}
+            <div className="spatial-tools account-card-tools tools">
+              {account.initialized && (
+                  <button onClick={e => { stop(e); onConfigure(account); }} className="mini-action icon-btn relative" title="高级设置">
+                    <Sliders size={12} strokeWidth={1.8} />
+                  </button>
+              )}
+              <button type="button" ref={moreAnchor} className="account-more-trigger"
+                aria-label={`${display}：${english ? "More actions" : "更多操作"}`} aria-haspopup="dialog" aria-expanded={moreOpen}
+                disabled={runtimeStatus?.disabled || !!runtimeStatus?.mode || reinit}
+                onClick={async e => { stop(e); if (expanded && !(await closeQuick())) return; setMoreOpen(!moreOpen); }}>
+                <MoreHorizontal size={14} />{english ? "More" : "更多"}
+              </button>
+            </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {progress ? (
+        <div className="mt-0 px-[15px] pb-2">
+          <ProgressWrapper progress={progress} accountId={account.id} />
+        </div>
+      ) : null}
+
+      {isSelectionMode ? quickFields : (
+        <AnchoredPanel open={expanded} anchor={quickAnchor} title={display + (english ? ' · Quick settings' : ' · 快捷配置')}
+          onClose={() => void closeQuick()} closeLabel={english ? 'Close quick settings' : '关闭快捷配置'} className="account-quick-popover" width={460}>
+          {quickFields}
+          <p className="quick-save-note" role="status">{quickClosing ? (english ? 'Saving changes…' : '正在保存更改…') : drawerLoadError ? (english ? 'Changes are retained. Resolve the error before closing.' : '编辑内容已保留，请处理错误后再关闭。') : (english ? 'Changes save automatically · Apply on next launch' : '更改自动保存 · 下次启动生效')}</p>
+        </AnchoredPanel>
+      )}
+      <AnchoredPanel open={moreOpen} anchor={moreAnchor} title={display} onClose={() => setMoreOpen(false)}
+        closeLabel={english ? 'Close actions' : '关闭更多操作'} className="account-actions-popover" width={230}>
+        <div className="account-action-list">
+          <button type="button" onClick={() => { cancelledRename.current = false; setMoreOpen(false); setEditingName(true); }}>{english ? 'Rename' : '重命名'}</button>
+          {account.initialized && account.auth_mode !== 'token' && !tokenMigrationRequired && (
+            <button type="button" onClick={() => { setMoreOpen(false); onBattleNetOnly(account.id); }}><Globe2 size={14} />{english ? 'Open Battle.net only' : '仅启动战网'}</button>
+          )}
+          {account.initialized && <button type="button" onClick={e => { setMoreOpen(false); void handleOpenFolder(e); }}><FolderOpen size={14} />{english ? 'Open account folder' : '打开配置目录'}</button>}
+          <button type="button" disabled={reinit} onClick={e => { setMoreOpen(false); void handleReinit(e); }}><RotateCw size={14} />{english ? (account.auth_mode === 'token' ? 'Update Token' : 'Initialize account') : (account.auth_mode === 'token' && account.initialized ? '更新 Token' : reinitializeTitle === '重置' ? '重新初始化' : reinitializeTitle)}</button>
+          <button type="button" className="account-action-danger" onClick={handleDelete}><Trash2 size={14} />{english ? 'Delete account…' : '删除账号…'}</button>
+        </div>
+      </AnchoredPanel>
+      <Modal open={confirmDel} onClose={() => setConfirmDel(false)} initialFocusRef={deleteCancel} returnFocusRef={moreAnchor}
+        title={english ? 'Delete account?' : '删除账号？'} footer={<>
+        <Button ref={deleteCancel} variant="ghost" onClick={() => setConfirmDel(false)}>{english ? 'Cancel' : '取消'}</Button>
+        <Button variant="danger" onClick={() => { setConfirmDel(false); onDelete(account.id); }}>{english ? 'Delete account' : '删除账号'}</Button>
+      </>}>
+        <p className="text-sm text-text-secondary">{english ? 'Delete the local profile for “' + display + '”? This cannot be undone here.' : '确定删除“' + display + '”的本地账号配置吗？删除后无法在这里撤销。'}</p>
+      </Modal>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { AlertTriangle, Pencil, Play, Plus, Star, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
 import type { AccountMeta, GlobalConfig, LaunchGroup, ModCapsulePool } from "../../store/types";
@@ -12,6 +12,7 @@ import {
 } from "../../utils/launchGroups";
 
 interface LaunchGroupPanelProps {
+  editor?: ReactNode;
   groups: LaunchGroup[];
   accounts: AccountMeta[];
   config: GlobalConfig | null;
@@ -26,6 +27,7 @@ interface LaunchGroupPanelProps {
 }
 
 export function LaunchGroupPanel({
+  editor,
   groups,
   accounts,
   config,
@@ -39,6 +41,12 @@ export function LaunchGroupPanel({
   onToggleFavorite,
 }: LaunchGroupPanelProps) {
   const { t } = useI18n();
+  const editTrigger = useRef<HTMLButtonElement | null>(null);
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (wasEditing.current && !editor && editTrigger.current?.isConnected) editTrigger.current.focus({ preventScroll: true });
+    wasEditing.current = Boolean(editor);
+  }, [editor]);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const favorites = new Set(normalizeFavoriteLaunchGroupIds(groups, favoriteGroupIds));
   const favoriteLimitReached = favorites.size >= MAX_FAVORITE_LAUNCH_GROUPS;
@@ -54,6 +62,10 @@ export function LaunchGroupPanel({
           <h2>{t("launch.scheme.label")}</h2>
           <p>{t("launch.scheme.subtitle")}</p>
         </div>
+      <button type="button" className="launch-group-create" disabled={disabled} onClick={event => { editTrigger.current = event.currentTarget; onCreate(); }}>
+        <Plus size={13} />
+        {t("launch.scheme.create")}
+      </button>
         <button type="button" className="icon-btn" aria-label={t("launch.scheme.closePanel")} onClick={onClose}>
           <X size={14} />
         </button>
@@ -128,7 +140,7 @@ export function LaunchGroupPanel({
                 aria-label={t("launch.scheme.editLabel", { name: group.name })}
                 title={t("launch.scheme.editTitle", { name: group.name })}
                 disabled={disabled}
-                onClick={() => onEdit(group)}
+                onClick={event => { editTrigger.current = event.currentTarget; onEdit(group); }}
               >
                 <Pencil size={12} />
               </button>
@@ -137,10 +149,8 @@ export function LaunchGroupPanel({
         })}
       </div>
 
-      <button type="button" className="launch-group-create" disabled={disabled} onClick={onCreate}>
-        <Plus size={13} />
-        {t("launch.scheme.create")}
-      </button>
+
+      {editor}
     </aside>
   );
 }

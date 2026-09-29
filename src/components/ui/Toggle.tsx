@@ -33,15 +33,15 @@ export function Toggle({
         disabled={disabled}
         onClick={() => !disabled && onChange(!checked)}
         className={`relative inline-flex h-[24px] w-[40px] shrink-0 items-center rounded-full
-          transition-all duration-200 ease-out active:scale-[0.97]
+          transition-colors duration-150 ease-out
           focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2
           ${checked ? "bg-accent" : "bg-surface-hover border border-border-default"}`}
       >
         <span
-          className={`inline-block h-[16px] w-[16px] rounded-full shadow-sm
+          className={`inline-block h-[16px] w-[16px] rounded-full
             transition-transform duration-200 ease-out
             ${checked ? "translate-x-[20px]" : "translate-x-[4px]"}`}
-          style={{ background: checked ? "var(--cta-text, #fff)" : "var(--surface-glass)" }}
+          style={{ background: checked ? "var(--cta-text, #fff)" : "var(--text-muted)" }}
         />
       </button>
     </label>

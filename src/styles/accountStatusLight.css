@@ -11,13 +11,5 @@
 .account-status-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); opacity: .4; }
 .account-status-dot[data-running=true] { background: var(--success, #66b88a); opacity: 1; }
 .account-status-dot[data-error=true] { background: var(--error, #df7474); opacity: 1; }
-.account-status-dot[data-selection] { background: var(--text-muted); opacity: 1; }
-.account-status-dot[data-selection]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--success, #66b88a); }
-.account-status-dot[data-error=true][data-selection]::after { background: var(--error, #df7474); }
-/* One smooth breath per second; animate opacity only to avoid layout work. */
-.account-status-dot[data-selection=launch]::after { animation: account-select-launch 1s ease-in-out infinite; }
-.account-status-dot[data-selection=close]::after { animation: account-select-close 1s ease-in-out infinite; }
-.account-status-dot[data-selection]::after { animation-delay: var(--status-phase, 0ms); }
-@keyframes account-select-launch { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
-@keyframes account-select-close { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-.account-status-control[data-paused=true] .account-status-dot::after { animation-play-state: paused; }
+/* Selection belongs to the checkbox; the passive dot keeps its runtime meaning. */
+.account-status-dot[data-selection] { opacity: 1; }

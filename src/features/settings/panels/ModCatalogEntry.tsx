@@ -36,7 +36,7 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
     if (draft.trim() && !busy && await onUpdate(draft.trim())) setEditing(false);
   };
 
-  return <article className="mod-library-entry" aria-label={capsule.name}>
+  return <article className="mod-library-entry" data-expanded={expanded || undefined} aria-label={capsule.name}>
     <div className="mod-library-entry-summary">
       <PackageOpen size={18} aria-hidden="true" />
       <div className="mod-library-entry-copy">

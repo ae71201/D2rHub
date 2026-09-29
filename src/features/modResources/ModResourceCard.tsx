@@ -45,7 +45,8 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
           : local?.update_available ? (en ? "Verify & update" : "校验并原位更新")
             : (en ? "Download & install" : "下载并安装");
 
-  return <article className="resource-card" aria-label={processor ? (en ? "Mod processor" : "Mod 加工器") : asset.id} aria-busy={active}>
+  return <article className="resource-card" data-processor={processor || undefined} aria-label={processor ? (en ? "Mod processor" : "Mod 加工器") : asset.id} aria-busy={active}>
+    <div className="resource-summary">
     <div className="resource-title">
       <strong>{processor ? (en ? "Independent Mod processor" : "独立 Mod 加工器") : asset.id}</strong>
       <span>{en ? "Download" : "下载"} {(asset.size / 1048576).toFixed(1)} MB</span>
@@ -53,6 +54,8 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
     <p>{processor
       ? (en ? "Adds selected features to your own Mods. Installed separately from Hub." : "为已有 Mod 添加所选功能，独立安装和更新。")
       : (en ? profile?.enDetail : profile?.detail)}</p>
+    </div>
+    <div className="resource-metadata">
     {!processor && MEMORY_REFERENCE[asset.id] && <div className="resource-memory" title={en ? "Reference only; actual use varies with the scene and settings." : "仅供参考，实际占用随场景和设置变化。"}>
       <MemoryStick size={13} aria-hidden="true" /><span>{en ? "Memory reference" : "内存参考"}</span>
       <strong>{en ? "~" : "约 "}{MEMORY_REFERENCE[asset.id]} MB</strong>
@@ -72,6 +75,7 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
       ? `Current game: ${state.game_data_version ?? "not configured"}. This package requires ${asset.game_data_version}.`
       : `当前游戏版本：${state.game_data_version ?? "尚未配置或无法识别"}，此成品需要 ${asset.game_data_version}。`}</p>}
     {!processor && !location && <p className="resource-note">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
+    </div>
     <div className="resource-actions">
       <Button size="sm" variant="primary" disabled={!!blocked} onClick={() => void controller.install(asset, false)}>
         <Download size={13} />{actionLabel}

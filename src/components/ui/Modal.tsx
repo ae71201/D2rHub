@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 interface ModalProps {
@@ -10,6 +10,8 @@ interface ModalProps {
   width?: string;
   closeOnContextMenu?: boolean;
   dismissible?: boolean;
+  initialFocusRef?: RefObject<HTMLElement | null>;
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }
 
 export function Modal({
@@ -21,6 +23,8 @@ export function Modal({
   width = "max-w-md",
   closeOnContextMenu = false,
   dismissible = true,
+  initialFocusRef,
+  returnFocusRef,
 }: ModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -85,15 +89,16 @@ export function Modal({
     const frame = window.requestAnimationFrame(() => {
       const content = contentRef.current;
       if (content && !content.contains(document.activeElement)) {
-        content.focus({ preventScroll: true });
+        (initialFocusRef?.current ?? content).focus({ preventScroll: true });
       }
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
-      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      const target = returnFocusRef?.current ?? previousFocus;
+      if (target?.isConnected) target.focus({ preventScroll: true });
     };
-  }, [open]);
+  }, [open, initialFocusRef, returnFocusRef]);
 
   if (!mounted) return null;
 
@@ -119,8 +124,7 @@ export function Modal({
         tabIndex={-1}
         className={`relative w-full ${width} mx-4 rounded-modal overflow-hidden focus:outline-none ${closing ? "modal-content-exit" : "modal-content"}`}
         style={{
-          background: "linear-gradient(180deg, var(--surface-modal, var(--surface-glass)), var(--surface-card))",
-          backdropFilter: "blur(16px) saturate(1.03)",
+          background: "var(--surface-modal, var(--surface-card))",
           border: "1px solid var(--border-default)",
           boxShadow: "var(--shadow-elevated)",
         }}

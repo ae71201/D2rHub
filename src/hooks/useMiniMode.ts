@@ -1,3 +1,4 @@
+import { version as appVersion } from "../../package.json";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { availableMonitors, currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from "@tauri-apps/api/window";
 import { invokeCommand } from "../platform/tauri";
@@ -66,7 +67,8 @@ export function useMiniMode(ready: boolean, forceFull: boolean) {
   const initialized = useRef(false);
   const restored = useRef(false);
   const expansionRequested = useRef(false);
-  const startupMini = useRef(read("mode") === "mini");
+  const newVersion = useRef(read("version") !== appVersion);
+  const startupMini = useRef(!newVersion.current && read("mode") === "mini");
   const full = useRef<Bounds | null>(readBounds("full"));
   const compact = useRef<Bounds | null>(readBounds("mini"));
   const chain = useRef<Promise<void>>(Promise.resolve());
@@ -110,9 +112,25 @@ export function useMiniMode(ready: boolean, forceFull: boolean) {
     const boot = async () => {
       if (cancelled) return;
       try {
-        const bounds = full.current || await snapshot();
+        let bounds = full.current || await snapshot();
+        if (newVersion.current) {
+          const monitor = await currentMonitor();
+          if (monitor) {
+            const scale = monitor.scaleFactor;
+            const area = monitor.workArea;
+            const width = Math.max(MIN_SIZE.full.width, Math.min(monitor.size.width / scale * 0.7, area.size.width / scale, area.size.height / scale / 0.58));
+            const height = Math.max(MIN_SIZE.full.height, width * 0.58);
+            bounds = { width, height,
+              x: area.position.x + (area.size.width - width * scale) / 2,
+              y: area.position.y + (area.size.height - height * scale) / 2 };
+          }
+        }
         full.current = bounds;
         await place(bounds, false);
+        write("full", JSON.stringify(bounds));
+        write("version", appVersion);
+        if (newVersion.current) write("mode", "full");
+        newVersion.current = false;
         if (cancelled) return;
         const win = getCurrentWindow();
         for (const listen of [() => win.onMoved(schedule), () => win.onResized(schedule)]) {

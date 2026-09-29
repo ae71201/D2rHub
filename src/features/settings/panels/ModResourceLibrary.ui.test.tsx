@@ -35,7 +35,7 @@ describe("Mod resources", () => {
       mods: [{ id: "LiteHub", installed_version: "private-release-id", update_available: false }] });
     render(<ModResourceLibrary edition="CN" en={false} />);
     await screen.findByText("LiteHub");
-    expect(screen.getAllByRole("article").map(card => card.getAttribute("aria-label"))).toEqual(["Mod 加工器", "NullHub", "BoHub", "LiteHub"]);
+    expect(screen.getAllByRole("article").map(card => card.getAttribute("aria-label"))).toEqual(["NullHub", "BoHub", "LiteHub", "Mod 加工器"]);
     for (const [name, memory] of [["NullHub", 300], ["BoHub", 500], ["LiteHub", 800]] as const) {
       const card = screen.getByRole("article", { name });
       expect(within(card).getByText(`约 ${memory} MB`)).toBeTruthy();

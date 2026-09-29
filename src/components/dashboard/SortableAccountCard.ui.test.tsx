@@ -12,6 +12,7 @@ vi.mock("@dnd-kit/sortable", () => ({
     attributes: { tabIndex: 0 },
     listeners: { onKeyDown: mocks.dragKeyDown },
     setNodeRef: vi.fn(),
+    setActivatorNodeRef: vi.fn(),
     transform: null,
     transition: undefined,
     isDragging: false,
@@ -27,7 +28,7 @@ vi.mock("../../store/launch", () => ({
 }));
 
 vi.mock("./AccountCard", () => ({
-  AccountGridItem: () => <input aria-label="Mod 参数" />,
+  AccountGridItem: ({ dragHandle }: { dragHandle?: import("react").ReactNode }) => <>{dragHandle}<input aria-label="Mod 参数" /></>,
 }));
 
 const account: AccountMeta = {
@@ -65,6 +66,8 @@ describe("SortableAccountCard keyboard boundary", () => {
     const sortable = container.querySelector("[data-sortable-account-id]");
     expect(sortable).not.toBeNull();
     fireEvent.keyDown(sortable!, { key: " " });
+    expect(mocks.dragKeyDown).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("button", { name: "拖动排序 一号账号" }), { key: " " });
     expect(mocks.dragKeyDown).toHaveBeenCalledOnce();
   });
 });
