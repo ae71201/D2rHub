@@ -1,8 +1,10 @@
 import { useId } from "react";
-import { AlertTriangle, Check, CheckCircle2, Download, Layers3, PackageOpen, PackagePlus, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, Layers3, PackageOpen, PackagePlus, RefreshCw } from "lucide-react";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
 import { ModProcessorStatus } from "./ModProcessorStatus";
+import { ModPageHeader } from "./ModPageHeader";
+import { ModFeatureChoice as FeatureChoice } from "./ModFeatureChoice";
 import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/model";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
@@ -41,6 +43,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
   const autoExitOnDeathSelected = analysis.selection.includeAutoExitOnDeath;
   const includeEscNextGame = analysis.selection.includeEscNextGame;
   const sourceMods = inspectionState?.installed_mods.filter(mod => mod.source_eligible) ?? [];
+  const rebuildSources = sourceMods.filter(mod => !mod.feature_groups.length && !mod.update_required && !mod.requires_unpack);
   const readyCapsules = workflow.readyCapsules;
   const catalogLoading = workflow.catalog.loading;
   const catalogError = workflow.catalog.error;
@@ -53,37 +56,30 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
   const selectNewMod = () => actions.changeRecipe({ kind: "create", source: null, name: "" });
   const setOutputName = (name: string) => { if (draft.recipe.kind === "create") actions.changeRecipe({ ...draft.recipe, name }); };
   return (
-    <div className="mod-processing-panel" data-processing-mode={operationKind}>
-      <header className="mod-processing-header">
-        <div>
-          <h2>{isEnglish ? "Mod Processing" : "Mod 加工"}</h2>
-          <p>
-            {isEnglish
-              ? "Augment a processed Mod in place, or create a new result from the original game or another Mod."
-              : "选择已加工 Mod 原位增补，或从原版游戏、已有 Mod 加工一个新结果。"}
-          </p>
-        </div>
-        <div className="mod-processing-header-actions">
-          <Button size="sm" variant="ghost" disabled={preparing} onClick={actions.back}>{backLabel}</Button>
+    <div className="mod-workspace mod-processing-panel" data-processing-mode={operationKind}>
+      <ModPageHeader title={isEnglish ? "Mod Processing" : "Mod 加工"}
+        description={isEnglish
+              ? "Add or update modules in an existing Mod, or process a new copy."
+              : "为现有 Mod 增补或更新模块，也可以加工新副本。"}>
+          <Button size="sm" variant="ghost" disabled={preparing} onClick={actions.back}><ArrowLeft size={13} aria-hidden="true" />{backLabel}</Button>
           <Button
             size="sm"
             variant="ghost"
             loading={inspecting}
             disabled={!trackingTarget.valid || preparing}
-            title={scannedLabel ? `上次扫描 ${scannedLabel}` : "重新扫描 Mod 目录"}
+            title={scannedLabel ? `${isEnglish ? "Last scan" : "上次扫描"} ${scannedLabel}` : (isEnglish ? "Rescan Mod directory" : "重新扫描 Mod 目录")}
             onClick={() => void actions.refresh()}
           >
             <RefreshCw size={13} />
             {isEnglish ? "Rescan" : "重新扫描"}
           </Button>
-        </div>
-      </header>
+      </ModPageHeader>
 
       <div className="mod-processing-processor"><ModProcessorStatus edition={draft.edition} en={isEnglish}
-        onReady={actions.setProcessorReady} onManage={actions.openResources} /></div>
-      {workflow.error && <p className="mod-catalog-error" style={{ gridColumn: "1 / -1" }} role="alert">{workflow.error}</p>}
-      {inspection.error && <p className="mod-catalog-error" style={{ gridColumn: "1 / -1" }} role="alert">{inspection.error}</p>}
-      <section className="spatial-panel mod-processing-section mod-processing-target">
+        onReady={actions.setProcessorReady} /></div>
+      {workflow.error && <p className="mod-catalog-error" role="alert">{workflow.error}</p>}
+      {inspection.error && <p className="mod-catalog-error" role="alert">{inspection.error}</p>}
+      <section className="mod-processing-section mod-processing-target">
         <div className="mod-processing-section-heading">
           <div>
             <h3>{isEnglish ? "Target account" : "加工目标"}</h3>
@@ -91,67 +87,84 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             <p>{isEnglish ? "The selected account receives the generated launch arguments." : "加工完成后会自动写入这个账号的启动参数。"}</p>
           </div>
         </div>
-        <select
-          className="settings-input mod-processing-account-select"
-          aria-label={isEnglish ? "Target account" : "加工目标账号"}
-          value={trackingTarget.valid ? trackingTarget.account.id : ""}
-          disabled={initializedAccounts.length === 0 || preparing}
-          onChange={(event) => void actions.chooseTarget(event.target.value)}
-        >
-          <option value="" disabled>{initializedAccounts.length ? "请选择账号" : "暂无已初始化账号"}</option>
-          {initializedAccounts.map((account) => (
-            <option key={account.id} value={account.id}>{account.display_name || account.id}</option>
-          ))}
-        </select>
-        <div className="mod-capsule-pool-summary">
-          <div>
-            <Layers3 size={14} aria-hidden="true" />
-            <span>
-              <strong>{isEnglish ? "Processing options" : "选择加工方式"}</strong>
-              <small>{catalogLoading
-                ? (isEnglish ? "Scanning installed Mods…" : "正在扫描已安装 Mod…")
-                : catalogError
-                  ? (isEnglish ? "Processed Mods are temporarily unavailable" : "暂时无法读取已加工 Mod")
-                  : isEnglish
-                    ? `${readyCapsules.length} processed Mods can be augmented, or you can process a new Mod`
-                    : `${readyCapsules.length} 个已加工 Mod 可继续增补，也可以加工新 Mod`}</small>
-            </span>
+        <div className="mod-section-body">
+          <select
+            className="settings-input mod-processing-account-select"
+            aria-label={isEnglish ? "Target account" : "加工目标账号"}
+            value={trackingTarget.valid ? trackingTarget.account.id : ""}
+            disabled={initializedAccounts.length === 0 || preparing}
+            onChange={(event) => void actions.chooseTarget(event.target.value)}
+          >
+            <option value="" disabled>{initializedAccounts.length ? (isEnglish ? "Select an account" : "请选择账号") : (isEnglish ? "No initialized accounts" : "暂无已初始化账号")}</option>
+            {initializedAccounts.map((account) => (
+              <option key={account.id} value={account.id}>{account.display_name || account.id}</option>
+            ))}
+          </select>
+          <div className="mod-processing-rebuild">
+            {draft.recipe.kind === "augment" && <label className="mod-processing-rebuild-toggle"><input type="checkbox" checked={!!draft.recipe.rebuild || !!analysis.selected?.update_required}
+              disabled={preparing || !!analysis.selected?.update_required}
+              onChange={event => { if (draft.recipe.kind === "augment") actions.changeRecipe({ ...draft.recipe, rebuild: event.target.checked }); }} />
+              {isEnglish ? "Rebuild from original source and replace the same name" : "从原始源 Mod 重做并替换同名成品"}</label>}
+            {draft.recipe.kind === "augment" && analysis.updating && <label className="mod-processing-rebuild-source">
+              {isEnglish ? "Original source for rebuild" : "重做所用的原始源 Mod"}
+              <select className="settings-input" disabled={preparing} value={draft.recipe.sourceOverride ?? analysis.selected?.source_mod_name ?? ""}
+                onChange={event => { if (draft.recipe.kind === "augment") actions.changeRecipe({ ...draft.recipe, sourceOverride: event.target.value || undefined }); }}>
+                <option value="">{isEnglish ? "Saved original / vanilla recipe" : "使用旧清单记录的来源／原版配方"}</option>
+                {analysis.selected?.source_mod_name && !rebuildSources.some(mod => mod.name === analysis.selected?.source_mod_name) && <option value={analysis.selected.source_mod_name}>{analysis.selected.source_mod_name} — {isEnglish ? "missing" : "缺失，请重新指定"}</option>}
+                {rebuildSources.map(mod => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
+              </select>
+            </label>}
           </div>
-          {!catalogLoading && (
-            <div className="mod-capsule-pool-list">
-              <button
-                type="button"
-                className="mod-processing-new-capsule"
-                aria-pressed={operationKind === "create"}
-                title={isEnglish ? "Create a separate processed Mod" : "加工并生成一个新的独立 Mod"}
-                disabled={preparing}
-                onClick={selectNewMod}
-              >
-                <PackagePlus size={14} aria-hidden="true" />
-                <b>{isEnglish ? "Process a new Mod" : "加工新 Mod"}</b>
-                <span>{isEnglish ? "Choose its source below" : "在下方选择来源"}</span>
-              </button>
-              {readyCapsules.map((capsule) => (
+          <div className="mod-capsule-pool-summary">
+            <div>
+              <Layers3 size={14} aria-hidden="true" />
+              <span>
+                <strong>{isEnglish ? "Processing options" : "选择加工方式"}</strong>
+                <small>{catalogLoading
+                  ? (isEnglish ? "Scanning installed Mods…" : "正在扫描已安装 Mod…")
+                  : catalogError
+                    ? (isEnglish ? "Processed Mods are temporarily unavailable" : "暂时无法读取已加工 Mod")
+                    : isEnglish
+                      ? `${readyCapsules.length} processed Mods can be augmented, or you can process a new Mod`
+                      : `${readyCapsules.length} 个已加工 Mod 可继续增补，也可以加工新 Mod`}</small>
+              </span>
+            </div>
+            {!catalogLoading && (
+              <div className="mod-capsule-pool-list">
                 <button
                   type="button"
-                  key={capsule.id}
-                  aria-pressed={operationKind === "augment"
-                    && targetModName.toLocaleLowerCase() === capsule.name.toLocaleLowerCase()}
-                  title={`${capsule.edition} · ${capsuleFeatureLabels(capsule, isEnglish, minimalMode).join(isEnglish ? ", " : "、")}`}
+                  className="mod-processing-new-capsule"
+                  aria-pressed={operationKind === "create"}
+                  title={isEnglish ? "Create a separate processed Mod" : "加工并生成一个新的独立 Mod"}
                   disabled={preparing}
-                  onClick={() => selectProcessedMod(capsule.name)}
+                  onClick={selectNewMod}
                 >
-                  <b>{capsule.name}</b>
-                  <span className="mod-capsule-pool-features">
-                    <em data-kind="base">{capsuleBaseModLabel(capsule, isEnglish)}</em>
-                    {capsuleFeatureLabels(capsule, isEnglish, minimalMode).length
-                      ? capsuleFeatureLabels(capsule, isEnglish, minimalMode).map((label) => <em data-kind="feature" key={label}>{label}</em>)
-                      : !minimalMode && <em data-kind="pending">{isEnglish ? "Update required" : "待更新"}</em>}
-                  </span>
+                  <PackagePlus size={14} aria-hidden="true" />
+                  <b>{isEnglish ? "Process a new Mod" : "加工新 Mod"}</b>
+                  <span>{isEnglish ? "Choose its source below" : "在下方选择来源"}</span>
                 </button>
-              ))}
-            </div>
-          )}
+                {readyCapsules.map((capsule) => (
+                  <button
+                    type="button"
+                    key={capsule.id}
+                    aria-pressed={operationKind === "augment"
+                      && targetModName.toLocaleLowerCase() === capsule.name.toLocaleLowerCase()}
+                    title={`${capsule.edition} · ${capsuleFeatureLabels(capsule, isEnglish, minimalMode).join(isEnglish ? ", " : "、")}`}
+                    disabled={preparing}
+                    onClick={() => selectProcessedMod(capsule.name)}
+                  >
+                    <b>{capsule.name}</b>
+                    <span className="mod-capsule-pool-features">
+                      <em data-kind="base">{capsuleBaseModLabel(capsule, isEnglish)}</em>
+                      {capsuleFeatureLabels(capsule, isEnglish, minimalMode).length
+                        ? capsuleFeatureLabels(capsule, isEnglish, minimalMode).map((label) => <em data-kind="feature" key={label}>{label}</em>)
+                        : !minimalMode && <em data-kind="pending">{isEnglish ? "Update required" : "待更新"}</em>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -171,55 +184,57 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
       ) : (
         <>
           {operationKind === "create" && (
-            <section className="spatial-panel mod-processing-section mod-processing-source">
+            <section className="mod-processing-section mod-processing-source">
               <div className="mod-processing-section-heading">
                 <div>
                   <h3>{isEnglish ? "Choose the source Mod" : "选择源 Mod"}</h3>
                   <p>{isEnglish ? "An existing Mod stays unchanged; D2RHub builds a separate verified result." : "原 Mod 不会被修改；D2RHub 会生成并校验一个独立结果。"}</p>
                 </div>
               </div>
-              <div className="mod-processing-source-options" role="radiogroup" aria-label="Mod 来源">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={sourceMode === "original"}
-                  className={`audio-mod-choice ${sourceMode === "original" ? "is-selected" : ""}`}
-                  disabled={preparing}
-                  onClick={() => actions.changeRecipe({ kind: "create", source: null, name: outputName })}
-                >
-                  <strong>{isEnglish ? "Original game" : "原版游戏"}</strong>
-                  <span>{isEnglish ? "Start with D2RHub modules only" : "只生成本次所选模块"}</span>
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={sourceMode === "existing"}
-                  className={`audio-mod-choice ${sourceMode === "existing" ? "is-selected" : ""}`}
-                  disabled={preparing || sourceMods.length === 0}
-                  onClick={() => selectSourceMod("")}
-                >
-                  <strong>{isEnglish ? "Existing Mod" : "已有 Mod"}</strong>
-                  <span>{isEnglish ? "Keep every detected feature" : "继承并锁定已有功能"}</span>
-                </button>
-              </div>
-              {sourceMode === "existing" && (
-                <label className="mod-processing-source-select">
-                  <span>{isEnglish ? "Source Mod" : "源 Mod"}</span>
-                  <select
-                    className="settings-input"
-                    value={sourceName}
+              <div className="mod-section-body">
+                <div className="mod-processing-source-options" role="radiogroup" aria-label={isEnglish ? "Mod source" : "Mod 来源"}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={sourceMode === "original"}
+                    className="mod-source-choice"
                     disabled={preparing}
-                    onChange={(event) => selectSourceMod(event.target.value)}
+                    onClick={() => actions.changeRecipe({ kind: "create", source: null, name: outputName })}
                   >
-                    <option value="" disabled>{isEnglish ? "Select a Mod" : "请选择 Mod"}</option>
-                    {sourceMods.map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
-                  </select>
-                </label>
-              )}
+                    <strong>{isEnglish ? "Original game" : "原版游戏"}</strong>
+                    <span>{isEnglish ? "Start with D2RHub modules only" : "只生成本次所选模块"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={sourceMode === "existing"}
+                    className="mod-source-choice"
+                    disabled={preparing || sourceMods.length === 0}
+                    onClick={() => selectSourceMod("")}
+                  >
+                    <strong>{isEnglish ? "Existing Mod" : "已有 Mod"}</strong>
+                    <span>{isEnglish ? "Keep every detected feature" : "继承并锁定已有功能"}</span>
+                  </button>
+                </div>
+                {sourceMode === "existing" && (
+                  <label className="mod-processing-source-select">
+                    <span>{isEnglish ? "Source Mod" : "源 Mod"}</span>
+                    <select
+                      className="settings-input"
+                      value={sourceName}
+                      disabled={preparing}
+                      onChange={(event) => selectSourceMod(event.target.value)}
+                    >
+                      <option value="" disabled>{isEnglish ? "Select a Mod" : "请选择 Mod"}</option>
+                      {sourceMods.map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
+                    </select>
+                  </label>
+                )}
+              </div>
             </section>
           )}
 
-          <section className="spatial-panel mod-processing-section mod-processing-capabilities">
+          <section className="mod-processing-section mod-processing-capabilities">
             <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Feature modules" : "功能模块"}</h3>
@@ -282,118 +297,88 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             </div>
           </section>
 
-          <section className="spatial-panel mod-processing-section mod-processing-output">
-              <div className="mod-processing-section-heading">
+          <section className="mod-processing-section mod-processing-output">
+            <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Output" : "输出与应用"}</h3>
-                <p>{operationKind === "augment"
+                <p>{analysis.updating
+                  ? (isEnglish ? "Rebuild from the original source and saved modules, then replace the same name after verification and apply it to the account." : "从原始来源与已保存模块重新生成，校验后替换同名成品并应用到账号。")
+                  : operationKind === "augment"
                   ? (isEnglish ? "The selected Mod is augmented in place after verification, then applied to the target account." : "校验成功后原位增补所选 Mod，再应用到目标账号。")
                   : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "为加工结果命名，然后一次完成生成、校验与应用。")}</p>
               </div>
             </div>
-            {operationKind === "augment" ? (
-              <div className="mod-processing-existing-output">
-                <CheckCircle2 size={15} />
-                <span>{targetModName}</span>
+            <div className="mod-section-body">
+              {operationKind === "augment" ? (
+                <div className="mod-processing-existing-output">
+                  <CheckCircle2 size={15} />
+                  <span>{targetModName}</span>
+                </div>
+              ) : (
+                <label className="mod-processing-name" htmlFor="processed-mod-name">
+                  <span>{isEnglish ? "New Mod name" : "新 Mod 名称"}</span>
+                  <input
+                    id="processed-mod-name"
+                    className="settings-input"
+                    value={outputName}
+                    maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
+                    disabled={preparing}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    aria-invalid={!!outputNameError}
+                    placeholder="MyD2RHubMod"
+                    onChange={(event) => setOutputName(event.target.value)}
+                  />
+                  {showNameError && <small>{outputNameError}</small>}
+                </label>
+              )}
+              {preparing && prepareProgress && (
+                <div className="mod-processing-progress" aria-live="polite">
+                  <div><span>{prepareProgress.message}</span><strong>{Math.round(prepareProgress.percent)}%</strong></div>
+                  <ProgressBar value={prepareProgress.percent} label={isEnglish ? "Mod processing progress" : "Mod 加工进度"} />
+                </div>
+              )}
+              {!!blockedReason && !preparing && (
+                <p id={blockedReasonId} className="mod-processing-blocked" role="status">
+                  <AlertTriangle size={13} />
+                  {blockedReason}
+                </p>
+              )}
+              <div className="mod-processing-actions">
+                {preparing && <Button variant="ghost" size="md"
+                  disabled={workflow.preparationTask.currentTask?.state !== "running" || workflow.preparationTask.cancelling || workflow.preparationTask.currentTask?.cancel_requested}
+                  onClick={() => void workflow.preparationTask.cancel()}>
+                  {workflow.preparationTask.cancelling || workflow.preparationTask.currentTask?.cancel_requested
+                    ? (isEnglish ? "Cancelling…" : "正在取消…") : (isEnglish ? "Cancel processing" : "取消加工")}
+                </Button>}
+                <Button
+                  variant="primary"
+                  size="md"
+                  loading={preparing}
+                  disabled={preparing || (!workflow.prepared && (!workflow.processorReady || !!blockedReason))}
+                  aria-describedby={blockedReason && workflow.processorReady && !workflow.prepared ? blockedReasonId : undefined}
+                  onClick={() => void actions.prepare()}
+                >
+                  <PackageOpen size={14} />
+                  {preparing
+                    ? (isEnglish ? "Processing…" : "正在加工…")
+                    : workflow.prepared ? (isEnglish ? "Retry application" : "重试应用")
+                    : workflow.processorReady === null ? (isEnglish ? "Checking processor…" : "正在读取加工器…")
+                    : !workflow.processorReady ? (isEnglish ? "Repair Hub installation" : "请修复 Hub 安装")
+                    : isAddingFeatures
+                      ? (isEnglish ? "Add selected modules" : "增补所选模块")
+                      : isAugment
+                        ? (isEnglish ? "Verify and update" : "校验并更新")
+                        : (isEnglish ? "Process and apply" : "开始加工并应用")}
+                </Button>
               </div>
-            ) : (
-              <label className="mod-processing-name" htmlFor="processed-mod-name">
-                <span>{isEnglish ? "New Mod name" : "新 Mod 名称"}</span>
-                <input
-                  id="processed-mod-name"
-                  className="settings-input"
-                  value={outputName}
-                  maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
-                  disabled={preparing}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  aria-invalid={!!outputNameError}
-                  placeholder="MyD2RHubMod"
-                  onChange={(event) => setOutputName(event.target.value)}
-                />
-                {showNameError && <small>{outputNameError}</small>}
-              </label>
-            )}
-            {preparing && prepareProgress && (
-              <div className="mod-processing-progress" aria-live="polite">
-                <div><span>{prepareProgress.message}</span><strong>{Math.round(prepareProgress.percent)}%</strong></div>
-                <ProgressBar value={prepareProgress.percent} label={isEnglish ? "Mod processing progress" : "Mod 加工进度"} />
-              </div>
-            )}
-            {!!blockedReason && !preparing && (
-              <p id={blockedReasonId} className="mod-processing-blocked" role="status">
-                <AlertTriangle size={13} />
-                {blockedReason}
-              </p>
-            )}
-            <div className="mod-processing-actions">
-              {preparing && <Button variant="ghost" size="md"
-                disabled={workflow.preparationTask.currentTask?.state !== "running" || workflow.preparationTask.cancelling || workflow.preparationTask.currentTask?.cancel_requested}
-                onClick={() => void workflow.preparationTask.cancel()}>
-                {workflow.preparationTask.cancelling || workflow.preparationTask.currentTask?.cancel_requested
-                  ? (isEnglish ? "Cancelling…" : "正在取消…") : (isEnglish ? "Cancel processing" : "取消加工")}
-              </Button>}
-              <Button
-                variant="primary"
-                size="md"
-                loading={preparing}
-                disabled={preparing || (!workflow.prepared && (workflow.processorReady === null || (workflow.processorReady && !!blockedReason)))}
-                aria-describedby={blockedReason && workflow.processorReady && !workflow.prepared ? blockedReasonId : undefined}
-                onClick={() => { if (workflow.processorReady || workflow.prepared) void actions.prepare(); else actions.openResources(); }}
-              >
-                {workflow.processorReady || workflow.prepared ? <PackageOpen size={14} /> : <Download size={14} />}
-                {preparing
-                  ? (isEnglish ? "Processing…" : "正在加工…")
-                  : workflow.prepared ? (isEnglish ? "Retry application" : "重试应用")
-                  : workflow.processorReady === null ? (isEnglish ? "Checking processor…" : "正在读取加工器…")
-                  : !workflow.processorReady ? (isEnglish ? "Download processor" : "下载加工器")
-                  : isAddingFeatures
-                    ? (isEnglish ? "Add selected modules" : "增补所选模块")
-                    : isAugment
-                      ? (isEnglish ? "Verify and update" : "校验并更新")
-                      : (isEnglish ? "Process and apply" : "开始加工并应用")}
-              </Button>
+              {workflow.preparationTask.cancelError && <p className="mod-catalog-error" role="alert">{workflow.preparationTask.cancelError}</p>}
+              {workflow.notice && <p className="text-xs text-text-muted" role="status">{workflow.notice}</p>}
             </div>
-            {workflow.preparationTask.cancelError && <p className="mod-catalog-error" role="alert">{workflow.preparationTask.cancelError}</p>}
-            {workflow.notice && <p className="text-xs text-text-muted" role="status">{workflow.notice}</p>}
           </section>
         </>
       )}
     </div>
-  );
-}
-
-function FeatureChoice({
-  title,
-  detail,
-  checked,
-  locked,
-  lockLabel,
-  disabled,
-  onChange,
-}: {
-  title: string;
-  detail: string;
-  checked: boolean;
-  locked: boolean;
-  lockLabel: string;
-  disabled: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="audio-mod-choice mod-processing-feature" data-locked={locked ? "true" : undefined}>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled || locked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span>
-        <strong>{title}</strong>
-        <small>{detail}</small>
-      </span>
-      {locked && <em><Check size={11} />{lockLabel}</em>}
-    </label>
   );
 }

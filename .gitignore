@@ -36,3 +36,7 @@ src-tauri/permissions/*
 /dev/previews/settings-unified.html
 /docs/design/quiet-workbench.md
 /docs/design/implementation-review.md
+
+src-tauri/processor/
+/.processor-source/
+/dev/review-*/*.log

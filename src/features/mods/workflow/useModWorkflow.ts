@@ -7,6 +7,7 @@ import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
 import { selectedCapsuleForAccount } from "../../modCapsules/model";
 import { audioModFeatureInvokeOptions, type AudioModPrepareProgress, type AudioModPrepareResult } from "../featureContract";
 import { describeModDraft, initialModFeatures } from "./model";
+import { useBatchProcessing } from "./useBatchProcessing";
 import { useModInspection } from "./useModInspection";
 import { useModPreparationTask } from "./useModPreparationTask";
 import type { ModAppliedResult, ModEdition, ModProcessingDraft, ModProcessingRequest, ModRecipe, ModWorkflowOrigin } from "./types";
@@ -27,7 +28,7 @@ interface PreparedReceipt { key: string; modName: string; applied?: AudioModSetu
 export function useModWorkflow(options: Options) {
   const latest = useRef(options);
   latest.current = options;
-  const [view, setView] = useState<"library" | "processing" | "resources">("library");
+  const [view, setView] = useState<"library" | "processing" | "batch">("library");
   const [libraryEdition, setLibraryEdition] = useState<ModEdition>("CN");
   const [openAdd, setOpenAdd] = useState(false);
   const [draft, setDraft] = useState<ModProcessingDraft | null>(null);
@@ -52,6 +53,7 @@ export function useModWorkflow(options: Options) {
   const observedTask = useRef(preparationTask.currentTask);
   observedTask.current = preparationTask.currentTask;
   const en = options.language === "en-US";
+  const batch = useBatchProcessing(options.accounts, options.catalog, operation, en);
   const analysis = draft ? describeModDraft(draft, inspection.state, en) : null;
   const prepared = !!draft && receipt?.key === JSON.stringify(draft);
   const blockedReason = prepared ? "" : inspection.error
@@ -145,7 +147,6 @@ export function useModWorkflow(options: Options) {
   const back = useCallback(() => {
     if (operation.current) return;
     setAutoStart(false);
-    if (view === "resources") { setView("processing"); return; }
     const origin = draftRef.current?.origin ?? "library";
     if (JSON.stringify(draftRef.current) === initialDraft.current && !receiptRef.current && !progress && !error && !notice) discardDraft();
     if (origin === "library") setView("library");
@@ -190,8 +191,8 @@ export function useModWorkflow(options: Options) {
         const features = audioModFeatureInvokeOptions(currentAnalysis.selection);
         if (current.recipe.kind === "augment") {
           const upgraded = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
-            accountId: current.accountId, modName: current.recipe.modName,
-            sourceModName: currentAnalysis.selected?.source_mod_name
+            accountId: current.accountId, modName: current.recipe.modName, forceRebuild: current.recipe.rebuild ?? false,
+            sourceModName: current.recipe.sourceOverride ?? currentAnalysis.selected?.source_mod_name
               ?? (inspection.state?.current_mod_name?.toLocaleLowerCase() === current.recipe.modName.toLocaleLowerCase() ? inspection.state.source_mod_name : null),
             ...features,
           });
@@ -238,19 +239,19 @@ export function useModWorkflow(options: Options) {
   }, [options.open, options.active, view, autoStart, processorReady, blockedReason, busy]);
 
   return {
-    view, libraryEdition, openAdd, draft, inspection, analysis, blockedReason, busy, progress, error, notice, prepared, processorReady,
-    preparationTask,
+    view, libraryEdition, openAdd, draft, inspection, analysis, blockedReason, busy: busy || batch.busy, progress, error, notice, prepared, processorReady,
+    preparationTask, batch,
     en, minimalMode: !options.optionalFeaturesAvailable,
     accounts: options.accounts.filter(account => account.initialized),
     readyCapsules: options.catalog.pool?.capsules.filter(capsule => capsule.ready && capsule.processed && capsule.edition === draft?.edition) ?? [],
     catalog: options.catalog,
     actions: {
+      openBatch: (edition: ModEdition) => { if (!operation.current) { batch.open(edition); setView("batch"); } },
       requestProcessing, openLibrary, discardDraft, changeRecipe, changeFeatures, chooseTarget, prepare, back, setProcessorReady,
       setLibraryEdition, refresh: async () => {
         const [state] = await Promise.all([inspection.refresh(), latest.current.catalog.refresh()]);
         return state;
       },
-      openResources: () => { if (!operation.current) { setAutoStart(false); setProcessorReady(null); setView("resources"); } },
       resume: () => { if (draftRef.current) setView("processing"); },
     },
   };

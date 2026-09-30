@@ -125,9 +125,6 @@ export const DEFAULT_ROOM_FLOW_TIMING: Required<RoomFlowStrategy> = {
   chord_hold_ms: 100,
   form_settle_ms: 300,
   physical_ctrl_settle_ms: 50,
-  follower_enter_delay_ms: 1000,
-  follower_enter_interval_ms: 1000,
-  follower_enter_repeat_count: 4,
 };
 
 export function roomAutomationConfigsEqual(
@@ -144,9 +141,7 @@ export function roomAutomationConfigsEqual(
       chord_hold_ms: config.flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
       form_settle_ms: config.flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
       physical_ctrl_settle_ms: config.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms,
-      follower_enter_delay_ms: config.flow.follower_enter_delay_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_delay_ms,
-      follower_enter_interval_ms: config.flow.follower_enter_interval_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_interval_ms,
-      follower_enter_repeat_count: config.flow.follower_enter_repeat_count ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_repeat_count },
+    },
   });
   return JSON.stringify(withDefaults(left)) === JSON.stringify(withDefaults(right));
 }
@@ -234,13 +229,8 @@ export function validateRoomAutomationConfig(
         chord_hold_ms: flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
         form_settle_ms: flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
         physical_ctrl_settle_ms: flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms,
-      follower_enter_delay_ms: flow.follower_enter_delay_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_delay_ms,
-      follower_enter_interval_ms: flow.follower_enter_interval_ms ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_interval_ms,
-      follower_enter_repeat_count: flow.follower_enter_repeat_count ?? DEFAULT_ROOM_FLOW_TIMING.follower_enter_repeat_count };
-      return !Number.isSafeInteger(timing.follower_enter_delay_ms) || timing.follower_enter_delay_ms < 0 || timing.follower_enter_delay_ms > 60000
-        || !Number.isSafeInteger(timing.follower_enter_interval_ms) || timing.follower_enter_interval_ms < 100 || timing.follower_enter_interval_ms > 60000
-        || !Number.isSafeInteger(timing.follower_enter_repeat_count) || timing.follower_enter_repeat_count < 0 || timing.follower_enter_repeat_count > 20
-        || !Number.isSafeInteger(timing.step_delay_ms)
+      };
+      return !Number.isSafeInteger(timing.step_delay_ms)
         || !Number.isSafeInteger(timing.character_delay_ms)
         || !Number.isSafeInteger(timing.key_hold_ms)
         || !Number.isSafeInteger(timing.chord_hold_ms)

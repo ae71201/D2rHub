@@ -1,13 +1,13 @@
 {
     "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
     "productName": "D2RHub",
-    "version": "0.9.111",
+    "version": "0.9.112",
     "identifier": "com.d2rhub.app",
     "build": {
         "frontendDist": "../dist",
         "devUrl": "http://localhost:1420",
-        "beforeDevCommand": "npm run dev",
-        "beforeBuildCommand": "npm run build",
+        "beforeDevCommand": "npm run build:processor && npm run dev",
+        "beforeBuildCommand": "npm run build:processor && npm run build",
         "beforeBundleCommand": "npm run check:guide"
     },
     "app": {
@@ -113,7 +113,8 @@
             "../docs/guide-images/accounts.png",
             "../docs/guide-images/modules.png",
             "../docs/guide-images/room-rules.png",
-            "../docs/guide-images/room-auto.png"
+            "../docs/guide-images/room-auto.png",
+            "processor/**/*"
         ],
         "windows": {
             "wix": {

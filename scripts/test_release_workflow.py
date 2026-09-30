@@ -260,6 +260,12 @@ class WorkflowTests(unittest.TestCase):
         workflow.write_json(repo / 'src-tauri/tauri.conf.json', {'version': '1.0.0'})
         (repo / 'src-tauri/Cargo.toml').write_text('[package]\nversion = "1.0.0"\n')
         (repo / 'src-tauri/Cargo.lock').write_text('# fixture lockfile\n')
+        processor = self.root / 'd2r-audio-mod'
+        processor.mkdir(exist_ok=True)
+        (processor / 'LICENSE').write_text('MIT')
+        (processor / 'crates/stormlib-sys/LICENSES').mkdir(parents=True, exist_ok=True)
+        (processor / 'crates/stormlib-sys/THIRD_PARTY_NOTICES.md').write_text('StormLib')
+        (processor / 'Cargo.toml').write_text('[package]\nversion = "1.4.0-beta.17"\n')
         return repo
 
     def mocked_snapshot(self, repo, destination, product, commit):
@@ -299,6 +305,11 @@ class WorkflowTests(unittest.TestCase):
     def test_software_snapshot_passes_every_gate_before_packaging_and_records_its_sha(self):
         folder, commands = self.prepare_mock_software()
         job = workflow.verify_job(folder)
+        self.assertEqual(set(job['verification']), {'hub', 'processor'})
+        bundled = folder / 'source-hub/src-tauri/processor/d2r-audio-mod.exe'
+        self.assertEqual(bundled.read_bytes(), b'verified build bytes')
+        self.assertEqual(workflow.read_json(folder / 'software.json')['assets'][0]['id'], 'hub')
+        commands = [call for call in commands if 'source-hub' in str(call.args[1])]
         self.assertEqual(job['schema'], 2)
         report = workflow.read_json(folder / job['verification']['hub'])
         self.assertEqual(report['source_commit'], job['sources']['hub_commit'])
@@ -322,7 +333,7 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(gate=name):
                 cfg = {'output_root': str(self.root / name)}
                 def fail(args, cwd=repo, env=None, capture=False):
-                    if list(args) == list(failed_command):
+                    if list(args) == list(failed_command) and "source-hub" in str(cwd):
                         raise subprocess.CalledProcessError(17, args)
                     return self.mocked_build_command(args, cwd, env, capture)
                 with patch.object(workflow, 'ROOT', repo), \

@@ -480,9 +480,7 @@ pub(crate) fn submit_prepared_follower(
     }
     validate_target(entry.hwnd)?;
     let hwnd = entry.hwnd;
-    let created = entry.created;
-    // Consume before initial delivery. Configured follow-up presses never reopen
-    // or refill a form, and stop on delivery failure or cancellation.
+    // Consume the prepared form before its single submission.
     cached.remove(&pid);
     drop(cached);
     deliver_key(
@@ -493,42 +491,7 @@ pub(crate) fn submit_prepared_follower(
         config.flow().key_hold_ms,
         0,
         cancel,
-    )?;
-    repeat_follower_enter(config.flow(), cancel, || {
-        if process_creation_time(pid) != Some(created)
-            || crate::infrastructure::system::find_game_hwnd(pid) != Some(hwnd)
-        {
-            return Err("小号进程或窗口已变化，停止补发回车".to_string());
-        }
-        validate_target(hwnd)?;
-        deliver_key(
-            hwnd,
-            VK_RETURN,
-            false,
-            BackgroundTextStrategy::from_value(&config.background_text_strategy),
-            config.flow().key_hold_ms,
-            0,
-            cancel,
-        )
-    })
-}
-
-fn repeat_follower_enter(
-    flow: &FlowStrategy,
-    cancel: &dyn CancellationCheck,
-    mut send: impl FnMut() -> Result<(), String>,
-) -> Result<(), String> {
-    let mut pause = Duration::from_millis(flow.follower_enter_delay_ms);
-    for _ in 0..flow.follower_enter_repeat_count {
-        wait(cancel, pause)?;
-        cancel.check()?;
-        let started = Instant::now();
-        send()?;
-        // Space key-downs by the configured interval, excluding key-hold time.
-        pause = Duration::from_millis(flow.follower_enter_interval_ms)
-            .saturating_sub(started.elapsed());
-    }
-    Ok(())
+    )
 }
 
 #[link(name = "kernel32")]
@@ -733,7 +696,7 @@ fn deliver_key_message(
                 usize::from(key),
                 lparam,
                 flags,
-                250,
+                1_000,
                 &mut result,
             )
         };
@@ -798,83 +761,6 @@ fn wait(cancel: &dyn CancellationCheck, duration: Duration) -> Result<(), String
 #[cfg(test)]
 mod timing_tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    #[derive(Default)]
-    struct FakeCancellation {
-        waits: std::sync::Mutex<Vec<Duration>>,
-        cancelled: AtomicBool,
-        cancel_at: usize,
-    }
-    impl CancellationCheck for FakeCancellation {
-        fn check(&self) -> Result<(), String> {
-            if self.cancelled.load(Ordering::SeqCst) {
-                Err("cancelled".into())
-            } else {
-                Ok(())
-            }
-        }
-        fn wait_cancelled(&self, duration: Duration) -> bool {
-            let mut waits = self.waits.lock().unwrap();
-            waits.push(duration);
-            if self.cancel_at != 0 && waits.len() == self.cancel_at {
-                self.cancelled.store(true, Ordering::SeqCst);
-            }
-            self.cancelled.load(Ordering::SeqCst)
-        }
-    }
-
-    #[test]
-    fn follower_enter_repeats_are_bounded_and_cancellable() {
-        let flow = FlowStrategy::standard();
-        let cancel = FakeCancellation::default();
-        let mut sent = 0;
-        repeat_follower_enter(&flow, &cancel, || {
-            sent += 1;
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(sent, 4);
-        let waits = cancel.waits.lock().unwrap();
-        assert_eq!(waits.len(), 4);
-        assert_eq!(waits[0], Duration::from_secs(1));
-        assert!(waits.iter().all(|delay| *delay <= Duration::from_secs(1)));
-        drop(waits);
-        let cancel = FakeCancellation {
-            cancel_at: 2,
-            ..Default::default()
-        };
-        let mut sent = 0;
-        assert!(repeat_follower_enter(&flow, &cancel, || {
-            sent += 1;
-            Ok(())
-        })
-        .is_err());
-        assert_eq!(sent, 1);
-        let disabled = FlowStrategy {
-            follower_enter_repeat_count: 0,
-            ..flow
-        };
-        let cancel = FakeCancellation::default();
-        repeat_follower_enter(&disabled, &cancel, || panic!("disabled")).unwrap();
-        assert!(cancel.waits.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn follower_enter_stops_after_delivery_failure() {
-        let cancel = FakeCancellation::default();
-        let mut attempts = 0;
-        assert!(
-            repeat_follower_enter(&FlowStrategy::standard(), &cancel, || {
-                attempts += 1;
-                Err("window changed".into())
-            })
-            .is_err()
-        );
-        assert_eq!(attempts, 1);
-        assert_eq!(cancel.waits.lock().unwrap().len(), 1);
-    }
-
     #[test]
     fn creating_reserves_initialization_time_without_shortening_user_delays() {
         assert_eq!(room_form_settle_ms(true, 0), 300);

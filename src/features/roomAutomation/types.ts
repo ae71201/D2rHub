@@ -9,10 +9,6 @@ export interface RoomFlowStrategy {
   form_settle_ms?: number;
   /** Ctrl lead time before A/V down; defaults to 50 ms. */
   physical_ctrl_settle_ms?: number;
-  follower_enter_delay_ms?: number;
-  follower_enter_interval_ms?: number;
-  /** Additional presses after initial submit; zero disables them. */
-  follower_enter_repeat_count?: number;
 }
 
 export type FollowerJoinMode = "simultaneous" | "interval";

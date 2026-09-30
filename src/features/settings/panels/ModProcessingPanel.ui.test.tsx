@@ -6,17 +6,31 @@ import { modState, workflowFixture } from "../../mods/workflow/testFixtures";
 import { initialModFeatures } from "../../mods/workflow/model";
 import type { TaskSnapshot } from "../../tasks/types";
 
-vi.mock("../../../platform/tauri", () => ({ invokeCommand: vi.fn(async () => ({ processor: { ready: true, update_available: false } })) }));
+vi.mock("../../../platform/tauri", () => ({ invokeCommand: vi.fn(async () => ({ ready: true })) }));
 afterEach(cleanup);
 
 describe("ModProcessingPanel", () => {
-  it("offers processor downloads even before the processing form is complete", async () => {
+  it("blocks rebuilding from a missing or processed original before execution", () => {
+    const original = { ...modState.installed_mods[0], name: "Original", feature_groups: [], update_required: false };
+    const target = { ...modState.installed_mods[0], source_mod_name: "Original", update_required: true };
+    const draft = { origin: "library" as const, recipe: { kind: "augment" as const, modName: target.name } };
+    const missing = workflowFixture({ draft, state: { ...modState, installed_mods: [target] } });
+    const { rerender } = render(<ModProcessingPanel workflow={missing} />);
+    expect(missing.blockedReason).toContain("原始源 Mod 不可用");
+    expect(screen.getByRole("button", { name: "校验并更新" }).hasAttribute("disabled")).toBe(true);
+    const processed = workflowFixture({ draft, state: { ...modState, installed_mods: [target, { ...original, feature_groups: ["esc_next_game"] }] } });
+    rerender(<ModProcessingPanel workflow={processed} />);
+    expect(processed.blockedReason).toContain("原始源 Mod 不可用");
+    const restored = workflowFixture({ draft, state: { ...modState, installed_mods: [target, original] } });
+    rerender(<ModProcessingPanel workflow={restored} />);
+    expect(restored.blockedReason).toBe("");
+  });
+  it("requires repair when the bundled processor is unavailable", async () => {
     const workflow = workflowFixture({ processorReady: false, draft: { recipe: { kind: "create", source: null, name: "" } } });
     render(<ModProcessingPanel workflow={workflow} />);
-    const button = screen.getByRole("button", { name: "下载加工器" });
-    expect(button.hasAttribute("disabled")).toBe(false);
+    const button = screen.getByRole("button", { name: "请修复 Hub 安装" });
+    expect(button.hasAttribute("disabled")).toBe(true);
     await userEvent.click(button);
-    expect(workflow.actions.openResources).toHaveBeenCalledTimes(1);
     expect(workflow.actions.prepare).not.toHaveBeenCalled();
   });
 
@@ -27,7 +41,6 @@ describe("ModProcessingPanel", () => {
     view.rerender(<ModProcessingPanel workflow={{ ...workflow, prepared: true }} />);
     await userEvent.click(screen.getByRole("button", { name: "重试应用" }));
     expect(workflow.actions.prepare).toHaveBeenCalledTimes(1);
-    expect(workflow.actions.openResources).not.toHaveBeenCalled();
   });
   it("offers scoped cancellation while processing and acknowledges a pending cancel request", async () => {
     const cancel = vi.fn(async () => {});

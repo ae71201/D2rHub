@@ -8,6 +8,31 @@ import unittest
 
 
 class CacheRepairTests(unittest.TestCase):
+    def repair_command(self, root, running=False):
+        # Mock only the process query in this disposable test subprocess.
+        # The production script keeps its real running-app protection.
+        script = str(Path(__file__).with_name('repair-update-cache.ps1')).replace("'", "''")
+        directory = str(root).replace("'", "''")
+        process = "[pscustomobject]@{ ProcessName = 'd2rhub' }" if running else '$null'
+        wrapper = root / 'invoke-repair.ps1'
+        wrapper.write_text(
+            'function Get-Process { [CmdletBinding()] param([string]$Name) '
+            f'if ($Name -ne \'d2rhub\') {{ throw \'Unexpected process query\' }}; {process} }}\n'
+            f"& '{script}' -CacheDirectory '{directory}'\n", encoding='utf-8-sig')
+        return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-File', str(wrapper)]
+
+    def test_running_hub_blocks_repair_without_touching_cache(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            cache = root / 'software-v2.json'
+            cache.write_bytes(b'keep cache')
+            result = subprocess.run(self.repair_command(root, running=True), capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'Exit D2RHub completely', result.stderr)
+            self.assertEqual(cache.read_bytes(), b'keep cache')
+            self.assertEqual(list(root.glob('*.bak')), [])
+
     def test_repair_is_narrow_reversible_and_idempotent(self):
         known = {'schema': 2, 'kind': 'software', 'product': 'D2RHub',
                  'platform': 'windows-x86_64', 'assets': [{
@@ -27,9 +52,7 @@ class CacheRepairTests(unittest.TestCase):
                     cache.write_bytes(original)
                 protected = root / 'resources-v2.json'
                 protected.write_bytes(b'keep resources')
-                command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                           '-File', str(Path(__file__).with_name('repair-update-cache.ps1')),
-                           '-CacheDirectory', folder]
+                command = self.repair_command(root)
                 result = subprocess.run(command, capture_output=True)
                 self.assertEqual(result.returncode == 0, case not in ('other-hash', 'malformed'), result.stderr)
                 backups = list(root.glob('*.bak'))

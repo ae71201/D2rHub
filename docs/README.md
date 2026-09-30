@@ -16,8 +16,7 @@
 - [发布指南](release-workflow.md)：唯一维护者入口，负责准备、发布与补传。
 - [双源更新协议](dual-source-updates.md)：清单、兼容、下载与事务边界。
 - [资源分发](mod-resource-distribution.md)：软件、加工器和 Mod 的归属。
-- [加工器配套互认](processor-pairing.md)：阻止不兼容加工与配套发布要求。
-- [小号补发回车](room-follower-enter.md)：默认时序、范围和取消行为。
+- [加工器内置与模块协议](processor-pairing.md)：安装资源校验、模块兼容和重做要求。
 - [音频遥测 v7](AUDIO_TELEMETRY_V7.md)：Hub 端当前解码协议。
 - [轻量 Mod](lightweight-mod-generation.md)、[桌宠衣柜](PET_WARDROBE.md)：领域专项说明。
 
@@ -27,6 +26,7 @@
 - [登录就绪研究](research/d2r-token-readiness.md)与[实机验证计划](research/loader-readiness-test-plan.md)。
 - [重构验收记录](REFACTOR_ACCEPTANCE.md)、[性能基线](release-performance-baseline.json)。
 - [本轮审查与实施](review-2026-09-28.md)。
+- [2026-09-30 审查记录](review-20260930.md)与[跟房超时分析](room-timeout-analysis-20260930.md)。
 
 以下是有日期或阶段边界的历史证据，不能代替当前实现与验证：
 

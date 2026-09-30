@@ -50,12 +50,12 @@ async fn require_capabilities(processor: &Path) -> Result<(), String> {
     if output.exit_code == Some(0) && supported {
         Ok(())
     } else {
-        Err("当前加工器不支持 MPQ 解压，请在“下载与更新”中更新加工器后重试".into())
+        Err("当前加工器不支持 MPQ 解压，请更新或修复 D2RHub 安装后重试".into())
     }
 }
 
 async fn resolve_processor(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let processor = crate::mod_resources::resolve_processor(app).await?;
+    let processor = crate::bundled_processor::resolve_processor(app).await?;
     require_capabilities(&processor).await?;
     Ok(processor)
 }
@@ -68,7 +68,7 @@ async fn invoke_cli(
     cancelled: &(dyn Fn() -> bool + Sync),
     progress: &mut (dyn FnMut(&str, u8) + Send),
 ) -> Result<Value, String> {
-    let mut command = crate::processor_pairing::command(processor);
+    let mut command = managed_process::command(processor);
     let operation = if recovery {
         "recover_mpq"
     } else {

@@ -12,7 +12,7 @@ beforeEach(() => vi.mocked(invokeCommand).mockReset());
 afterEach(cleanup);
 
 describe("Mod library processor navigation", () => {
-  it("opens downloads for the selected edition and returns without assigning or starting a recipe", async () => {
+  it("opens processing directly without a download or pairing request", async () => {
     vi.mocked(invokeCommand).mockResolvedValue({ catalog: { assets: [] }, processor: { ready: false } } as never);
     const catalog = testCatalog({ ...modPool, capsules: [{
       id: "plain", edition: "Global", name: "Plain", origin: "scanned", source_eligible: true,
@@ -23,12 +23,8 @@ describe("Mod library processor navigation", () => {
     render(<ModWorkspace workflow={workflow} />);
     await userEvent.click(screen.getByRole("button", { name: "设置 Plain" }));
     await userEvent.click(screen.getByRole("button", { name: "加工功能" }));
-    await screen.findByRole("heading", { name: "Mod 下载与更新" });
-    expect(invokeCommand).toHaveBeenCalledWith("get_mod_resources", { edition: "Global", refresh: false });
-    expect(workflow.actions.requestProcessing).not.toHaveBeenCalled();
-    expect(workflow.actions.prepare).not.toHaveBeenCalled();
+    expect(invokeCommand).not.toHaveBeenCalled();
+    expect(workflow.actions.requestProcessing).toHaveBeenCalledWith({ origin: "library", edition: "Global", source: { name: "Plain", processed: false } });
     expect(catalog.assign).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "返回" }));
-    expect(screen.getByRole("article", { name: "Plain" })).toBeTruthy();
   });
 });

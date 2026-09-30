@@ -566,14 +566,14 @@ function installIpcMock() {
       case "download_software_update":
         return { version: appVersion, available: true, downloaded: true };
       case "check_mod_resource_updates":
-        return ["加工器 1.4.0-beta.17", "国服 LiteHub"];
+        return ["国服 LiteHub"];
+      case "get_bundled_processor_status":
+        return { ready: true, blocking_reason: null };
       case "get_mod_resources":
         return {
           catalog: { release_url: "https://github.com/gjy991229/D2rHub/releases", assets: [
-            { id: "processor", version: "1.4.0-beta.17", size: 3098624, url: "https://github.com/gjy991229/D2rHub/releases", game_data_version: null },
             ...["LiteHub", "BoHub", "NullHub"].map((id) => ({ id, version: "mod-resources-20260927.1", size: 24000000, url: "https://github.com/gjy991229/D2rHub/releases", game_data_version: "93854" })),
           ] },
-          processor: { ready: params.get("processor") === "current", update_available: false, installed_version: params.get("processor") === "current" ? "1.4.0-beta.17" : "1.3.3", recommended_version: "1.4.0-beta.17", installed_path: "C:\\Program Files\\D2RHub\\d2r-audio-mod.exe", install_directory: "C:\\Users\\Player\\AppData\\Local\\com.d2rhub.app\\tools\\d2r-audio-mod", legacy: params.get("processor") !== "current" },
           preferred_source: "gitee", mods: [{id:"LiteHub",installed_version:"mod-resources-20260920.1",update_available:true,protected:false,message:"发现 Mod 更新；关闭游戏后可原位更新"}],
           mods_directory: "C:\\Diablo II Resurrected\\mods", game_data_version: "93854", warning: null,
         };
@@ -848,9 +848,9 @@ function AuditRuntime() {
           return;
         }
         if (surface === "mod-resources") {
-          const { ModDownloadsPage } = await import("./features/settings/panels/ModResourceLibrary");
+          const { ModResourceLibrary } = await import("./features/settings/panels/ModResourceLibrary");
           const { AppShell } = await import("./components/layout/AppShell");
-          if (!cancelled) setContent(<AppShell><div className="visual-downloads-preview"><ModDownloadsPage onBack={() => {}} onEditionChange={() => {}} edition="CN" en={requestedLanguage === "en-US"} /></div></AppShell>);
+          if (!cancelled) setContent(<AppShell><div className="visual-downloads-preview"><ModResourceLibrary edition="CN" en={requestedLanguage === "en-US"} /></div></AppShell>);
           return;
         }
 

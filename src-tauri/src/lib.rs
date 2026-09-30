@@ -2,6 +2,7 @@ mod application;
 mod audio_mod;
 mod auxiliary_windows;
 mod battle_net_config;
+mod bundled_processor;
 mod capabilities;
 mod commands;
 mod domain;
@@ -21,7 +22,6 @@ mod mod_catalog;
 mod mod_resources;
 mod mod_waypoints;
 mod mpq_mod;
-mod processor_pairing;
 mod resource_install;
 mod rune_audio;
 mod rune_data;
@@ -314,7 +314,7 @@ pub fn run() {
             audio_mod::get_audio_mod_setup_state,
             mod_resources::get_mod_resources,
             mod_resources::install_mod_resource,
-            mod_resources::open_mod_processor_directory,
+            bundled_processor::get_bundled_processor_status,
             mod_resources::check_mod_resource_updates,
             software_update::check_software_update,
             software_update::download_software_update,

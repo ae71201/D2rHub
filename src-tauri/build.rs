@@ -109,7 +109,7 @@ const APP_COMMANDS: &[&str] = &[
     "download_software_update",
     "launch_downloaded_update",
     "install_mod_resource",
-    "open_mod_processor_directory",
+    "get_bundled_processor_status",
     "scan_mod_capsule_pool",
     "unpack_mod_capsule",
     "open_mods_directory",

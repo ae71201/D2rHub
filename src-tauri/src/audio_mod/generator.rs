@@ -16,6 +16,7 @@ pub(super) struct GeneratorInvocation<'a> {
     pub(super) source_directory: Option<&'a Path>,
     pub(super) requested_features: RequestedFeatureGroups,
     pub(super) progress_ceiling: u8,
+    pub(super) audio_options: Option<&'a super::rebuild::AudioOptions>,
 }
 
 pub(super) fn emit_prepare_progress(
@@ -55,12 +56,15 @@ pub(super) async fn run_audio_mod_generator(
         source_directory,
         requested_features,
         progress_ceiling,
+        audio_options,
     } = invocation;
     let command_name = if source_directory.is_some() {
         "augment"
     } else {
         "minimal"
     };
+    let default_options = super::rebuild::AudioOptions::default();
+    let options = audio_options.unwrap_or(&default_options);
     let mut arguments = vec![
         command_name.to_string(),
         "--game".to_string(),
@@ -70,9 +74,11 @@ pub(super) async fn run_audio_mod_generator(
         "--name".to_string(),
         mod_name.to_string(),
         "--areas".to_string(),
-        "all".to_string(),
+        options.areas.clone(),
         "--track".to_string(),
-        "all".to_string(),
+        options.track.clone(),
+        "--gain".to_string(),
+        options.gain.to_string(),
         "--features".to_string(),
         requested_features.generator_value().to_string(),
     ];
@@ -82,7 +88,7 @@ pub(super) async fn run_audio_mod_generator(
     }
     arguments.push("--events".to_string());
 
-    let mut command = crate::processor_pairing::command(processor);
+    let mut command = managed_process::command(processor);
     command.args(arguments);
     let mut report: Option<GeneratorReport> = None;
     let mut reported_error = String::new();

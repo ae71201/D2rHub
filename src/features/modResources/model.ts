@@ -7,7 +7,7 @@ export function resourceTaskAsset(task: TaskSnapshot): string | undefined {
 
 export function resourceTaskMatches(task: TaskSnapshot, edition: string): boolean {
   return task.kind === "mod-resource-install"
-    && (task.subject?.startsWith(`${edition}:`) === true || resourceTaskAsset(task) === "processor");
+    && task.subject?.startsWith(`${edition}:`) === true;
 }
 
 /** Latest result per resource survives leaving and reopening its page. */
@@ -28,8 +28,7 @@ export function resourceDownloadUrl(asset: ModResourceAsset, source?: string): s
 }
 
 export function resourceInstallLocation(asset: ModResourceAsset, state: ModResourceState): string {
-  return asset.id === "processor" ? state.processor.install_directory
-    : state.mods_directory ? `${state.mods_directory}\\${asset.id}` : "";
+  return state.mods_directory ? `${state.mods_directory}\\${asset.id}` : "";
 }
 
 const REASON_COPY: Record<string, readonly [string, string]> = {

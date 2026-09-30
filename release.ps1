@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('software', 'processor', 'mods', 'all')][string]$Target,
+    [ValidateSet('software', 'mods', 'all')][string]$Target,
     [switch]$Publish,
     [switch]$Promote,
     [string]$Resume,

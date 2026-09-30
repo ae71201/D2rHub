@@ -318,11 +318,18 @@ pub(in crate::audio_mod) fn validate_esc_next_game_layouts(
     let directory = mod_directory
         .join(format!("{mod_name}.mpq"))
         .join(ROOM_TOOL_LAYOUT_DIRECTORY);
-    if recipe_version >= 3 {
+    if recipe_version == 3 {
         let hud = read_room_tool_layout(&directory, "HudWarningshd.json")?;
         if layout_field_value_count(&hud, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm") != 0
         {
             return Err("HUD 仍包含会取消双击 Esc 的旧清理动作，请重新加工".to_string());
+        }
+    }
+    if recipe_version >= 4 {
+        let hud = read_room_tool_layout(&directory, "HudWarningshd.json")?;
+        if layout_field_value_count(&hud, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm") != 0
+        {
+            return Err("双击 Esc 模块的 HUD 不应关闭 Esc 接收器，请重新加工".into());
         }
     }
     let arm = read_room_tool_layout(&directory, "D2RHubQuickRecreateEscArmhd.json")?;
@@ -638,6 +645,9 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
             ("D2RHubCommitCreateGamehd.json", "CreateGame:CreateGame"),
             ("D2RHubCommitJoinGamehd.json", "JoinGame:JoinGame"),
         ] {
+            if room_recipe_version >= 33 && native_message == "JoinGame:JoinGame" {
+                continue;
+            }
             // r32 restores same-deadline exit, submit and close in child order.
             // Keep r30/r31 contracts when inspecting upgrade sources.
             let (commit_delay, close_delay) = if room_recipe_version >= 32 {
@@ -981,7 +991,7 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
         }) {
             return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
-        if is_lobby_form {
+        if is_lobby_form || (room_recipe_version >= 33 && native_submit == "JoinGame:JoinGame") {
             if layout_field_value_count(&form, native_submit) == 0
                 || layout_field_value_count(&form, routed_submit) != 0
             {

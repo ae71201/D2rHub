@@ -37,8 +37,9 @@ export function workflowFixture({ draft: draftOverrides, state = modState, en = 
       refresh: vi.fn(async () => state), inspect: vi.fn(async () => state), accept: vi.fn() },
     analysis, blockedReason: analysis.blockedReason, busy: false, progress: null, error: null, notice: null,
     prepared: false, processorReady: true, en, minimalMode: false, accounts: [testAccount], readyCapsules: [], catalog: testCatalog(),
+    batch: {} as ModWorkflowController["batch"],
     preparationTask: { currentTask: null, cancel: vi.fn(async () => {}), cancelError: null, cancelling: false },
     actions: { requestProcessing: vi.fn(), openLibrary: vi.fn(), discardDraft: vi.fn(), changeRecipe: vi.fn(), changeFeatures: vi.fn(), chooseTarget: vi.fn(),
       prepare: vi.fn(async () => {}), back: vi.fn(), setProcessorReady: vi.fn(), setLibraryEdition: vi.fn(),
-      refresh: vi.fn(async () => state), openResources: vi.fn(), resume: vi.fn() }, ...overrides };
+      refresh: vi.fn(async () => state), openBatch: vi.fn(), resume: vi.fn() }, ...overrides };
 }

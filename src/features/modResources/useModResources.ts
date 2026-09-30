@@ -107,7 +107,7 @@ export function useModResources({ edition, onInstalled, onBusy }: Options) {
     const afterTaskId = tasks.reduce((latest, task) => Math.max(latest, task.task_id), 0);
     const current = () => mounted.current && context.current === edition;
     try {
-      const localFile = manual ? await modResourcesGateway.chooseFile(asset.id === "processor") : null;
+      const localFile = manual ? await modResourcesGateway.chooseFile() : null;
       if (manual && localFile === null) return;
       // Navigating while the file picker is open must not install into a stale edition.
       if (!current()) return;
@@ -141,7 +141,7 @@ export function useModResources({ edition, onInstalled, onBusy }: Options) {
     openExternal: (asset: ModResourceAsset) => action(asset.id, () =>
       modResourcesGateway.openExternal(resourceDownloadUrl(asset, data?.preferred_source))),
     openFolder: (asset: ModResourceAsset) => action(asset.id, () =>
-      modResourcesGateway.openFolder(edition, asset.id === "processor")),
+      modResourcesGateway.openFolder(edition)),
     cancel: (asset: ModResourceAsset, task: TaskSnapshot) => action(asset.id, () => taskGateway.cancel(task.task_id)),
   };
 }

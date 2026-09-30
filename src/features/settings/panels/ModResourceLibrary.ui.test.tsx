@@ -35,7 +35,7 @@ describe("Mod resources", () => {
       mods: [{ id: "LiteHub", installed_version: "private-release-id", update_available: false }] });
     render(<ModResourceLibrary edition="CN" en={false} />);
     await screen.findByText("LiteHub");
-    expect(screen.getAllByRole("article").map(card => card.getAttribute("aria-label"))).toEqual(["NullHub", "BoHub", "LiteHub", "Mod 加工器"]);
+    expect(screen.getAllByRole("article").map(card => card.getAttribute("aria-label"))).toEqual(["NullHub", "BoHub", "LiteHub"]);
     for (const [name, memory] of [["NullHub", 300], ["BoHub", 500], ["LiteHub", 800]] as const) {
       const card = screen.getByRole("article", { name });
       expect(within(card).getByText(`约 ${memory} MB`)).toBeTruthy();
@@ -108,32 +108,30 @@ describe("Mod resources", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
   it("keeps a current processor quiet in the processing view", async () => {
-    invoke.mockResolvedValue({ ...state(), processor: { ...state().processor, ready: true, update_available: false } });
+    invoke.mockResolvedValue({ ready: true });
     const ready = vi.fn();
-    const view = render(<ModProcessorStatus edition="CN" en={false} onReady={ready} onManage={vi.fn()} />);
+    const view = render(<ModProcessorStatus edition="CN" en={false} onReady={ready} />);
     await waitFor(() => expect(ready).toHaveBeenLastCalledWith(true));
     expect(view.container.textContent).toBe("");
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledWith("get_mod_resources", { edition: "CN", refresh: false });
+    expect(invoke).toHaveBeenCalledWith("get_bundled_processor_status");
   });
-  it("blocks processing while a required processor update is pending", async () => {
-    invoke.mockResolvedValue({ ...state(), processor: { ...state().processor, ready: true, update_available: true } });
+  it("blocks processing when the bundled processor is missing", async () => {
+    invoke.mockResolvedValue({ ready: false, blocking_reason: "内置 Mod 加工器缺失，请修复 D2RHub" });
     const ready = vi.fn();
-    render(<ModProcessorStatus edition="CN" en={false} onReady={ready} onManage={vi.fn()} />);
+    render(<ModProcessorStatus edition="CN" en={false} onReady={ready} />);
     await waitFor(() => expect(ready).toHaveBeenLastCalledWith(false));
-    expect(screen.getByText(/已禁止加工。当前加工器/)).toBeTruthy();
+    expect(screen.getByText(/内置 Mod 加工器缺失/)).toBeTruthy();
     expect(screen.queryByText(/仍可/)).toBeNull();
   });
-  it("shows the handshake failure and update direction", async () => {
-    const reason = "禁止加工：该加工器要求 D2RHub 0.9.111，请更新 D2RHub。";
-    invoke.mockResolvedValue({ ...state(), processor: { ...state().processor, ready: false, blocking_reason: reason } });
+  it("shows an installation failure without a download action", async () => {
+    const reason = "内置 Mod 加工器缺失，请修复 D2RHub。";
+    invoke.mockResolvedValue({ ready: false, blocking_reason: reason });
     const ready = vi.fn();
-    const manage = vi.fn();
-    render(<ModProcessorStatus edition="CN" en={false} onReady={ready} onManage={manage} />);
+    render(<ModProcessorStatus edition="CN" en={false} onReady={ready} />);
     expect(await screen.findByText(reason)).toBeTruthy();
     expect(ready).toHaveBeenLastCalledWith(false);
-    await userEvent.click(screen.getByRole("button", { name: "下载与更新" }));
-    expect(manage).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "下载与更新" })).toBeNull();
   });
   it("shows immediate feedback inside the clicked resource card before a task arrives", async () => {
     invoke.mockImplementation((cmd: string) => cmd === "get_mod_resources" ? Promise.resolve(state()) : new Promise(() => {}));
@@ -143,7 +141,7 @@ describe("Mod resources", () => {
     expect(within(card).getByText("正在准备…")).toBeTruthy();
     expect(within(card).getByRole("progressbar", { name: "LiteHub 进度" }).hasAttribute("aria-valuenow")).toBe(false);
     expect(within(card).getByRole("button", { name: "正在处理…" }).hasAttribute("disabled")).toBe(true);
-    expect(within(screen.getByRole("article", { name: "Mod 加工器" })).queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByRole("article", { name: "Mod 加工器" })).toBeNull();
   });
   it("reattaches running progress to its resource after returning to the page", async () => {
     subscribe.mockImplementation(async (_gateway, listener) => {
@@ -187,14 +185,11 @@ describe("Mod resources", () => {
     expect(onBusy).toHaveBeenLastCalledWith(false);
     expect(stop).toHaveBeenCalledTimes(1);
   });
-  it("shows a legacy processor version and installs the update in the managed location", async () => {
-    const user = userEvent.setup(); render(<ModResourceLibrary edition="Global" en={false} />);
-    await screen.findByText(/检测到旧版内置加工器/);
-    for (const summary of screen.getAllByText("手动下载")) await user.click(summary);
-    expect(screen.queryByText("C:\\User\\tools")).toBeNull();
-    expect(screen.queryByText("D:\\Game\\mods\\LiteHub")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "更新加工器" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("install_mod_resource", { edition: "Global", resourceId: "processor", localFile: null }));
+  it("ignores a legacy processor asset in an old cached resource response", async () => {
+    render(<ModResourceLibrary edition="Global" en={false} />);
+    await screen.findByText("LiteHub");
+    expect(screen.queryByRole("article", { name: "Mod 加工器" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "更新加工器" })).toBeNull();
   });
   it("blocks incompatible game packages without blocking processor installation", async () => {
     invoke.mockResolvedValue({ ...state(), game_data_version: "99999" });
@@ -202,7 +197,7 @@ describe("Mod resources", () => {
     await screen.findByText("LiteHub");
     const card = screen.getByText("LiteHub").closest("article")!;
     expect((within(card).getByRole("button", { name: "下载并安装" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "更新加工器" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "更新加工器" })).toBeNull();
   });
   it("restores a failed background installation after reopening the library", async () => {
     subscribe.mockImplementation(async (_gateway, listener) => {
@@ -245,10 +240,10 @@ describe("Mod resources", () => {
   it("does not install into a stale edition after the native file picker returns", async () => {
     let choose!: (path: string) => void;
     picker.mockImplementation(() => new Promise(resolve => { choose = resolve; }));
-    const view = render(<ModResourceLibrary edition="CN" en={false} processorOnly />);
+    const view = render(<ModResourceLibrary edition="CN" en={false} />);
     await userEvent.click(await screen.findByText("手动下载"));
     await userEvent.click(screen.getByRole("button", { name: "导入已下载文件" }));
-    view.rerender(<ModResourceLibrary edition="Global" en={false} processorOnly />);
+    view.rerender(<ModResourceLibrary edition="Global" en={false} />);
     await act(async () => choose("D:\\Downloads\\processor.exe"));
     expect(invoke.mock.calls.some(([command]) => command === "install_mod_resource")).toBe(false);
   });
@@ -260,11 +255,11 @@ describe("Mod resources", () => {
     expect(await within(card).findByText("安装完成，可通过“打开目录”查看文件。")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("账号刷新失败");
   });
-  it("imports a selected EXE through the same verified installer", async () => {
-    picker.mockResolvedValue("D:\\Downloads\\tool.exe");
-    const user = userEvent.setup(); render(<ModResourceLibrary edition="CN" en={false} processorOnly />);
+  it("imports a selected ZIP through the same verified installer", async () => {
+    picker.mockResolvedValue("D:\\Downloads\\LiteHub.zip");
+    const user = userEvent.setup(); render(<ModResourceLibrary edition="CN" en={false} />);
     await user.click(await screen.findByText("手动下载"));
     await user.click(screen.getByRole("button", { name: "导入已下载文件" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("install_mod_resource", { edition: "CN", resourceId: "processor", localFile: "D:\\Downloads\\tool.exe" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("install_mod_resource", { edition: "CN", resourceId: "LiteHub", localFile: "D:\\Downloads\\LiteHub.zip" }));
   });
 });

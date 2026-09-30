@@ -1,5 +1,4 @@
-//! Optional, versioned Release assets. No executable or Mod is bundled in Hub.
-use crate::infrastructure::managed_process;
+//! Optional, versioned Mod Release assets. The processor ships inside Hub.
 use crate::{
     application::task_runtime::{TaskHandle, TaskRequest},
     infrastructure::durable_fs,
@@ -13,11 +12,11 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
-    time::Duration,
 };
 use tauri::Manager;
 
-const CHANNEL: &str = "v7-r25-r28-lightweight-v1";
+const CHANNEL: &str = "hub-bundled-processor-v1";
+const LEGACY_CHANNEL: &str = "v7-r25-r28-lightweight-v1";
 const EMBEDDED: &str = include_str!("../../resources/mod-resources-v2.json");
 static CATALOG: Mutex<Option<Catalog>> = Mutex::new(None);
 
@@ -51,20 +50,8 @@ pub struct Catalog {
     assets: Vec<Asset>,
 }
 #[derive(Serialize)]
-pub struct ProcessorStatus {
-    pub ready: bool,
-    pub update_available: bool,
-    pub installed_version: Option<String>,
-    pub recommended_version: String,
-    pub installed_path: Option<String>,
-    pub install_directory: String,
-    pub legacy: bool,
-    pub blocking_reason: Option<String>,
-}
-#[derive(Serialize)]
 pub struct ResourceState {
     catalog: Catalog,
-    processor: ProcessorStatus,
     mods_directory: Option<String>,
     game_data_version: Option<String>,
     warning: Option<String>,
@@ -244,9 +231,7 @@ fn begin_install_task(
     destination: &Path,
     asset: &Asset,
 ) -> Result<TaskHandle, String> {
-    if asset.id != "processor" {
-        preflight_mod_install(destination, asset)?;
-    }
+    preflight_mod_install(destination, asset)?;
     state
         .tasks()
         .begin(
@@ -262,7 +247,6 @@ fn begin_install_task(
 fn mod_statuses(mods: &Path, c: &Catalog, verify_integrity: bool) -> Vec<ModResourceStatus> {
     c.assets
         .iter()
-        .filter(|a| a.id != "processor")
         .map(|asset| mod_status(&mods.join(&asset.id), asset, verify_integrity))
         .collect()
 }
@@ -272,8 +256,6 @@ fn validate_advance(current: &Catalog, next: &Catalog) -> Result<(), String> {
             if a.sequence < old.sequence
                 || (a.version != old.version && a.sequence <= old.sequence)
                 || (a.version == old.version && (a.sha256 != old.sha256 || a.size != old.size))
-                || (a.id == "processor"
-                    && crate::downloads::version_newer(&old.version, &a.version))
             {
                 return Err("资源清单试图降级或修改同版本文件，拒绝更新".into());
             }
@@ -281,9 +263,8 @@ fn validate_advance(current: &Catalog, next: &Catalog) -> Result<(), String> {
     }
     Ok(())
 }
-pub(crate) fn recover_updates(app: &tauri::AppHandle, state: &SharedState) -> Result<(), String> {
+pub(crate) fn recover_updates(_app: &tauri::AppHandle, state: &SharedState) -> Result<(), String> {
     let _mutation = state.mod_mutations().try_acquire()?;
-    crate::resource_install::recover(&tools_root(app)?)?;
     if let Some(c) = state.configuration().snapshot() {
         for path in [&c.cn_game_path, &c.global_game_path] {
             if !path.trim().is_empty() {
@@ -311,7 +292,7 @@ fn validate_catalog(c: &Catalog) -> Result<(), String> {
             && (c.kind != "resources"
                 || !crate::downloads::compatible(&c.hub_min, &c.hub_max_exclusive)))
         || c.channel != CHANNEL
-        || c.assets.len() != 4
+        || c.assets.len() != 3
         || !c
             .release_url
             .starts_with("https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-")
@@ -322,7 +303,6 @@ fn validate_catalog(c: &Catalog) -> Result<(), String> {
     for a in &c.assets {
         crate::downloads::validate_payload(&a.payload())?;
         let expected = match a.id.as_str() {
-            "processor" => None,
             "LiteHub" => Some("main"),
             "BoHub" => Some("filler"),
             "NullHub" => Some("min"),
@@ -350,6 +330,43 @@ fn validate_catalog(c: &Catalog) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Existing published indices still contain the retired processor asset. Only
+/// the three Mod entries are carried into the bundled-processor catalog.
+fn normalize_online_catalog(mut catalog: Catalog) -> Result<Catalog, String> {
+    if catalog.channel == LEGACY_CHANNEL {
+        // Only the known pairing-only restriction is waived during migration.
+        // A future or malformed range must not become compatible by rewriting it.
+        let known_pairing_range = catalog.hub_min == "0.9.111"
+            && catalog.hub_max_exclusive == "0.9.112"
+            && env!("CARGO_PKG_VERSION") == "0.9.112";
+        if !known_pairing_range
+            && !crate::downloads::compatible(&catalog.hub_min, &catalog.hub_max_exclusive)
+        {
+            return Err("旧版 Mod 资源清单与当前 Hub 不兼容".into());
+        }
+        if catalog.schema != 2
+            || catalog.kind != "resources"
+            || catalog.assets.len() != 4
+            || catalog
+                .assets
+                .iter()
+                .filter(|a| a.id == "processor")
+                .count()
+                != 1
+        {
+            return Err("旧版 Mod 资源清单结构无效".into());
+        }
+        catalog.assets.retain(|asset| asset.id != "processor");
+        catalog.channel = CHANNEL.to_string();
+        catalog.hub_min = env!("CARGO_PKG_VERSION").to_string();
+        let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(err)?;
+        catalog.hub_max_exclusive =
+            format!("{}.{}.{}", current.major, current.minor, current.patch + 1);
+    }
+    validate_catalog(&catalog)?;
+    Ok(catalog)
+}
 fn catalog() -> Result<Catalog, String> {
     if let Some(c) = CATALOG.lock().map_err(err)?.clone() {
         return Ok(c);
@@ -357,24 +374,6 @@ fn catalog() -> Result<Catalog, String> {
     let c = serde_json::from_str(EMBEDDED).map_err(err)?;
     validate_catalog(&c)?;
     Ok(c)
-}
-fn processor_asset(c: &Catalog) -> &Asset {
-    c.assets
-        .iter()
-        .find(|a| a.id == "processor")
-        .expect("validated catalog")
-}
-fn tools_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_local_data_dir()
-        .map_err(err)?
-        .join("tools")
-        .join("d2r-audio-mod"))
-}
-fn processor_path(root: &Path, a: &Asset) -> PathBuf {
-    root.join(format!("{}-{}", a.version, &a.sha256[..12]))
-        .join("d2r-audio-mod.exe")
 }
 fn digest(path: &Path) -> Result<String, String> {
     let mut input = fs::File::open(path).map_err(err)?;
@@ -395,101 +394,6 @@ fn verify_file(path: &Path, a: &Asset) -> Result<(), String> {
         return Err("文件大小或 SHA-256 校验失败，请重新下载".into());
     }
     Ok(())
-}
-pub(crate) async fn resolve_processor(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let c = catalog()?;
-    let a = processor_asset(&c);
-    let path = processor_path(&tools_root(app)?, a);
-    if verify_file(&path, a).is_ok() {
-        crate::processor_pairing::verify(&path, &a.version).await?;
-        return Ok(path);
-    }
-    Err(format!(
-        "禁止加工：D2RHub {} 所需的配套加工器 {} 未安装或文件校验失败。请先在“下载与更新”安装或更新加工器。",
-        env!("CARGO_PKG_VERSION"), a.version
-    ))
-}
-async fn probe_version(_app: &tauri::AppHandle, path: &Path) -> Option<String> {
-    let mut command = managed_process::command(path);
-    command.arg("--version");
-    let mut version = None;
-    let output = managed_process::run(
-        &mut command,
-        Some(Duration::from_secs(5)),
-        || false,
-        |bytes| {
-            let line = String::from_utf8_lossy(bytes);
-            let mut words = line.split_whitespace();
-            if words.next() == Some("d2r-audio-mod") {
-                version = words
-                    .next()
-                    .filter(|value| safe_token(value))
-                    .map(str::to_owned);
-            }
-            Ok(())
-        },
-    )
-    .await
-    .ok()?;
-    (output.exit_code == Some(0)).then_some(version).flatten()
-}
-async fn processor_status(app: &tauri::AppHandle, c: &Catalog) -> Result<ProcessorStatus, String> {
-    let root = tools_root(app)?;
-    let a = processor_asset(c);
-    let path = processor_path(&root, a);
-    let verified = verify_file(&path, a).is_ok();
-    let pairing_error = if verified {
-        crate::processor_pairing::verify(&path, &a.version)
-            .await
-            .err()
-    } else {
-        Some(format!("禁止加工：当前 D2RHub {} 需要配套加工器 {}。请在“下载与更新”安装或更新；互认成功后才能加工。", env!("CARGO_PKG_VERSION"), a.version))
-    };
-    let ready = verified && pairing_error.is_none();
-    let mut status = ProcessorStatus {
-        ready,
-        update_available: !ready,
-        installed_version: verified.then(|| a.version.clone()),
-        recommended_version: a.version.clone(),
-        installed_path: verified.then(|| path.to_string_lossy().into_owned()),
-        install_directory: root.to_string_lossy().into_owned(),
-        legacy: false,
-        blocking_reason: pairing_error,
-    };
-    if verified {
-        return Ok(status);
-    }
-    // Check the previous managed version and the historical bundled location.
-    let mut candidates = Vec::new();
-    if let Ok(bytes) = fs::read(root.join("installed.json")) {
-        if let Ok(old) = serde_json::from_slice::<Catalog>(&bytes) {
-            if validate_catalog(&old).is_ok() {
-                let asset = processor_asset(&old);
-                let path = processor_path(&root, asset);
-                if verify_file(&path, asset).is_ok() {
-                    candidates.push((path, false));
-                }
-            }
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            candidates.push((parent.join("d2r-audio-mod.exe"), true));
-        }
-    }
-    if let Ok(dir) = app.path().resource_dir() {
-        candidates.push((dir.join("d2r-audio-mod.exe"), true));
-    }
-    for (path, legacy) in candidates {
-        if path.is_file() {
-            status.installed_version = probe_version(app, &path).await;
-            status.installed_path = Some(path.to_string_lossy().into_owned());
-            status.legacy = legacy;
-            status.blocking_reason = Some(format!("禁止加工：当前 D2RHub {}，已安装加工器 {}；需要配套加工器 {}。请在“下载与更新”更新加工器，互认成功后再加工。", env!("CARGO_PKG_VERSION"), status.installed_version.as_deref().unwrap_or("未知"), a.version));
-            break;
-        }
-    }
-    Ok(status)
 }
 fn game_root(state: &SharedState, edition: &str) -> Result<PathBuf, String> {
     crate::lightweight_mod::game_path(state, edition)
@@ -529,15 +433,14 @@ async fn remote_catalog(
     current: &Catalog,
 ) -> Result<Catalog, String> {
     let value = crate::downloads::fetch_index(app, state, "resources", |v| {
-        let c: Catalog = serde_json::from_value(v.clone()).map_err(err)?;
+        let c = normalize_online_catalog(serde_json::from_value(v.clone()).map_err(err)?)?;
         if c.schema != 2 {
             return Err("请使用新版资源清单".into());
         }
-        validate_catalog(&c)?;
         validate_advance(current, &c)
     })
     .await?;
-    serde_json::from_value(value).map_err(err)
+    normalize_online_catalog(serde_json::from_value(value).map_err(err)?)
 }
 #[tauri::command]
 pub async fn get_mod_resources(
@@ -556,7 +459,11 @@ async fn read_mod_resources(
     refresh: bool,
     verify_integrity: bool,
 ) -> Result<ResourceState, String> {
-    let cache_path = tools_root(&app)?.join("catalog.json");
+    let cache_path = app
+        .path()
+        .app_local_data_dir()
+        .map_err(err)?
+        .join("mod-resources/catalog.json");
     let (mut c, _) = publish_catalog(&CATALOG, &cache_path, catalog()?, false)?;
     let mut warning = None;
     let mut checked_online = false;
@@ -619,7 +526,6 @@ async fn read_mod_resources(
         },
         checked_online,
         mods,
-        processor: processor_status(&app, &c).await?,
         catalog: c,
         mods_directory,
         game_data_version,
@@ -810,22 +716,14 @@ pub async fn install_mod_resource(
         .find(|a| a.id == resource_id)
         .ok_or("未知资源")?
         .clone();
-    let parent = if a.id == "processor" {
-        tools_root(&app)?
-    } else {
-        let game = game_root(&shared, &edition)?;
-        if Some(game_version(&game)?) != a.game_data_version {
-            return Err("成品与当前游戏数据版本不一致，请等待适配资源或使用独立生成器".into());
-        }
-        game.join("mods")
-    };
+    let game = game_root(&shared, &edition)?;
+    if Some(game_version(&game)?) != a.game_data_version {
+        return Err("成品与当前游戏数据版本不一致，请等待适配资源".into());
+    }
+    let parent = game.join("mods");
     reject_links(&parent)?;
     fs::create_dir_all(&parent).map_err(err)?;
-    let destination = if a.id == "processor" {
-        processor_path(&parent, &a).parent().unwrap().to_path_buf()
-    } else {
-        parent.join(&a.id)
-    };
+    let destination = parent.join(&a.id);
     crate::resource_install::recover(&parent)?;
     let target = destination.clone();
     let asset = a.clone();
@@ -850,15 +748,7 @@ pub async fn install_mod_resource(
         cancelled(&task)?;
         let _ = task.update(80, "verify", "下载完成，正在校验资源");
         let output = stage.join(&a.id);
-        if a.id == "processor" {
-            fs::create_dir(&output).map_err(err)?;
-            let executable = output.join("d2r-audio-mod.exe");
-            fs::rename(&payload, &executable).map_err(err)?;
-            if probe_version(&app, &executable).await.as_deref() != Some(&a.version) {
-                return Err("加工器实际版本与清单不一致".into());
-            }
-            crate::processor_pairing::verify(&executable, &a.version).await?;
-        } else {
+        {
             extract(&payload, &stage, &a.id, &task)?;
             let info =
                 crate::lightweight_mod::inspect(&output, &a.id)?.ok_or("缺少 Hub Mod 身份清单")?;
@@ -876,7 +766,7 @@ pub async fn install_mod_resource(
         cancelled(&task)?;
         reject_links(&parent)?;
         let new_tree = crate::resource_install::tree_hash(&output)?;
-        if a.id != "processor" && destination.exists() {
+        if destination.exists() {
             // Repeat after transfer: an external editor can modify files while
             // the download runs even though Hub owns the mutation lease.
             preflight_mod_install(&destination, &a)?;
@@ -910,9 +800,6 @@ pub async fn install_mod_resource(
         )?;
         cancelled(&task)?;
         crate::resource_install::replace(&parent, &output, &destination)?;
-        if a.id == "processor" {
-            let _ = save_catalog(&parent.join("installed.json"), &c);
-        }
         Ok(destination.clone())
     }
     .await;
@@ -939,12 +826,6 @@ pub async fn install_mod_resource(
     }
 }
 #[tauri::command]
-pub fn open_mod_processor_directory(app: tauri::AppHandle) -> Result<(), String> {
-    let root = tools_root(&app)?;
-    fs::create_dir_all(&root).map_err(err)?;
-    open::that(root).map_err(err)
-}
-#[tauri::command]
 pub async fn check_mod_resource_updates(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
@@ -957,12 +838,6 @@ pub async fn check_mod_resource_updates(
     }
     let global = read_mod_resources(app, state, "Global".into(), false, false).await?;
     let mut notices = Vec::new();
-    if cn.processor.update_available && cn.processor.installed_path.is_some() {
-        notices.push(format!(
-            "加工器 {}（必须配套更新，互认成功前禁止加工）",
-            cn.processor.recommended_version
-        ));
-    }
     for (edition, status) in [("国服", cn), ("国际服", global)] {
         for m in status.mods {
             if m.update_available
@@ -1233,7 +1108,7 @@ mod tests {
         let scratch = Scratch::new();
         let path = scratch.0.join("file");
         fs::write(&path, b"original").unwrap();
-        let mut a = processor_asset(&serde_json::from_str::<Catalog>(EMBEDDED).unwrap()).clone();
+        let mut a = serde_json::from_str::<Catalog>(EMBEDDED).unwrap().assets[0].clone();
         a.size = 8;
         a.sha256 = digest(&path).unwrap();
         verify_file(&path, &a).unwrap();
@@ -1253,6 +1128,34 @@ mod tests {
         runtime.request_cancel(task.task_id()).unwrap();
         assert!(extract(&zip, &scratch.0, "LiteHub", &task).is_err());
         assert!(!scratch.0.join("LiteHub").exists());
+    }
+    #[test]
+    fn online_legacy_catalog_keeps_mod_updates_without_restoring_processor_download() {
+        let current: Catalog = serde_json::from_str(EMBEDDED).unwrap();
+        let mut old = current.clone();
+        old.channel = LEGACY_CHANNEL.into();
+        old.hub_min = "0.9.111".into();
+        old.hub_max_exclusive = "0.9.112".into();
+        let mut retired = old.assets[0].clone();
+        retired.id = "processor".into();
+        retired.mod_name = None;
+        retired.profile = None;
+        retired.game_data_version = None;
+        old.assets.push(retired);
+        let migrated = normalize_online_catalog(old.clone()).unwrap();
+        assert_eq!(migrated.channel, CHANNEL);
+        assert_eq!(migrated.assets.len(), 3);
+        assert!(migrated.assets.iter().all(|asset| asset.id != "processor"));
+        validate_advance(&current, &migrated).unwrap();
+        let mut future = old.clone();
+        future.hub_min = "99.0.0".into();
+        future.hub_max_exclusive = "100.0.0".into();
+        assert!(normalize_online_catalog(future).is_err());
+        let mut malformed = old.clone();
+        malformed.hub_min = "not-a-version".into();
+        assert!(normalize_online_catalog(malformed).is_err());
+        old.assets.push(old.assets[3].clone());
+        assert!(normalize_online_catalog(old).is_err());
     }
     #[test]
     fn extraction_rejects_case_collisions_and_keeps_files_inside_stage() {
@@ -1284,9 +1187,6 @@ mod tests {
         for a in &catalog.assets {
             let file = assets.join(a.url.rsplit('/').next().unwrap());
             verify_file(&file, a).unwrap();
-            if a.id == "processor" {
-                continue;
-            }
             let runtime = TaskRuntime::new(4);
             let task = runtime
                 .begin(TaskRequest::new("mod-resource-install"))

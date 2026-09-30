@@ -137,7 +137,7 @@ export function useAutoUpdate(
           } else localStorage.removeItem("d2rhub-update-available-version");
         } else {
           const notices = await invokeCommand<string[]>("check_mod_resource_updates");
-          if (notices.length) showToast("info", `可更新：${notices.join("、")}。请在 Mod 管理 → 下载 Mod 与加工器中更新。`);
+          if (notices.length) showToast("info", `可更新：${notices.join("、")}。请在 Mod 管理 → 下载与更新中更新。`);
         }
         // A network failure must not suppress the next startup's check.
         localStorage.setItem(key, today);

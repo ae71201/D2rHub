@@ -113,13 +113,10 @@ describe("Mod workflow", () => {
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
-  it("preserves source selection and typed drafts across resources, library and inspection refreshes", async () => {
+  it("preserves source selection and typed drafts across library and inspection refreshes", async () => {
     const { result } = mount();
     await openDraft(result);
     const draft = result.current.draft;
-    act(() => result.current.actions.openResources());
-    expect(result.current.view).toBe("resources");
-    act(() => result.current.actions.back());
     expect(result.current.draft).toEqual(draft);
     await act(() => result.current.actions.refresh());
     expect(result.current.draft).toEqual(draft);

@@ -22,7 +22,7 @@ LOCAL = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'D2RHub-Publish
 DEFAULT_CONFIG = LOCAL / 'workflow.json'
 PROFILES = {'LiteHub': 'main', 'BoHub': 'filler', 'NullHub': 'min'}
 MARKERS = {'d2rhub-mod-manifest.json', 'audio-telemetry-manifest.json'}
-QUALITY_POLICY = 'release-quality-v1'
+QUALITY_POLICY = 'release-quality-v2-bundled'
 RUST_CHECKS = (
     ('rust-format', ('cargo', 'fmt', '--all', '--', '--check')),
     ('rust-lint', ('cargo', 'clippy', '--locked', '--all-targets', '--all-features', '--', '-D', 'warnings')),
@@ -31,7 +31,7 @@ RUST_CHECKS = (
 
 
 def quality_commands(product):
-    """Versioned policy; do not change v1 when adding a future release policy."""
+    """Versioned quality policy for Hub and its bundled processor."""
     if product == 'hub':
         return [
             ('frontend-dependencies', ('npm', 'ci'), '.'),
@@ -249,7 +249,7 @@ def package_mod(root, name, target):
     return data_version, hashes
 
 
-def build_software(destination):
+def build_software(destination, processor_repo=None):
     commit = source_commit(ROOT)
     source = source_snapshot(ROOT, destination, 'hub', commit)
     version = read_json(source / 'package.json')['version']
@@ -260,9 +260,19 @@ def build_software(destination):
                 lock['version'], lock['packages']['']['version']]
     if not re.fullmatch(r'\d+\.\d+\.\d+', version) or any(v != version for v in versions):
         raise RuntimeError('Hub 版本号必须为正式版本，并在 npm、Cargo、Tauri 配置中一致。')
+    processor, processor_commit = build_processor(processor_repo or ROOT.parent / 'd2r-audio-mod', destination)
+    bundled = source / 'src-tauri/processor/d2r-audio-mod.exe'
+    bundled.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(processor['file'], bundled)
+    processor_source = destination / 'source-processor'
+    shutil.copyfile(processor_source / 'LICENSE', bundled.parent / 'processor-LICENSE.txt')
+    shutil.copytree(processor_source / 'crates/stormlib-sys/LICENSES', bundled.parent / 'LICENSES')
+    shutil.copyfile(processor_source / 'crates/stormlib-sys/THIRD_PARTY_NOTICES.md', bundled.parent / 'THIRD_PARTY_NOTICES.md')
+    write_json(bundled.with_suffix('.json'), {'sha256': digest(bundled), 'source_commit': processor_commit})
     target = destination / 'build-hub'
     environment = os.environ.copy()
     environment['CARGO_TARGET_DIR'] = str(target)
+    environment['D2RHUB_PROCESSOR_PREBUILT'] = '1'
     verify_source_snapshot('hub', source, commit, destination, environment)
     # npm consumes the first separator; Tauri forwards the second to Cargo.
     run(['npm', 'run', 'build:nsis', '--', '--', '--locked'], source, env=environment)
@@ -301,9 +311,7 @@ def build_processor(repo, destination):
     shutil.copyfile(executable, path)
     if source_commit(repo) != commit:
         raise RuntimeError('构建过程中加工器源码发生变化，请重新准备。')
-    return {'id': 'processor', 'version': version, 'file': str(path),
-            'release_tag': 'processor-v' + version, 'mod_name': None,
-            'profile': None, 'game_data_version': None}, commit
+    return {'version': version, 'file': str(path)}, commit
 
 
 def processor_version_matches(output, version):
@@ -312,27 +320,26 @@ def processor_version_matches(output, version):
 
 
 def prepare(target, cfg):
+    if target not in ('software', 'mods', 'all'):
+        raise RuntimeError('加工器只随 Hub 安装包发布。')
     stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
     folder = Path(cfg['output_root']) / (stamp + '-' + uuid.uuid4().hex[:8])
     folder.mkdir(parents=True, exist_ok=False)
     print(f'准备目录：{folder}', flush=True)
     job = {'schema': 2, 'target': target, 'sources': {}, 'specs': [], 'files': {}, 'verification': {}}
     if target in ('software', 'all'):
-        spec, commit = build_software(folder)
+        spec, commit = build_software(folder, cfg.get('processor_repo'))
+        job['sources']['processor_commit'] = read_json(folder / 'verification-processor.json')['source_commit']
+        job['verification']['processor'] = 'verification-processor.json'
         job['sources']['hub_commit'] = commit
         job['verification']['hub'] = 'verification-hub.json'
         write_json(folder / 'software.json', spec)
         job['specs'].append('software.json')
-    if target in ('processor', 'mods', 'all'):
+    if target in ('mods', 'all'):
         catalog = read_json(ROOT / 'resources/mod-resources-v2.json')
         spec = {key: catalog[key] for key in ('kind', 'channel', 'hub_min', 'hub_max_exclusive', 'release_url')}
         spec['skip_unchanged'] = True
         spec['assets'] = []
-        if target in ('processor', 'all'):
-            asset, commit = build_processor(cfg['processor_repo'], folder)
-            spec['assets'].append(asset)
-            job['sources']['processor_commit'] = commit
-            job['verification']['processor'] = 'verification-processor.json'
         if target in ('mods', 'all'):
             tag = 'mod-resources-' + stamp
             for name, profile in PROFILES.items():
@@ -377,7 +384,7 @@ def verify_job(folder):
             if path.resolve().parent != folder or path.name not in job['files']:
                 raise RuntimeError('发布文件不在本次准备目录中。')
             if spec['kind'] == 'software':
-                required_verification.add('hub')
+                required_verification.update(('hub', 'processor'))
                 source = job.get('sources', {}).get('hub_commit', '')
                 if (not re.fullmatch(r'[0-9a-f]{40}', source)
                         or asset.get('source_commit', source) != source):
@@ -512,7 +519,7 @@ def main():
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description='D2RHub 一键准备、双端发布与失败补传（Python 3.10+）')
-    parser.add_argument('--target', choices=['software', 'processor', 'mods', 'all'])
+    parser.add_argument('--target', choices=['software', 'mods', 'all'])
     parser.add_argument('--publish', action='store_true', help='准备完成后上传；默认只准备')
     parser.add_argument('--promote', action='store_true', help='双端验证成功后同时提升软件正式版')
     parser.add_argument('--resume', type=Path, help='复用已有任务目录，禁止重建文件')
@@ -522,11 +529,11 @@ def main():
         parser.error('--target 与 --resume 不能同时使用')
     if args.promote and not args.publish:
         parser.error('--promote 需要 --publish')
-    if args.promote and args.target in ('mods', 'processor'):
+    if args.promote and args.target == 'mods':
         parser.error('--promote 只适用于 software、all 或包含软件的补传任务')
     cfg = configuration(args.config.resolve())
     if not args.target and not args.resume:
-        print('\nD2RHub 发布工作流\n1. Hub 软件\n2. Mod 加工器\n3. 三个Mod\n4. 全部\n5. 补传已有任务\n6. 修改本机路径配置\n0. 退出')
+        print('\nD2RHub 发布工作流\n1. Hub 软件（含加工器）\n3. 三个Mod\n4. 全部\n5. 补传已有任务\n6. 修改本机路径配置\n0. 退出')
         choice = input('选择：').strip()
         if choice == '0':
             return 0
@@ -542,7 +549,7 @@ def main():
             folder = Path(input('任务目录：').strip().strip('"')).resolve()
             describe(folder, verify_job(folder))
         else:
-            targets = {'1': 'software', '2': 'processor', '3': 'mods', '4': 'all'}
+            targets = {'1': 'software', '3': 'mods', '4': 'all'}
             if choice not in targets:
                 raise RuntimeError('无效选择。')
             folder = prepare(targets[choice], cfg)

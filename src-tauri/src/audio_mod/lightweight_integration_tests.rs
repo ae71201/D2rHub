@@ -4,6 +4,173 @@ use crate::domain::mod_processing::GeneratorReport;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
+#[test]
+#[ignore = "requires a BoHub source with empty sound references and original game resources"]
+fn silent_sound_references_can_be_processed_without_restoring_original_audio() {
+    let game = std::env::var("D2RHUB_LIGHTWEIGHT_GAME_ROOT").unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../artifacts")
+        .join(format!("silent-source-{}", uuid::Uuid::new_v4()));
+    let source = root.join("Silent");
+    let excel = source.join("Silent.mpq/data/global/excel");
+    std::fs::create_dir_all(&excel).unwrap();
+    let sounds =
+        std::fs::read(Path::new(&game).join("mods/BoHub/BoHub.mpq/data/global/excel/sounds.txt"))
+            .unwrap();
+    std::fs::write(excel.join("sounds.txt"), &sounds).unwrap();
+    std::fs::write(
+        source.join("Silent.mpq/modinfo.json"),
+        r#"{"name":"Silent","savepath":"Silent/"}"#,
+    )
+    .unwrap();
+    let value = invoke(
+        &[
+            "augment".into(),
+            "--game".into(),
+            game,
+            "--source".into(),
+            source.display().to_string(),
+            "--output".into(),
+            root.display().to_string(),
+            "--name".into(),
+            "SilentTagged".into(),
+            "--features".into(),
+            "audio".into(),
+            "--areas".into(),
+            "countess".into(),
+            "--track".into(),
+            "none".into(),
+            "--events".into(),
+        ],
+        &root.join("build.jsonl"),
+    )
+    .unwrap();
+    let report: GeneratorReport = serde_json::from_value(value).unwrap();
+    validate_generator_output(&root, "SilentTagged", &report, features(1), &[]).unwrap();
+    assert_eq!(std::fs::read(excel.join("sounds.txt")).unwrap(), sounds);
+    let output = std::fs::read_to_string(
+        root.join("SilentTagged/SilentTagged.mpq/data/global/excel/sounds.txt"),
+    )
+    .unwrap();
+    let mut lines = output.lines();
+    let columns: Vec<_> = lines.next().unwrap().split('\t').collect();
+    let filename = columns.iter().position(|&s| s == "FileName").unwrap();
+    for row in lines {
+        let cells: Vec<_> = row.split('\t').collect();
+        let file = cells.get(filename).unwrap_or(&"");
+        assert!(
+            file.is_empty() || file.starts_with("audio_telemetry\\"),
+            "Unexpected restored audio: {file}"
+        );
+    }
+    println!("Verified empty sound references: {}", root.display());
+}
+
+#[test]
+#[ignore = "requires original game resources and a built processor"]
+fn bundled_processor_clean_rebuild_and_native_join() {
+    let game = std::env::var("D2RHUB_LIGHTWEIGHT_GAME_ROOT").unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../artifacts")
+        .join(format!("clean-rebuild-{}", uuid::Uuid::new_v4()));
+    let base = root.join("Base");
+    let mpq = base.join("Base.mpq");
+    std::fs::create_dir_all(mpq.join("data/global")).unwrap();
+    std::fs::write(
+        mpq.join("modinfo.json"),
+        r#"{"name":"Base","savepath":"Base/"}"#,
+    )
+    .unwrap();
+    std::fs::write(mpq.join("data/global/dataversionbuild.txt"), "93854").unwrap();
+    std::fs::write(mpq.join("data/source-marker.txt"), "original").unwrap();
+    let before = snapshot(&base);
+    augment(
+        &game,
+        &root,
+        &base,
+        "Tools",
+        14,
+        &[],
+        &root.join("first.jsonl"),
+    )
+    .unwrap();
+    assert_eq!(snapshot(&base), before);
+    let old = root.join("Tools");
+    let layouts = old.join("Tools.mpq/data/global/ui/layouts");
+    let hud_path = layouts.join("HudWarningshd.json");
+    let hud_bytes = std::fs::read(&hud_path).unwrap();
+    let mut hud: serde_json::Value = serde_json::from_slice(&hud_bytes).unwrap();
+    assert!(!String::from_utf8_lossy(&hud_bytes)
+        .contains("PanelManager:ClosePanel:D2RHubQuickRecreateEscArm"));
+    hud["children"].as_array_mut().unwrap().push(serde_json::json!({
+        "type": "TimerWidget", "name": "D2RHubCloseEscArm",
+        "fields": {"time": 0.001, "message": "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm"}
+    }));
+    std::fs::write(&hud_path, serde_json::to_vec(&hud).unwrap()).unwrap();
+    assert!(validate_audio_mod(&root, "Tools").is_err());
+    std::fs::write(&hud_path, hud_bytes).unwrap();
+    let join = std::fs::read_to_string(layouts.join("D2RHubInGameJoinGamehd.json")).unwrap();
+    assert!(join.contains("JoinGame:JoinGame"));
+    assert!(!join.contains("D2RHubCommitJoinGame"));
+    assert!(!join.contains("PausePanelMessage:ExitGame"));
+    assert!(!layouts.join("D2RHubCommitJoinGamehd.json").exists());
+    set_auto_exit_on_death_enabled(&root, "Tools", false).unwrap();
+    std::fs::write(old.join("Tools.mpq/data/obsolete-generated.txt"), "stale").unwrap();
+    std::fs::write(mpq.join("data/source-marker.txt"), "updated source").unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(old.join("d2rhub-mod-manifest.json")).unwrap())
+            .unwrap();
+    for group in manifest["feature_groups"].as_array_mut().unwrap() {
+        if group["id"] == "in_game_room_tools" {
+            group["recipe_version"] = 32.into();
+            group["fingerprint"] = "room-tools-v32".into();
+        }
+    }
+    for name in ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"] {
+        std::fs::write(old.join(name), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    }
+    let (requested, _) = rebuild::recipe(&manifest, features(2)).unwrap();
+    assert!(
+        requested.room_tools
+            && requested.esc_next_game
+            && requested.auto_exit_on_death
+            && !requested.audio_telemetry
+    );
+    let transaction = uuid::Uuid::new_v4().simple().to_string();
+    let stage = root.join(format!(".d2rhub-upgrade-stage-{transaction}"));
+    std::fs::create_dir(&stage).unwrap();
+    augment(
+        &game,
+        &stage,
+        &base,
+        "Tools",
+        14,
+        &[],
+        &root.join("rebuild.jsonl"),
+    )
+    .unwrap();
+    set_auto_exit_on_death_enabled(&stage, "Tools", false).unwrap();
+    replace_audio_mod_directory(
+        &root,
+        "Tools",
+        &stage.join("Tools"),
+        &root.join(format!(".d2rhub-upgrade-backup-{transaction}")),
+        &[],
+    )
+    .unwrap();
+    assert!(!old.join("Tools.mpq/data/obsolete-generated.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(old.join("Tools.mpq/data/source-marker.txt")).unwrap(),
+        "updated source"
+    );
+    let validated = validate_audio_mod_credential(&root, "Tools").unwrap();
+    assert!(!validated.auto_exit_on_death_enabled);
+    requested
+        .validate_present(&validated.feature_groups, PROTOCOL_VERSION)
+        .unwrap();
+    println!("Verified clean rebuild and native join: {}", root.display());
+}
+
 fn features(mask: u8) -> RequestedFeatureGroups {
     RequestedFeatureGroups {
         audio_telemetry: mask & 1 != 0,

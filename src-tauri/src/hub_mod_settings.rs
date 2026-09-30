@@ -142,6 +142,28 @@ pub(crate) fn inherit(source: Option<&Path>, output: &Path, name: &str) -> Resul
     Ok(())
 }
 
+/// Reapply supported preferences to a freshly generated tree, without copying
+/// any old generated layouts or resources into it.
+pub(crate) fn inherit_preferences(source: &Path, output: &Path, name: &str) -> Result<(), String> {
+    inherit(Some(source), output, name)?;
+    if let Some(previous) = settings(source, name)? {
+        if let Some(next) = settings(output, name)? {
+            if previous.game_data_version != next.game_data_version {
+                save(output, name, &previous.game_data_version, &next.etag)?;
+            }
+        }
+        if previous.waypoints_supported {
+            if let (Some(old), Some(new)) = (
+                crate::mod_waypoints::read_config(source, name)?,
+                crate::mod_waypoints::read_config(output, name)?,
+            ) {
+                crate::mod_waypoints::save(output, name, &old.selected, &new.etag)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn mod_root(state: &SharedState, edition: &str, name: &str) -> Result<PathBuf, String> {
     let config = state.configuration().snapshot().ok_or("尚未配置游戏目录")?;
     let game = match edition {

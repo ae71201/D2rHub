@@ -25,15 +25,6 @@ const validConfig: RoomAutomationConfig = {
 };
 
 describe("room automation configuration validation", () => {
-  it("defaults legacy repeat timing, permits disabling repeats and rejects invalid bounds", () => {
-    const explicit = { ...validConfig, flow: { ...validConfig.flow,
-      follower_enter_delay_ms: 1000, follower_enter_interval_ms: 1000, follower_enter_repeat_count: 4 } };
-    expect(roomAutomationConfigsEqual(validConfig, explicit)).toBe(true);
-    expect(validateRoomAutomationConfig({ ...explicit, flow: { ...explicit.flow, follower_enter_repeat_count: 0 } }, ROOM_AUTOMATION_COPY["en-US"], ["one", "two"]).valid).toBe(true);
-    for (const patch of [{ follower_enter_repeat_count: 21 }, { follower_enter_interval_ms: 0 }, { follower_enter_delay_ms: -1 }]) {
-      expect(validateRoomAutomationConfig({ ...explicit, flow: { ...explicit.flow, ...patch } }, ROOM_AUTOMATION_COPY["en-US"], ["one", "two"]).fieldErrors.timing).toBeTruthy();
-    }
-  });
   it("allows an incomplete legacy draft to remain persisted while the module is disabled", () => {
     const result = validateRoomAutomationConfig({
       ...validConfig,

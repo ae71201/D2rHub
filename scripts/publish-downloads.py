@@ -66,10 +66,10 @@ def publish(spec, revision, output, config_path, previous=None):
     manifest = copy.deepcopy(previous or {})
     manifest.update({k:v for k,v in spec.items() if k not in ('assets', 'skip_unchanged')})
     manifest.update(schema=2, kind=kind, revision=revision)
-    manifest['assets'] = copy.deepcopy((previous or {}).get('assets', []))
+    manifest['assets'] = [a for a in copy.deepcopy((previous or {}).get('assets', [])) if a['id'] != 'processor']
     if previous and revision < previous['revision']: raise RuntimeError('Use a revision no lower than the current index')
     output.mkdir(parents=True,exist_ok=True)
-    expected = {'hub'} if kind == 'software' else {'processor','LiteHub','BoHub','NullHub'}
+    expected = {'hub'} if kind == 'software' else {'LiteHub','BoHub','NullHub'}
     if {a['id'] for a in manifest['assets']} | {a['id'] for a in spec['assets']} != expected:
         raise RuntimeError('An initial publication must contain the complete catalog')
     for definition in spec['assets']:

@@ -1,6 +1,6 @@
 # 资源与产物归属
 
-本目录保存分发协议需要的小型清单。Hub、加工器和 Mod 是三种独立版本的产物，准备与发布统一使用 [发布工作流](../docs/release-workflow.md)。
+本目录保存分发协议需要的小型清单。加工器随 Hub 安装包发布；Mod 成品独立下载，准备与发布统一使用 [发布工作流](../docs/release-workflow.md)。
 
 | 内容 | 来源与维护者 | Git / 打包边界 |
 | --- | --- | --- |
@@ -16,9 +16,9 @@
 | `dev/previews/` | 演示夹具与历史设计稿 | 跟踪；只在 Vite 开发时使用 |
 | `src-tauri/gen/schemas/` | Tauri 生成的 IPC / 权限描述 | 当前跟踪；随 API 改动核对，不手工维护 |
 | `dist/`、`target/`、`artifacts/` | 编译、打包与发布任务 | 忽略；不进入源码提交 |
-| 加工器 EXE、Mod ZIP、Hub 安装器 | 独立源码构建或已确认成品目录 | Release 附件；只在验证后对外提供 |
+| Mod ZIP、含加工器的 Hub 安装器 | 独立源码构建或已确认成品目录 | Release 附件；只在验证后对外提供 |
 
-素材授权见 [第三方声明](../THIRD_PARTY_NOTICES.md)。这份表记录出处，不替代上游许可证。独立加工器的源码、协议、许可与构建说明由 [d2r-audio-mod](https://github.com/gjy991229/d2r-audio-mod) 维护。
+素材授权见 [第三方声明](../THIRD_PARTY_NOTICES.md)。这份表记录出处，不替代上游许可证。加工器的源码、协议、许可与构建说明由 [d2r-audio-mod](https://github.com/gjy991229/d2r-audio-mod) 维护。
 
 安装器通过 `src-tauri/tauri.conf.json` 显式声明离线文档资源；`npm run check:guide` 验证路由、图片引用、当前版本和打包清单。新增图片时更新来源说明与打包声明；不要把整个 docs 或开发预览目录复制到安装器。
 

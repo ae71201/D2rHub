@@ -43,7 +43,7 @@ export const TAURI_COMMANDS = [
   "download_software_update",
   "launch_downloaded_update",
   "install_mod_resource",
-  "open_mod_processor_directory",
+  "get_bundled_processor_status",
   "get_capability_statuses",
   "get_capability_descriptors",
   "get_task",

@@ -18,7 +18,6 @@ interface Props {
 }
 
 export function ModResourceCard({ asset, state, controller, installed, en }: Props) {
-  const processor = asset.id === "processor";
   const local = state.mods?.find(mod => mod.id === asset.id);
   const task = controller.taskByAsset.get(asset.id);
   const active = controller.activeAsset === asset.id || task?.state === "running";
@@ -27,10 +26,9 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
     && task.task_id > feedback.installAfterTaskId;
   const profile = LIGHTWEIGHT_PROFILES.find(value => value.name === asset.id);
   const location = resourceInstallLocation(asset, state);
-  const incompatible = !processor && state.game_data_version !== asset.game_data_version;
-  const current = processor ? state.processor.ready && !state.processor.update_available && !state.processor.blocking_reason
-    : (local ? !!local.installed_version && !local.update_available : installed);
-  const blocked = controller.busy || current || local?.protected || incompatible || (!processor && !location);
+  const incompatible = state.game_data_version !== asset.game_data_version;
+  const current = local ? !!local.installed_version && !local.update_available : installed;
+  const blocked = controller.busy || current || local?.protected || incompatible || (!location);
   const status = resourceStatusMessage(local, en);
   const progress = useRef<HTMLDivElement | null>(null);
 
@@ -41,40 +39,28 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
   const actionLabel = active ? (en ? "Working…" : "正在处理…")
     : local?.protected ? (en ? "Preserved" : "保留现有 Mod")
       : current ? (en ? "Installed" : "已是当前版本")
-        : processor && state.processor.installed_path ? (en ? "Update processor" : "更新加工器")
           : local?.update_available ? (en ? "Verify & update" : "校验并原位更新")
             : (en ? "Download & install" : "下载并安装");
 
-  return <article className="resource-card" data-processor={processor || undefined} aria-label={processor ? (en ? "Mod processor" : "Mod 加工器") : asset.id} aria-busy={active}>
+  return <article className="resource-card" aria-label={asset.id} aria-busy={active}>
     <div className="resource-summary">
     <div className="resource-title">
-      <strong>{processor ? (en ? "Independent Mod processor" : "独立 Mod 加工器") : asset.id}</strong>
+      <strong>{asset.id}</strong>
       <span>{en ? "Download" : "下载"} {(asset.size / 1048576).toFixed(1)} MB</span>
     </div>
-    <p>{processor
-      ? (en ? "Adds selected features to your own Mods. Installed separately from Hub." : "为已有 Mod 添加所选功能，独立安装和更新。")
-      : (en ? profile?.enDetail : profile?.detail)}</p>
+    <p>{en ? profile?.enDetail : profile?.detail}</p>
     </div>
     <div className="resource-metadata">
-    {!processor && MEMORY_REFERENCE[asset.id] && <div className="resource-memory" title={en ? "Reference only; actual use varies with the scene and settings." : "仅供参考，实际占用随场景和设置变化。"}>
+    {MEMORY_REFERENCE[asset.id] && <div className="resource-memory" title={en ? "Reference only; actual use varies with the scene and settings." : "仅供参考，实际占用随场景和设置变化。"}>
       <MemoryStick size={13} aria-hidden="true" /><span>{en ? "Memory reference" : "内存参考"}</span>
       <strong>{en ? "~" : "约 "}{MEMORY_REFERENCE[asset.id]} MB</strong>
     </div>}
-    <small>{processor ? `${en ? "Required paired version" : "所需配套版本"} ${state.processor.recommended_version}`
-      : `${en ? "Game data" : "游戏数据版本"} ${asset.game_data_version}`}</small>
-    {processor && state.processor.installed_path && <p className="resource-note">
-      {state.processor.legacy ? (en ? "Legacy bundled processor found" : "检测到旧版内置加工器") : (en ? "Installed processor" : "已安装加工器")}
-      {` · ${state.processor.installed_version ?? (en ? "Unknown version" : "版本未知")}`}
-      {!state.processor.ready && (en ? ". Install the compatible version below before processing." : "。请安装兼容版本后再加工。")}
-    </p>}
+    <small>{`${en ? "Game data" : "游戏数据版本"} ${asset.game_data_version}`}</small>
     {status && <p className="resource-note">{status}</p>}
-    {processor && (!state.processor.ready || state.processor.update_available || state.processor.blocking_reason) && <p className="resource-note">
-      {state.processor.blocking_reason ?? (en ? "Processing is blocked until Hub and the required processor recognize each other. Install the paired processor; update Hub if requested." : "已禁止加工。请安装所需配套加工器；若提示 Hub 版本不匹配，请更新 D2RHub。双方互认成功后才能加工。")}
-    </p>}
     {incompatible && <p className="resource-note">{en
       ? `Current game: ${state.game_data_version ?? "not configured"}. This package requires ${asset.game_data_version}.`
       : `当前游戏版本：${state.game_data_version ?? "尚未配置或无法识别"}，此成品需要 ${asset.game_data_version}。`}</p>}
-    {!processor && !location && <p className="resource-note">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
+    {!location && <p className="resource-note">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
     </div>
     <div className="resource-actions">
       <Button size="sm" variant="primary" disabled={!!blocked} onClick={() => void controller.install(asset, false)}>

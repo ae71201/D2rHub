@@ -276,7 +276,7 @@ fn write_test_room_tool_layouts(mods_directory: &std::path::Path, mod_name: &str
                 "children": [
                     {"name": "NameInput", "fields": {
                         "imeEnabled": true,
-                        "onReturnInputMessage": "PanelManager:OpenPanel:D2RHubCommitJoinGame"
+                        "onReturnInputMessage": "JoinGame:JoinGame"
                     }},
                     {"name": "PasswordInput", "fields": {"imeEnabled": true}},
                     {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:D2RHubInGameJoinGame"}}
@@ -1062,10 +1062,7 @@ fn room_tools_validate_ordered_submission_and_legacy_timing() {
     let directory = root
         .join(name)
         .join(format!("{name}.mpq/data/global/ui/layouts"));
-    for file in [
-        "D2RHubCommitCreateGamehd.json",
-        "D2RHubCommitJoinGamehd.json",
-    ] {
+    for file in ["D2RHubCommitCreateGamehd.json"] {
         let path = directory.join(file);
         let original: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -1089,6 +1086,12 @@ fn room_tools_validate_ordered_submission_and_legacy_timing() {
         assert!(validate_in_game_room_tool_layouts(&root.join(name), name).is_err());
         std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
     }
+    let join_path = directory.join("D2RHubInGameJoinGamehd.json");
+    let join = std::fs::read_to_string(&join_path).unwrap().replace(
+        "JoinGame:JoinGame",
+        "PanelManager:OpenPanel:D2RHubCommitJoinGame",
+    );
+    std::fs::write(join_path, join).unwrap();
     // Previously generated r30 Mods remain readable as upgrade sources.
     for (file, submit, close) in [
         ("D2RHubCommitCreateGamehd.json", 0.10, 0.15),
@@ -1208,6 +1211,12 @@ fn room_tools_validate_default_hell_initialization() {
             .contains("默认地狱"));
         std::fs::write(&other_path, saved).unwrap();
     }
+    let join_path = directory.join("D2RHubInGameJoinGamehd.json");
+    let join = std::fs::read_to_string(&join_path).unwrap().replace(
+        "JoinGame:JoinGame",
+        "PanelManager:OpenPanel:D2RHubCommitJoinGame",
+    );
+    std::fs::write(join_path, join).unwrap();
     // A genuine r28 source has neither the initializer nor the r30 submit delays.
     let mut legacy = original.clone();
     legacy["children"]

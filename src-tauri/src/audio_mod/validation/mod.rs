@@ -368,19 +368,6 @@ fn validate_compatible_audio_mod_directory(
     )
 }
 
-pub(super) fn validate_upgradeable_audio_mod(
-    mods_directory: &Path,
-    mod_name: &str,
-) -> Result<ValidatedAudioMod, String> {
-    let mod_name = plain_mod_name(mod_name)?;
-    validate_compatible_audio_mod_directory_with_policy(
-        mods_directory,
-        mod_name,
-        mods_directory.join(mod_name),
-        true,
-    )
-}
-
 pub(super) fn validate_audio_mod_directory(
     mods_directory: &Path,
     mod_name: &str,
@@ -696,7 +683,12 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                         .map(|group| group.id.clone())
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_default();
+                .unwrap_or_else(|_| {
+                    update_metadata
+                        .as_ref()
+                        .map(|meta| meta.feature_groups.clone())
+                        .unwrap_or_default()
+                });
             let source_mod_name = validation
                 .as_ref()
                 .ok()

@@ -82,7 +82,7 @@ class PublishingTests(unittest.TestCase):
         self.spec={'kind':'resources','skip_unchanged':True,'assets':[
             {'id':name,'version':'1.0.0','file':str(self.file),'release_tag':'resources-1',
              'profile':name,'game_data_version':'93854'}
-            for name in ('processor','LiteHub','BoHub','NullHub')]}
+            for name in ('LiteHub','BoHub','NullHub')]}
         self.publish(1)
         first=list(FakePlatform.uploads)
         for asset in self.spec['assets']:
@@ -98,7 +98,7 @@ class PublishingTests(unittest.TestCase):
     def test_compatibility_only_update_preserves_all_resource_identities(self):
         self.spec={'kind':'resources','hub_min':'0.9.104','hub_max_exclusive':'0.10.0','assets':[
             {'id':name,'version':'1.0.0','file':str(self.file),'release_tag':'resources-1'}
-            for name in ('processor','LiteHub','BoHub','NullHub')]}
+            for name in ('LiteHub','BoHub','NullHub')]}
         first=self.publish(1)
         before=list(FakePlatform.uploads)
         self.spec={'kind':'resources','hub_max_exclusive':'0.99.107','assets':[]}

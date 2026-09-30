@@ -1,35 +1,31 @@
-import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Download, RefreshCw } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
 import { ModResourceCard } from "../../modResources/ModResourceCard";
 import { useModResources } from "../../modResources/useModResources";
 import "./modResources.css";
 
-const RESOURCE_ORDER = ["NullHub", "BoHub", "LiteHub", "processor"];
+const RESOURCE_ORDER = ["NullHub", "BoHub", "LiteHub"];
 
 interface Props {
   edition: string;
   en: boolean;
   catalog?: ModCapsuleController;
-  processorOnly?: boolean;
   onBusy?: (busy: boolean) => void;
 }
 
-export function ModResourceLibrary({ edition, en, catalog, processorOnly = false, onBusy }: Props) {
+export function ModResourceLibrary({ edition, en, catalog, onBusy }: Props) {
   const controller = useModResources({ edition, onInstalled: catalog?.refresh, onBusy });
   const { data, checking, readError, feedback, taskError, runningElsewhere } = controller;
   const assets = (data?.catalog.assets ?? [])
-    .filter(asset => !processorOnly || asset.id === "processor")
+    .filter(asset => asset.id !== "processor")
     .sort((left, right) => (RESOURCE_ORDER.indexOf(left.id) + 1 || 99) - (RESOURCE_ORDER.indexOf(right.id) + 1 || 99));
 
   return <section className="mod-resources" aria-label={en ? "Mod resources" : "Mod 资源下载"}>
-    <header>
+    <header className="mod-resources-heading">
       <div>
-        {processorOnly && <h3>{en ? "Mod processor" : "Mod 加工器"}</h3>}
-        <p>{processorOnly
-          ? (en ? "Install the compatible processor to add game features to your Mods." : "安装兼容的加工器，为 Mod 添加所需的游戏功能。")
-          : (en ? "Choose a ready-to-use Mod. The processor is only needed for custom features." : "选择成品即可安装；需要自定义游戏功能时，再添加加工器。")}</p>
+        <h3><Download size={15} aria-hidden="true" />{en ? "Ready-to-use Mods" : "成品 Mod"}</h3>
+        <p>{en ? "Choose a ready-to-use Mod. Custom processing is included with Hub." : "选择成品即可安装；自定义加工功能已随 Hub 内置。"}</p>
       </div>
       <Button size="sm" variant="ghost" disabled={controller.busy} loading={checking} onClick={() => void controller.refresh()}>
         <RefreshCw size={13} />{en ? "Check updates" : "检查更新"}
@@ -47,17 +43,4 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
     {readError && <p className="resource-error" role="alert">{readError}</p>}
     {feedback?.assetId === null && feedback.error && <p className="resource-error" role="alert">{feedback.error}</p>}
   </section>;
-}
-
-export function ModDownloadsPage({ edition, en, catalog, processorOnly = false, onBack, onEditionChange }: Props & { onBack: () => void; onEditionChange: (edition: "CN" | "Global") => void }) {
-  const [busy, setBusy] = useState(false);
-  return <div className="mod-downloads-page">
-    <header className="mod-processing-header"><div><h2>{processorOnly ? (en ? "Install Mod processor" : "安装 Mod 加工器") : (en ? "Mod downloads & updates" : "Mod 下载与更新")}</h2>
-      <p>{processorOnly ? (en ? "Your processing draft is saved. Return after the processor is ready." : "加工草稿已保留，安装就绪后返回继续。") : (en ? "Download Mods and manage the independent processor." : "下载 Mod，管理独立加工器及已安装资源。")}</p></div>
-      <Button size="sm" variant="ghost" onClick={onBack}>{processorOnly ? (en ? "Back to processing" : "返回加工") : (en ? "Back" : "返回")}</Button></header>
-    {!processorOnly && <div className="mod-catalog-editions" role="tablist" aria-label={en ? "Game edition" : "游戏版本"}>
-      {(["CN", "Global"] as const).map(value => <button key={value} role="tab" type="button" aria-selected={edition === value} disabled={busy} onClick={() => onEditionChange(value)}>{value === "CN" ? (en ? "China" : "国服") : (en ? "Global" : "国际服")}</button>)}
-    </div>}
-    <ModResourceLibrary edition={edition} en={en} catalog={catalog} onBusy={setBusy} processorOnly={processorOnly} />
-  </div>;
 }

@@ -5,36 +5,11 @@
   <p>管理账号、启动游戏，按需添加识别统计和自动跟房。</p>
 </div>
 
-[下载安装](https://github.com/gjy991229/D2RHub/releases/latest) · [使用手册](docs/user-guide.html) · [更新记录](CHANGELOG.md) · [文档目录](docs/README.md)
+当前开发版本 **v0.9.112**。
 
-当前版本 **v0.9.111**，配套加工器 **v1.4.0-beta.20**。本版增加加工前双向配套校验和小号跟房补发回车，支持房间工具 r32；详见 [本版说明](docs/releases/v0.9.111.md)。
+[下载安装](https://github.com/gjy991229/D2RHub/releases/latest) · [使用手册](docs/user-guide.html) 提供多开、识别、跟房和组合使用的分步路线。[加工器源码](https://github.com/gjy991229/d2r-audio-mod) 单独维护，EXE 随 Hub 安装和更新，不再独立下载或互认软件版本。LiteHub、BoHub、NullHub 仍按需下载。
 
-## 做什么
-
-D2RHub 在本机管理国服、国际服账号与各自的认证、游戏设置和启动状态。你可以单独启动账号，也可以保存常用账号组，一次启动并切换对应窗口。
-
-多开始终可用，其他功能按需添加：
-
-| 功能 | 用途 |
-| --- | --- |
-| Mod 管理 | 下载成品、加工已有 Mod、为账号选择 Mod |
-| 识别与统计 | 通过游戏音频标记记录场景、掉落和刷图用时 |
-| 自动跟房 | 主号创建房间，小号按规则跟随 |
-| 桌面悬浮窗 | 在游戏外查看账号、邪恶区域和统计状态 |
-| 桌宠 | 可关闭的 Bongo Cat 与装扮 |
-
-**扩展功能与 Mod 分工不同：**扩展运行在 D2RHub 中，Mod 提供游戏内的能力。只多开不需要加工 Mod；识别需要声纹功能，自动跟房需要局内房间工具。它们可以放进同一个 Mod，再由需要的账号选用。
-
-## 开始使用
-
-1. 从 [Releases](https://github.com/gjy991229/D2RHub/releases/latest) 下载 Windows x64 安装器，安装并阅读首次使用说明。
-2. 在“设置 → 运行环境”填写国服或国际服的游戏目录和存档目录。
-3. 添加账号，按向导完成认证，然后从账号卡片启动游戏。重复添加其他账号即可多开。
-4. 需要更多功能时，在“设置 → 扩展功能”添加对应扩展，再进入其设置完成准备。
-
-[使用手册](docs/user-guide.html) 提供多开、识别、跟房和组合使用的分步路线。加工器 [d2r-audio-mod](https://github.com/gjy991229/d2r-audio-mod) 独立开源和发布；在“Mod 管理”中按需下载，不随 Hub 安装包内置。网络不便时也可以导入已下载的资源文件，仍会校验大小、摘要与兼容性。
-
-加工前必须完成 Hub 与加工器互认。提示版本不匹配时，按页面要求更新 Hub 或加工器；互认失败会禁止加工，不再使用旧版继续处理。更新程序不会自动升级已有 Mod，房间工具 r32 需重新加工并重启游戏。只多开无需安装加工器。
+已有成品可增补兼容模块；覆盖更新和模块协议不一致时，从原始源 Mod 与旧模块配置生成新目录，校验后替换同名成品。批量操作提供计划预览、串行处理、逐项结果及失败重试，不自动切换账号。房间工具 r33 保留默认地狱和原创建时序，加入直接发送原生 JoinGame 消息。
 
 ## 本地数据与边界
 
@@ -67,9 +42,9 @@ npm run build
 
 D2RHub is a local Windows tool for managing multiple Diablo II: Resurrected accounts, separate CN/Global installations, authentication, launch groups, and per-account settings. Optional extensions provide audio-based run tracking, room automation, desktop overlays, and Bongo Cat.
 
-Version **0.9.111** pairs with processor **1.4.0-beta.20**. Processing requires a successful two-way compatibility check. Follow the update message when either component is incompatible. This release adds bounded follower Enter repeats and room-tools r32; regenerate existing Mods and restart the game to use the new recipe.
+Version **0.9.112** includes the Mod processor in the Hub installer. Compatibility is checked by module protocol. Batch processing supports new copies, additive modules, and clean same-name rebuilds.
 
-[Download](https://github.com/gjy991229/D2RHub/releases/latest), configure a game and save directory, then add and initialize an account. The independently released [Mod processor](https://github.com/gjy991229/d2r-audio-mod) can be installed from Mod Management when needed. Account data stays on this computer; the app does not read/write game memory or inject DLLs. See the [manual](docs/user-guide.html), [development guide](docs/DEVELOPMENT.md), and [security policy](SECURITY.md).
+[Download](https://github.com/gjy991229/D2RHub/releases/latest), configure a game and save directory, then add and initialize an account. The [Mod processor](https://github.com/gjy991229/d2r-audio-mod) ships with Hub. Account data stays on this computer; the app does not read/write game memory or inject DLLs. See the [manual](docs/user-guide.html), [development guide](docs/DEVELOPMENT.md), and [security policy](SECURITY.md).
 
 ## 许可
 

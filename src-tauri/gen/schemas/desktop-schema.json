@@ -615,6 +615,12 @@
           "markdownDescription": "Enables the get_audio_mod_setup_state command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_bundled_processor_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-bundled-processor-status",
+          "markdownDescription": "Enables the get_bundled_processor_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_capability_descriptors command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-capability-descriptors",
@@ -877,12 +883,6 @@
           "type": "string",
           "const": "allow-open-logs-dir",
           "markdownDescription": "Enables the open_logs_dir command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the open_mod_processor_directory command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-open-mod-processor-directory",
-          "markdownDescription": "Enables the open_mod_processor_directory command without any pre-configured scope."
         },
         {
           "description": "Enables the open_mods_directory command without any pre-configured scope.",
@@ -1491,6 +1491,12 @@
           "markdownDescription": "Denies the get_audio_mod_setup_state command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_bundled_processor_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-bundled-processor-status",
+          "markdownDescription": "Denies the get_bundled_processor_status command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_capability_descriptors command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-capability-descriptors",
@@ -1753,12 +1759,6 @@
           "type": "string",
           "const": "deny-open-logs-dir",
           "markdownDescription": "Denies the open_logs_dir command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the open_mod_processor_directory command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-open-mod-processor-directory",
-          "markdownDescription": "Denies the open_mod_processor_directory command without any pre-configured scope."
         },
         {
           "description": "Denies the open_mods_directory command without any pre-configured scope.",

@@ -13,6 +13,7 @@ pub(super) struct OfficialUpdateMetadata {
     pub(super) recipe_version: Option<u32>,
     pub(super) build_mode: Option<String>,
     pub(super) source_mod_name: Option<String>,
+    pub(super) feature_groups: Vec<String>,
 }
 
 pub(super) fn read_protocol_version(path: &Path) -> Result<u8, String> {
@@ -127,9 +128,12 @@ pub(super) fn official_update_metadata(
         Some(serde_json::Value::String(value)) => Some(plain_mod_name(value).ok()?.to_string()),
         _ => return None,
     };
+    let groups = crate::domain::mod_processing::parse_feature_groups(&manifest).ok()?;
+    let feature_groups = groups.iter().map(|group| group.id.clone()).collect();
     Some(OfficialUpdateMetadata {
         recipe_version,
         build_mode,
         source_mod_name,
+        feature_groups,
     })
 }

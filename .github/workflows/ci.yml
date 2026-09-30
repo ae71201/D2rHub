@@ -70,6 +70,19 @@ jobs:
         run: npm run check:guide
         shell: cmd
 
+      - name: Checkout bundled processor source
+        uses: actions/checkout@v7
+        with:
+          repository: gjy991229/d2r-audio-mod
+          ref: 7380ccd2e4c330bc596db9b3a4041f6f0a20f214
+          path: .processor-source
+
+      - name: Build bundled processor
+        env:
+          D2RHUB_PROCESSOR_REPO: ${{ github.workspace }}/.processor-source
+        run: npm run build:processor
+        shell: cmd
+
       - name: Rust format
         working-directory: src-tauri
         run: cargo fmt -- --check

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, FolderOpen, PackageOpen, PackagePlus, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, FolderOpen, Layers3, PackageOpen, PackagePlus, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
 import { ModResourceLibrary } from "./ModResourceLibrary";
 import { ModCatalogEntry } from "./ModCatalogEntry";
+import { ModPageHeader } from "./ModPageHeader";
 import "./modLibrary.css";
 import { Modal } from "../../../components/ui/Modal";
 import { showToast } from "../../../components/ui/Toast";
@@ -21,6 +22,7 @@ interface ModCatalogManagerProps {
   language?: string | null;
   minimalMode?: boolean;
   onProcess: (capsule: ModCapsule) => Promise<void> | void;
+  onBatch?: (edition: "CN" | "Global") => void;
   onCreate?: (edition: "CN" | "Global") => Promise<void> | void;
 }
 
@@ -59,7 +61,7 @@ const COPY = {
   },
 } as const;
 
-export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEdition, edition: controlledEdition, onEditionChange, language, minimalMode = false, onProcess, onCreate }: ModCatalogManagerProps) {
+export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEdition, edition: controlledEdition, onEditionChange, language, minimalMode = false, onProcess, onCreate, onBatch }: ModCatalogManagerProps) {
   const isEnglish = language === "en-US";
   const copy = COPY[isEnglish ? "en-US" : "zh-CN"];
   const [localEdition, setLocalEdition] = useState<"CN" | "Global">(
@@ -120,17 +122,12 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
   };
 
   return (
-    <div className="mod-catalog-manager mod-library">
-      <header className="mod-processing-header">
-        <div>
-          <h2>{copy.title}</h2>
-          <p>{minimalMode
+    <div className="mod-workspace mod-catalog-manager mod-library">
+      <ModPageHeader title={copy.title} description={minimalMode
             ? (isEnglish
               ? "Scan, organize, assign, and process shared Mods for your accounts."
               : "扫描、整理、分配并加工账号共用的 Mod。")
-            : copy.description}</p>
-        </div>
-        <div className="mod-processing-header-actions">
+            : copy.description}>
           <Button
             size="sm"
             variant="ghost"
@@ -144,8 +141,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           <Button size="sm" variant="ghost" loading={busy} onClick={() => void catalog.scan()}>
             <RefreshCw size={13} />{copy.scan}
           </Button>
-        </div>
-      </header>
+      </ModPageHeader>
 
       <div className="mod-library-navigation">
         <div className="mod-library-views" role="group" aria-label={isEnglish ? "Mod library views" : "Mod 库视图"}>
@@ -162,10 +158,11 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
       </div>
 
       {!generateOpen && <div className="mod-library-custom-actions">
-        {onCreate && <Button size="sm" disabled={busy} onClick={() => void onCreate(edition)}>
+        {onCreate && <Button size="sm" variant="primary" disabled={busy} onClick={() => void onCreate(edition)}>
           <PackagePlus size={13} />{isEnglish ? "Process a new Mod" : "加工新 Mod"}
         </Button>}
-        <Button size="sm" disabled={busy} onClick={() => { setGenerateOpen(false); setAddOpen(true); setAddDraft(""); }}>
+        {onBatch && <Button size="sm" disabled={busy} onClick={() => onBatch(edition)}><Layers3 size={13} />{isEnglish ? "Batch process / update" : "批量加工／更新"}</Button>}
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setGenerateOpen(false); setAddOpen(true); setAddDraft(""); }}>
           <Plus size={13} />{isEnglish ? "Custom launch preset" : "自定义启动预设"}
         </Button>
       </div>}
@@ -234,7 +231,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             <PackageOpen size={22} />
             <strong>{copy.empty(edition)}</strong>
             <p>{isEnglish ? "Download a ready-to-use Mod, or scan Mods already in your game folder." : "下载成品 Mod，或将已有 Mod 放入游戏目录后重新扫描。"}</p>
-            <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}><PackagePlus size={13} />{isEnglish ? "Download Mods & processor" : "下载 Mod 与加工器"}</Button>
+            <Button size="sm" variant="primary" onClick={() => setGenerateOpen(true)}><PackagePlus size={13} />{isEnglish ? "Download Mods" : "下载 Mod"}</Button>
           </div>
         )}
       </div>

@@ -303,19 +303,6 @@ describe("RoomAutomationPanel", () => {
     expect(screen.queryByRole("button", { name: /Apply settings/ })).toBeNull();
   });
 
-  it("persists follower repeat timing and allows zero additional Enter presses", async () => {
-    const { gateway, saveConfig } = makeGateway();
-    const user = userEvent.setup();
-    render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
-    const count = await screen.findByLabelText("Follower additional Enter presses (0 disables)") as HTMLInputElement;
-    expect(count.value).toBe("4");
-    expect((screen.getByLabelText("Follower Enter repeat start delay (ms)") as HTMLInputElement).value).toBe("1000");
-    await user.clear(count);
-    await user.type(count, "0");
-    const saved = () => saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1];
-    await waitFor(() => expect(saved()?.flow.follower_enter_repeat_count).toBe(0));
-  });
-
   it("restores the authored default input timing from the advanced section", async () => {
     const { gateway, saveConfig } = makeGateway();
     const user = userEvent.setup();
@@ -341,9 +328,6 @@ describe("RoomAutomationPanel", () => {
       chord_hold_ms: 100,
       form_settle_ms: 300,
       physical_ctrl_settle_ms: 50,
-      follower_enter_delay_ms: 1000,
-      follower_enter_interval_ms: 1000,
-      follower_enter_repeat_count: 4,
     }));
   });
 

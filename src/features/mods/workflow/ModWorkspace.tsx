@@ -1,19 +1,12 @@
-import { useState } from "react";
+import { ModBatchPanel } from "../../settings/panels/ModBatchPanel";
 import { Button } from "../../../components/ui/Button";
-import { showToast } from "../../../components/ui/Toast";
-import { modResourcesGateway } from "../../modResources/gateway";
 import { ModCatalogManager } from "../../settings/panels/ModCatalogManager";
-import { ModDownloadsPage } from "../../settings/panels/ModResourceLibrary";
 import { ModProcessingPanel } from "../../settings/panels/ModProcessingPanel";
 import type { ModWorkflowController } from "./useModWorkflow";
 
 export function ModWorkspace({ workflow }: { workflow: ModWorkflowController }) {
   const { view, draft, actions, en } = workflow;
-  const [processorEdition, setProcessorEdition] = useState<"CN" | "Global" | null>(null);
-  if (processorEdition) return <ModDownloadsPage edition={processorEdition} en={en} catalog={workflow.catalog}
-    onBack={() => setProcessorEdition(null)} onEditionChange={setProcessorEdition} />;
-  if (view === "resources" && draft) return <ModDownloadsPage edition={draft.edition} en={en} catalog={workflow.catalog} processorOnly
-    onBack={actions.back} onEditionChange={() => { /* Resources belong to the processing target edition. */ }} />;
+  if (view === "batch") return <ModBatchPanel workflow={workflow} />;
   if (view === "processing" && draft) return <ModProcessingPanel workflow={workflow} />;
   return <>
     {draft && <div className="mod-draft-notice">
@@ -22,15 +15,11 @@ export function ModWorkspace({ workflow }: { workflow: ModWorkflowController }) 
     </div>}
     <ModCatalogManager catalog={workflow.catalog} accounts={workflow.accounts} language={en ? "en-US" : "zh-CN"}
       minimalMode={workflow.minimalMode} autoOpenAdd={workflow.openAdd} edition={workflow.libraryEdition}
-      onEditionChange={actions.setLibraryEdition}
+      onEditionChange={actions.setLibraryEdition} onBatch={actions.openBatch}
       onProcess={async capsule => {
         const edition = capsule.edition === "Global" ? "Global" : "CN";
-        try {
-          const local = await modResourcesGateway.read(edition);
-          if (!local.processor.ready || local.processor.update_available || local.processor.blocking_reason) { setProcessorEdition(edition); return; }
-          actions.requestProcessing({ origin: "library", edition,
-            source: { name: capsule.name, processed: capsule.processed || capsule.update_required } });
-        } catch (error) { showToast("error", String(error)); }
+        actions.requestProcessing({ origin: "library", edition,
+          source: { name: capsule.name, processed: capsule.processed || capsule.update_required } });
       }}
       onCreate={edition => actions.requestProcessing({ origin: "library", edition: edition === "Global" ? "Global" : "CN" })} />
   </>;

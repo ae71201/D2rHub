@@ -2,7 +2,7 @@
 
 本页是当前唯一的维护者发布入口；资源协议细节见 [双源更新协议](dual-source-updates.md)。
 
-日常使用仓库根目录的 `release.cmd`（双击），选择 **软件 / 加工器 / 三个Mod / 全部**。脚本自动准备文件并显示版本、兼容范围、大小；输入 `p` 上传双端，输入 `s` 上传并提升软件正式版，直接回车则仅保留准备结果。选择“补传已有任务”可恢复失败的发布，不重新构建。
+日常使用仓库根目录的 `release.cmd`（双击），选择 **软件（含加工器） / 三个Mod / 全部**。脚本自动准备文件并显示版本、兼容范围、大小；输入 `p` 上传双端，输入 `s` 上传并提升软件正式版，直接回车则仅保留准备结果。选择“补传已有任务”可恢复失败的发布，不重新构建。
 
 ## 首次配置
 
@@ -38,7 +38,6 @@ gh auth login
 .\release.ps1 -Target mods
 
 # 自动准备并发布指定类别
-.\release.ps1 -Target processor -Publish
 .\release.ps1 -Target mods -Publish
 .\release.ps1 -Target software -Publish
 .\release.ps1 -Target all -Publish
@@ -58,13 +57,17 @@ gh auth login
 - **加工器**：从配置的干净 Git 仓库准备。先运行 Rust 格式、Clippy 和测试，再执行 `cargo build --locked --release`，检查程序实际 `--version` 与快照内 Cargo 版本一致。
 - **三个 Mod**：从配置目录读取 `LiteHub`、`BoHub`、`NullHub`。支持旧 `generation-manifest.json` 与当前成品的 `enhancement-manifest.json`；校验来源、方案、实际游戏数据版本。当前成品还核对 `mod-version.json`、Mod 名称、完整文件列表及每个文件的大小和 SHA-256；拒绝加工清单、符号链接和重解析点。只去除 Hub 安装记录与可由同目录 TXT 生成的 BIN 缓存，规范化旧生成清单中的本机路径。ZIP 使用固定时间和属性，相同内容得到相同文件。
 
-软件和加工器先通过 `git archive` 导出当前提交的源码快照，再在本次任务独立的源码及构建目录运行构建。未跟踪的历史权限文件、旧构建缓存和本机文件不会混入源码，构建不会改写原工作区；原始 Mod 也不会被修改。完成后得到一个时间戳任务目录，包含安装包/EXE/ZIP、自动生成的 `software.json` / `resources.json`、每个 Mod 的文件摘要、记录源码提交与文件摘要的 `job.json`。准备未完成时不会生成可发布任务。
+软件和加工器先通过 `git archive` 导出当前提交的源码快照，再在本次任务独立的源码及构建目录运行构建。未跟踪的历史权限文件、旧构建缓存和本机文件不会混入源码，构建不会改写原工作区；原始 Mod 也不会被修改。完成后得到一个时间戳任务目录，包含安装包/ZIP、自动生成的 `software.json` / `resources.json`、每个 Mod 的文件摘要、记录源码提交与文件摘要的 `job.json`。准备未完成时不会生成可发布任务。
 
 **版本仍由开发者维护**：软件与加工器读取源码版本，不擅自递增；同版本重新构建得到不同内容时，发布器会拒绝。Mod 版本自动以 UTC 时间生成；与当前双端资源摘要相同的文件保留原版本，不重复上传。首次迁移旧打包格式时 ZIP 字节可能不同，会形成一次新资源版本。
 
 资源兼容范围与协议通道读取仓库的 `resources/mod-resources-v2.json`。协议发生破坏性变更时，应先审查并更新此兼容声明，工作流不会猜测兼容性或自动放宽范围。
 
-自 Hub 0.9.111 / 加工器 1.4.0-beta.20 起，加工必须双向互认。先准备加工器，在发布 EXE 上用目标 Hub 版本执行 `hub-compatibility` 并验证不匹配身份被拒绝；发布加工器后，将发布报告中真实的版本、大小、SHA-256 和镜像地址同步到仓库资源清单，再提交、准备并发布 Hub。精确配套版本需同步调整加工器 `REQUIRED_HUB`、两端协议及清单兼容上下界。只修改 Hub 版本号会被加工器拒绝。加工器源码仓库 Release 应使用同一已验证 EXE，标签指向实际构建来源提交；不要重新构建另一份字节。
+加工器只随 Hub 安装包发布。软件准备会先从加工器源码快照完成检查和构建，将同一 EXE 放入 Hub 快照的 `src-tauri/processor/`，再检查和构建 Hub。两份源码及检查记录均写入任务。独立 `processor` 发布目标已移除，资源目录只包含三个 Mod。开发构建通过 `npm run build:processor` 准备资源，可用 `D2RHUB_PROCESSOR_REPO` 指定源码位置。
+
+发布前同步两个源码仓库，并将 CI 的加工器 checkout `ref` 固定到本次加工器提交，避免以后重跑 CI 时读取变化的 main。Hub 版本同步维护 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`；版本说明写入 `docs/releases/` 并链接更新记录。已准备的资源任务不修改 spec 或摘要，使用原任务 `-Resume ... -Publish` 发布。
+
+不再绑定 Hub 和加工器软件版本。更新模块时同步修改对应协议和结构验证，不能让旧布局冒用新模块版本。
 
 **生成记录不能代替游戏内验收。** 当前成品会重新核对 `enhancement-manifest.json` 中的文件摘要；旧生成格式仍只能证明生成时的声明。工作流会拦截可识别的加工记录并保存准确摘要，保留原有 `runtime_verified` 状态；不会把 `verified_output_integrity` 当作运行行为的证明。
 

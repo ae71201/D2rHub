@@ -5,7 +5,7 @@ export type ModEdition = "CN" | "Global";
 export type ModWorkflowOrigin = "library" | "recognition" | "room-automation";
 export type ModRecipe =
   | { kind: "create"; source: string | null; name: string }
-  | { kind: "augment"; modName: string };
+  | { kind: "augment"; modName: string; rebuild?: boolean; sourceOverride?: string };
 
 /** An explicit user intent. Background inspection never creates or changes it. */
 export interface ModProcessingRequest {

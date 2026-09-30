@@ -5,6 +5,7 @@
 mod filesystem;
 mod generator;
 mod modification;
+mod rebuild;
 mod replacement;
 mod validation;
 
@@ -15,7 +16,6 @@ use crate::domain::mod_arguments::{self as arguments, generated_audio_mod_name, 
 pub use crate::domain::mod_processing::GeneratorFeatureGroup;
 use crate::domain::mod_processing::{
     validate_preserved_feature_groups, RequestedFeatureGroups, IN_GAME_ROOM_TOOLS_FEATURE_ID,
-    PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS,
 };
 use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::rune_audio::protocol::PROTOCOL_VERSION;
@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 use tauri::Emitter;
 use validation::{
     compatibility, credential_compatibility, resolve_source_directory, validate_audio_mod,
-    validate_audio_mod_credential, validate_generator_output, validate_upgradeable_audio_mod,
-    ValidatedAudioMod, REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+    validate_audio_mod_credential, validate_generator_output, ValidatedAudioMod,
+    REQUIRED_AUDIO_MOD_RECIPE_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -509,7 +509,7 @@ async fn prepare_audio_mod_impl(
     let (_config, _account, context) = configured_account(&shared_state, &account_id)?;
     let game_directory = context.installation.game_directory;
     let mods_directory = game_directory.join("mods");
-    let processor = crate::mod_resources::resolve_processor(&app).await?;
+    let processor = crate::bundled_processor::resolve_processor(&app).await?;
     std::fs::create_dir_all(&mods_directory)
         .map_err(|error| format!("创建 mods 目录失败: {error}"))?;
     recover_audio_mod_replacements(&mods_directory)?;
@@ -548,6 +548,7 @@ async fn prepare_audio_mod_impl(
             source_directory: source_directory.as_deref(),
             requested_features,
             progress_ceiling: 100,
+            audio_options: None,
         },
     )
     .await?;
@@ -584,7 +585,9 @@ pub async fn upgrade_audio_mod(
     include_room_tools: Option<bool>,
     include_esc_next_game: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
+    force_rebuild: Option<bool>,
 ) -> Result<AudioModSetupState, String> {
+    let force_rebuild = force_rebuild.unwrap_or(false);
     upgrade_audio_mod_task(
         app,
         state,
@@ -596,6 +599,7 @@ pub async fn upgrade_audio_mod(
             include_room_tools,
             include_esc_next_game,
             include_auto_exit_on_death,
+            force_rebuild,
         },
         None,
     )
@@ -616,6 +620,7 @@ async fn upgrade_audio_mod_task(
         include_room_tools,
         include_esc_next_game,
         include_auto_exit_on_death,
+        force_rebuild,
     } = payload
     else {
         return Err("任务重试数据与 Mod 更新操作不匹配".to_string());
@@ -628,6 +633,7 @@ async fn upgrade_audio_mod_task(
         include_room_tools,
         include_esc_next_game,
         include_auto_exit_on_death,
+        force_rebuild,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
     let mut request = TaskRequest::new("audio-mod-upgrade")
@@ -653,6 +659,7 @@ async fn upgrade_audio_mod_task(
             include_room_tools,
             include_esc_next_game,
             include_auto_exit_on_death,
+            force_rebuild,
         },
         &task,
     )
@@ -691,6 +698,8 @@ pub(crate) enum AudioModTaskRetryPayload {
         include_room_tools: Option<bool>,
         include_esc_next_game: Option<bool>,
         include_auto_exit_on_death: Option<bool>,
+        #[serde(default)]
+        force_rebuild: bool,
     },
 }
 
@@ -722,6 +731,7 @@ struct UpgradeAudioModRequest {
     include_room_tools: Option<bool>,
     include_esc_next_game: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
+    force_rebuild: bool,
 }
 
 async fn upgrade_audio_mod_impl(
@@ -738,12 +748,13 @@ async fn upgrade_audio_mod_impl(
         include_room_tools,
         include_esc_next_game,
         include_auto_exit_on_death,
+        force_rebuild,
     } = request;
     let shared_state = state.inner().clone();
     let _lease = shared_state.mod_mutations().try_acquire()?;
     let (config, account, context) = configured_account(&shared_state, &account_id)?;
     let mods_directory = context.installation.game_directory.join("mods");
-    let processor = crate::mod_resources::resolve_processor(&app).await?;
+    let processor = crate::bundled_processor::resolve_processor(&app).await?;
     recover_audio_mod_replacements(&mods_directory)?;
     let current = if let Some(requested_mod_name) = requested_mod_name.as_deref() {
         let requested_arguments = arguments_with_audio_mod("", requested_mod_name)?;
@@ -755,100 +766,75 @@ async fn upgrade_audio_mod_impl(
         .mod_name
         .as_deref()
         .ok_or_else(|| "当前账号没有配置识别 Mod".to_string())?;
-    // The manifest is the source of truth for legacy augment builds. A caller
-    // may omit the base Mod (or be unable to expose it after strict validation
-    // rejects an old recipe), but a recorded source must still drive the safe
-    // rebuild and same-name replacement automatically.
-    let source_mod_name = current.source_mod_name.clone().or(source_mod_name);
+    // Default to the recorded original, allowing an explicit replacement when it moved.
+    let source_mod_name = source_mod_name.or_else(|| current.source_mod_name.clone());
     let mut explicitly_requested = RequestedFeatureGroups::from_options(
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
         include_auto_exit_on_death,
     )?;
-    let current_validated = match validate_audio_mod(&mods_directory, mod_name) {
-        Ok(validated) => Some(validated),
-        Err(strict_error)
-            if current
-                .recipe_version
-                .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION) =>
-        {
-            Some(
-                validate_upgradeable_audio_mod(&mods_directory, mod_name).map_err(
-                    |upgrade_error| {
-                        format!(
-                            "当前功能组协议 Mod 无法作为安全升级来源：{upgrade_error}（当前版本校验：{strict_error}）"
-                        )
-                    },
-                )?,
-            )
-        }
-        Err(_) => None,
-    };
-    // Only manifests older than the r22 feature-group protocol need the legacy audio fallback.
-    // Newer outdated manifests explicitly describe whether audio was installed and must remain
-    // room-only when that is what their recorded feature list says.
-    if current.update_required
-        && current_validated
-            .as_ref()
-            .is_none_or(|validated| validated.feature_groups.is_empty())
+    let current_validated = validate_audio_mod(&mods_directory, mod_name).ok();
+    let rebuilding = force_rebuild || current.update_required || current_validated.is_none();
+    let old_directory = mods_directory.join(mod_name);
+    validation::validate_recoverable_audio_mod_directory(
+        &mods_directory,
+        mod_name,
+        &old_directory,
+    )?;
+    let manifest_path = ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"]
+        .into_iter()
+        .map(|name| old_directory.join(name))
+        .find(|path| path.is_file())
+        .ok_or("旧 Mod 缺少加工清单")?;
+    let document: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(manifest_path).map_err(|e| format!("读取旧 Mod 清单失败：{e}"))?,
+    )
+    .map_err(|e| e.to_string())?;
+    if document["feature_groups"]
+        .as_array()
+        .is_none_or(|groups| groups.is_empty())
+        && current.recipe_version.unwrap_or(0) < 22
     {
         explicitly_requested.audio_telemetry = true;
     }
-    let required_existing_groups: Vec<GeneratorFeatureGroup> = current_validated
-        .as_ref()
-        .filter(|validated| validated.current_feature_protocol)
-        .map(|validated| {
-            validated
-                .feature_groups
-                .iter()
-                // The generator replaces known r21-r25 room groups with the current recipe.
-                // Preserve every other known or opaque group byte-for-byte across replacement.
-                .filter(|group| {
-                    !(group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-                        && PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS
-                            .contains(&group.recipe_version))
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let requested_features = current_validated
-        .as_ref()
-        .map_or(explicitly_requested, |validated| {
-            explicitly_requested.include_existing_known(&validated.feature_groups)
-        });
-    let requested_groups_are_present = current_validated
-        .as_ref()
-        .is_some_and(|validated| requested_features.all_present(&validated.feature_groups));
-    let can_add_missing_groups = current_validated
-        .as_ref()
-        .is_some_and(|validated| validated.current_feature_protocol)
-        && !requested_groups_are_present;
-    if !current.update_required && !can_add_missing_groups {
-        return Err(if requested_groups_are_present {
-            "当前识别 Mod 已包含所选功能组，无需更新".to_string()
-        } else {
-            "当前 Mod 不支持安全原位更新".to_string()
-        });
+    let (requested_features, audio_options) = if rebuilding {
+        rebuild::recipe(&document, explicitly_requested)?
+    } else {
+        (
+            explicitly_requested
+                .include_existing_known(&current_validated.as_ref().unwrap().feature_groups),
+            rebuild::audio_options(&document)?,
+        )
+    };
+    let required_existing_groups = if rebuilding {
+        Vec::new()
+    } else {
+        current_validated.as_ref().unwrap().feature_groups.clone()
+    };
+    if !rebuilding
+        && current_validated
+            .as_ref()
+            .is_some_and(|v| requested_features.all_present(&v.feature_groups))
+    {
+        return Err("当前 Mod 已包含所选模块，无需增补".into());
     }
     ensure_audio_mod_not_in_use(&shared_state, &config, mod_name)?;
-
-    let current_protocol_source = current_validated
-        .as_ref()
-        .filter(|validated| validated.current_feature_protocol)
-        .map(|validated| validated.directory.clone());
-    let source_directory = if let Some(current_source) = current_protocol_source {
-        // Generate into a separate temporary root while using the verified current-protocol Mod
-        // as the additive source. The generator carries opaque future groups forward from it.
-        Some(current_source)
-    } else {
+    let source_directory = if rebuilding {
         if current.build_mode.as_deref() == Some("augment") && source_mod_name.is_none() {
-            return Err(
-                "这个旧版识别 Mod 基于其他 Mod 生成；请选择当时未经加工的原始 Mod".to_string(),
-            );
+            return Err("重做需要当时未经加工的源 Mod，请重新指定来源".into());
         }
-        resolve_source_directory(&mods_directory, mod_name, source_mod_name)?.1
+        let source = resolve_source_directory(&mods_directory, mod_name, source_mod_name)?.1;
+        if source.as_ref().is_some_and(|dir| {
+            ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"]
+                .iter()
+                .any(|name| dir.join(name).exists())
+        }) {
+            return Err("同名重做必须使用未经加工的原始源 Mod，不能使用旧加工成品".into());
+        }
+        source
+    } else {
+        Some(old_directory.clone())
     };
     emit_prepare_progress(
         &app,
@@ -874,6 +860,7 @@ async fn upgrade_audio_mod_impl(
             source_directory: source_directory.as_deref(),
             requested_features,
             progress_ceiling: 85,
+            audio_options: Some(&audio_options),
         },
     )
     .await?;
@@ -884,7 +871,16 @@ async fn upgrade_audio_mod_impl(
         requested_features,
         &required_existing_groups,
     )?;
-    crate::hub_mod_settings::inherit(source_directory.as_deref(), &generated.directory, mod_name)?;
+    crate::hub_mod_settings::inherit_preferences(&old_directory, &generated.directory, mod_name)?;
+    if rebuilding
+        && document["feature_groups"]
+            .as_array()
+            .is_some_and(|groups| groups.iter().any(|g| g["id"] == "auto_exit_on_death"))
+    {
+        let enabled =
+            validation::layouts::auto_exit_on_death_layout_enabled(&old_directory, mod_name)?;
+        modification::set_auto_exit_on_death_enabled(temporary_output.path(), mod_name, enabled)?;
+    }
 
     if task.cancellation_requested() {
         return Err("识别 Mod 更新已取消".to_string());
