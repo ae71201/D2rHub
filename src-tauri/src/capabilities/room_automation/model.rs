@@ -778,7 +778,6 @@ mod tests {
                 chord_hold_ms: 50,
                 form_settle_ms: 600,
                 physical_ctrl_settle_ms: 120,
-                ..FlowStrategy::standard()
             },
             ..RoomAutomationConfig::default()
         };
