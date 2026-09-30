@@ -232,6 +232,13 @@ fn write_files(root: &Path, name: &str, files: &Snapshot) -> Result<(), String> 
     Ok(())
 }
 pub(crate) fn recover(root: &Path, name: &str) -> Result<(), String> {
+    recover_with_guard(root, name, ensure_closed)
+}
+fn recover_with_guard(
+    root: &Path,
+    name: &str,
+    ensure_closed: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     if !root.join(JOURNAL).exists() {
         return Ok(());
     }
@@ -471,12 +478,18 @@ mod tests {
         let before = snapshot(&root, "LiteHub").unwrap();
         crate::downloads::save_json(&root.join(JOURNAL), &before).unwrap();
         fs::write(version_path(&root, "LiteHub"), "99999").unwrap();
-        recover(&root, "LiteHub").unwrap();
+        let interrupted = snapshot(&root, "LiteHub").unwrap();
+        let journal = fs::read(root.join(JOURNAL)).unwrap();
+        let blocked = recover_with_guard(&root, "LiteHub", || Err("game running".into()));
+        assert_eq!(blocked.unwrap_err(), "game running");
+        assert_eq!(snapshot(&root, "LiteHub").unwrap(), interrupted);
+        assert_eq!(fs::read(root.join(JOURNAL)).unwrap(), journal);
+        recover_with_guard(&root, "LiteHub", || Ok(())).unwrap();
         assert_eq!(snapshot(&root, "LiteHub").unwrap(), before);
         let mut invalid = before.clone();
         invalid.insert("../outside".into(), vec![]);
         crate::downloads::save_json(&root.join(JOURNAL), &invalid).unwrap();
-        assert!(recover(&root, "LiteHub").is_err());
+        assert!(recover_with_guard(&root, "LiteHub", || Ok(())).is_err());
         assert_eq!(snapshot(&root, "LiteHub").unwrap(), before);
     }
 
