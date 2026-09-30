@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "channel": "hub-bundled-processor-v1",
-  "revision": 20260929101751,
+  "revision": 20260930050812,
   "release_url": "https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-20260927.1",
   "kind": "resources",
   "hub_min": "0.9.112",
@@ -29,27 +29,6 @@
       "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/LiteHub-mod-resources-20260928164931.zip"
     },
     {
-      "id": "BoHub",
-      "version": "mod-resources-20260928164931",
-      "mod_name": "BoHub",
-      "profile": "filler",
-      "game_data_version": "93854",
-      "size": 23866347,
-      "sha256": "bcb843ffe2c7c817b15d2558b1e501697e27d619f98b62b02c5ab2f02bff5227",
-      "mirrors": [
-        {
-          "platform": "github",
-          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/BoHub-mod-resources-20260928164931.zip"
-        },
-        {
-          "platform": "gitee",
-          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260928164931/BoHub-mod-resources-20260928164931.zip"
-        }
-      ],
-      "sequence": 1,
-      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/BoHub-mod-resources-20260928164931.zip"
-    },
-    {
       "id": "NullHub",
       "version": "mod-resources-20260928164931",
       "mod_name": "NullHub",
@@ -69,6 +48,27 @@
       ],
       "sequence": 1,
       "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/NullHub-mod-resources-20260928164931.zip"
+    },
+    {
+      "id": "BoHub",
+      "version": "mod-resources-20260929142304",
+      "mod_name": "BoHub",
+      "profile": "filler",
+      "game_data_version": "93854",
+      "size": 23978631,
+      "sha256": "09ecbb3549621e1e7b6b6c64300ea9f87b4ffeaa60e361a460c887f9f2048cd2",
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260929142304/BoHub-mod-resources-20260929142304.zip"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260929142304/BoHub-mod-resources-20260929142304.zip"
+        }
+      ],
+      "sequence": 2,
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260929142304/BoHub-mod-resources-20260929142304.zip"
     }
   ]
 }
