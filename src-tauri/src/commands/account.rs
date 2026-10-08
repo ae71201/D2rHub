@@ -10,7 +10,7 @@ use crate::application::multi_instance::{
     AccountInitializationService, AccountInitializationTransaction, AccountModRepository,
     AccountModService, AccountNameRepository, AccountNamingService, AccountOrderingService,
     AccountPositionService, AccountProfilePatch, AccountProfilePolicy, AccountProfileService,
-    AccountQueryService, AccountRepository, AccountRuntimePort,
+    AccountQueryService, AccountRenameTransaction, AccountRepository, AccountRuntimePort,
     AccountSettingsPreferenceRepository, AccountSettingsPreferenceService, CancellationTicket,
     CreateAccountRequest, ResolvedAccountProfile, TimestampProvider, TokenProtector,
     WindowPosition,
@@ -24,6 +24,8 @@ use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{ContextPurpose, EditionConventions, HostRuntimeLease, LaunchContext};
 use crate::state::SharedState;
+
+const BNET_INITIALIZATION_LOGIN_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegistryValueBackup {
@@ -329,6 +331,23 @@ impl AccountNameRepository for AccountManagerCatalog<'_> {
             &self.config.accounts_dir,
             requested_name,
             excluded_account_id,
+        )
+    }
+}
+
+struct AccountRenameAdapter<'a> {
+    config: &'a GlobalConfig,
+    state: &'a SharedState,
+}
+
+impl AccountRenameTransaction for AccountRenameAdapter<'_> {
+    fn commit(&self, original: &AccountMeta, renamed: &AccountMeta) -> Result<(), AppError> {
+        crate::infrastructure::account_rename::commit(
+            self.config,
+            self.state.multi_instance().instances(),
+            original,
+            renamed,
+            || AccountManager::save_meta(&self.config.accounts_dir, renamed),
         )
     }
 }
@@ -1029,8 +1048,8 @@ pub fn delete_account(
     Ok(())
 }
 
-/// 重命名账号仅修改展示名；浏览器 Profile 始终由稳定 account_id 标识。
-#[tauri::command]
+/// Synchronizes live window identity and the display name under account leases.
+#[tauri::command(async)]
 pub fn rename_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
@@ -1042,10 +1061,15 @@ pub fn rename_account(
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let repository = AccountManagerCatalog::new(&cfg);
+    let transaction = AccountRenameAdapter {
+        config: &cfg,
+        state: state.inner(),
+    };
     let renamed = AccountNamingService::new(
         &repository,
         state.multi_instance().catalog_leases(),
         state.multi_instance().account_leases(),
+        &transaction,
     )
     .rename(&account_id, &new_name)?;
 
@@ -2565,7 +2589,7 @@ fn run_bnet_initialization_transaction(
     kind: AccountInitializationKind,
     cancellation_ticket: CancellationTicket,
 ) -> Result<(), AppError> {
-    // 只取得不可变配置快照，不能让最长 120 秒的登录等待阻塞设置写入。
+    // 只取得不可变配置快照，不能让最长 600 秒的登录等待阻塞设置写入。
     let cfg = state
         .configuration()
         .snapshot()
@@ -2709,7 +2733,7 @@ fn run_bnet_initialization_transaction(
 
         emit("login", "running", "正在等待 Battle.net 登录完成");
         let mut logged_in = false;
-        for elapsed in 1..=120 {
+        for elapsed in 1..=BNET_INITIALIZATION_LOGIN_TIMEOUT_SECS {
             std::thread::sleep(std::time::Duration::from_secs(1));
             if is_cancelled() {
                 emit("login", "error", "账号初始化已取消");
@@ -2731,8 +2755,12 @@ fn run_bnet_initialization_transaction(
             }
         }
         if !logged_in {
-            emit("login", "error", "等待登录超时（120 秒）");
-            return Err(AppError::LoginTimeout(120));
+            emit(
+                "login",
+                "error",
+                &format!("等待登录超时（{BNET_INITIALIZATION_LOGIN_TIMEOUT_SECS} 秒）"),
+            );
+            return Err(AppError::LoginTimeout(BNET_INITIALIZATION_LOGIN_TIMEOUT_SECS));
         }
         emit("login", "ok", "已检测到登录完成");
 

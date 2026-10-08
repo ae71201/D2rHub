@@ -7,7 +7,7 @@ use tauri::Emitter;
 
 use crate::application::multi_instance::{
     launch_queue_can_continue, CancellationTicket, GameWindowIdentity, GameWindowPort,
-    LaunchAccountEntry, LaunchBatchPlan, LaunchGraphicsOverride, WindowPosition,
+    InstanceRegistry, LaunchAccountEntry, LaunchBatchPlan, LaunchGraphicsOverride, WindowPosition,
 };
 use crate::application::task_runtime::{TaskHandle, TaskRequest, TaskState};
 use crate::battle_net_config::update_mod_args;
@@ -75,6 +75,29 @@ struct TokenLaunchRequest<'a> {
 struct TemporarySettingsOverride {
     path: PathBuf,
     original: Vec<u8>,
+}
+
+/// Read the latest nickname under the same lock as explicit account renames.
+/// A detached startup retry must never restore a title captured before a rename.
+fn refresh_launch_window_title(
+    registry: &InstanceRegistry,
+    accounts_dir: &str,
+    account_id: &str,
+    pid: u32,
+    rename: impl FnOnce(&str),
+) -> Result<(), AppError> {
+    registry.with_account_identity_change(account_id, |current_pid| {
+        if current_pid != Some(pid) {
+            return Ok(());
+        }
+        let account = AccountManager::load_meta(accounts_dir, account_id)?;
+        rename(if account.display_name.is_empty() {
+            &account.id
+        } else {
+            &account.display_name
+        });
+        Ok(())
+    })
 }
 
 impl Drop for TemporarySettingsOverride {
@@ -2235,16 +2258,11 @@ async fn launch_single(
             // 将游戏窗口标题改为账号昵称，并调整窗口位置（如已配置）。
             // 方案覆盖不允许反向污染账号默认位置，因此关闭位置轮询写回。
             {
-                let win_title = if meta.display_name.is_empty() {
-                    account_id.to_string()
-                } else {
-                    meta.display_name.clone()
-                };
+
                 let win_x = meta.window_x;
                 let win_y = meta.window_y;
                 // 延迟重试 + 位置持续轮询
                 let pid_copy = pid;
-                let title_copy = win_title.clone();
                 let accounts_dir = config.accounts_dir.clone();
                 let account_id_owned = account_id.to_string();
                 let state_for_position = state.clone();
@@ -2259,7 +2277,13 @@ async fn launch_single(
                     for _ in 0..10 {
                         std::thread::sleep(std::time::Duration::from_millis(800));
                         let windows = SystemGameWindowPort;
-                        windows.rename(pid_copy, &title_copy);
+                        let _ = refresh_launch_window_title(
+                            state_for_position.multi_instance().instances(),
+                            &accounts_dir,
+                            &account_id_owned,
+                            pid_copy,
+                            |title| windows.rename(pid_copy, title),
+                        );
                         if !taskbar_configured {
                             match windows.set_taskbar_identity(pid_copy, &app_user_model_id) {
                                 Ok(()) => taskbar_configured = true,
@@ -2848,11 +2872,7 @@ async fn launch_single_token(
                 &meta.mod_args,
             );
 
-            let win_title = if meta.display_name.is_empty() {
-                account_id.to_string()
-            } else {
-                meta.display_name.clone()
-            };
+            let accounts_dir = config.accounts_dir.clone();
             let win_x = meta.window_x;
             let win_y = meta.window_y;
             let pid_copy = pid;
@@ -2860,13 +2880,20 @@ async fn launch_single_token(
             let app_user_model_id = format!("D2RHub.Account.{account_id}");
             let app_for_window = app.clone();
             let account_id_for_window = account_id.to_string();
+            let state_for_geometry = state.clone();
             tokio::task::spawn_blocking(move || {
                 let mut taskbar_configured = !separate_taskbar_icon;
                 let mut taskbar_error = None;
                 for _ in 0..10 {
                     std::thread::sleep(std::time::Duration::from_millis(800));
                     let windows = SystemGameWindowPort;
-                    windows.rename(pid_copy, &win_title);
+                    let _ = refresh_launch_window_title(
+                        state_for_geometry.multi_instance().instances(),
+                        &accounts_dir,
+                        &account_id_for_window,
+                        pid_copy,
+                        |title| windows.rename(pid_copy, title),
+                    );
                     if !taskbar_configured {
                         match windows.set_taskbar_identity(pid_copy, &app_user_model_id) {
                             Ok(()) => taskbar_configured = true,
@@ -3176,6 +3203,52 @@ mod tests {
     #[test]
     fn battle_net_launch_argument_quotes_only_the_exec_value() {
         assert_eq!(battle_net_launch_argument("OSI"), r#"--exec="launch OSI""#);
+    }
+
+    #[test]
+    fn startup_title_retry_waits_for_rename_and_reads_committed_name() {
+        let root = temp_dir("startup_title_rename");
+        let config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        let registry = super::InstanceRegistry::default();
+        registry.record_launched("acount1", 42, "");
+        let title = std::sync::Mutex::new(String::new());
+
+        std::thread::scope(|scope| {
+            let (started, waiting) = std::sync::mpsc::channel();
+            registry
+                .with_account_identity_change("acount1", |_| {
+                    let registry = &registry;
+                    let accounts_dir = &config.accounts_dir;
+                    let title = &title;
+                    scope.spawn(move || {
+                        started.send(()).unwrap();
+                        super::refresh_launch_window_title(
+                            registry,
+                            accounts_dir,
+                            "acount1",
+                            42,
+                            |current| *title.lock().unwrap() = current.into(),
+                        )
+                        .unwrap();
+                    });
+                    waiting.recv().unwrap();
+                    let mut account =
+                        AccountManager::load_meta(&config.accounts_dir, "acount1").unwrap();
+                    account.display_name = "Renamed while startup retries".into();
+                    *title.lock().unwrap() = account.display_name.clone();
+                    AccountManager::save_meta(&config.accounts_dir, &account)
+                })
+                .unwrap();
+        });
+        assert_eq!(*title.lock().unwrap(), "Renamed while startup retries");
+
+        registry.record_launched("acount1", 43, "");
+        super::refresh_launch_window_title(&registry, &config.accounts_dir, "acount1", 42, |_| {
+            panic!("an old startup worker must not rename a replacement instance")
+        })
+        .unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

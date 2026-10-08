@@ -1,12 +1,16 @@
 use crate::domain::account::{validate_account_display_name, AccountMeta};
 use crate::error::AppError;
 
-use super::{AccountCatalogLeaseManager, AccountLeaseManager, AccountNameRepository};
+use super::{
+    AccountCatalogLeaseManager, AccountLeaseManager, AccountNameRepository,
+    AccountRenameTransaction,
+};
 
 pub struct AccountNamingService<'a> {
     accounts: &'a dyn AccountNameRepository,
     catalog_leases: &'a AccountCatalogLeaseManager,
     account_leases: &'a AccountLeaseManager,
+    transaction: &'a dyn AccountRenameTransaction,
 }
 
 impl<'a> AccountNamingService<'a> {
@@ -14,11 +18,13 @@ impl<'a> AccountNamingService<'a> {
         accounts: &'a dyn AccountNameRepository,
         catalog_leases: &'a AccountCatalogLeaseManager,
         account_leases: &'a AccountLeaseManager,
+        transaction: &'a dyn AccountRenameTransaction,
     ) -> Self {
         Self {
             accounts,
             catalog_leases,
             account_leases,
+            transaction,
         }
     }
 
@@ -28,9 +34,10 @@ impl<'a> AccountNamingService<'a> {
         let _account_lease = self.account_leases.try_acquire(account_id)?;
         self.accounts
             .ensure_display_name_available(&new_name, Some(account_id))?;
-        let mut account = self.accounts.load(account_id)?;
+        let original = self.accounts.load(account_id)?;
+        let mut account = original.clone();
         account.display_name = new_name;
-        self.accounts.save(&account)?;
+        self.transaction.commit(&original, &account)?;
         account.token = None;
         Ok(account)
     }
@@ -42,7 +49,8 @@ mod tests {
 
     use super::AccountNamingService;
     use crate::application::multi_instance::{
-        AccountCatalogLeaseManager, AccountLeaseManager, AccountNameRepository, AccountRepository,
+        AccountCatalogLeaseManager, AccountLeaseManager, AccountNameRepository,
+        AccountRenameTransaction, AccountRepository,
     };
     use crate::domain::account::{normalize_account_display_name, AccountMeta};
     use crate::error::AppError;
@@ -99,12 +107,20 @@ mod tests {
         }
     }
 
+    impl AccountRenameTransaction for FakeRepository {
+        fn commit(&self, original: &AccountMeta, renamed: &AccountMeta) -> Result<(), AppError> {
+            assert_eq!(original.display_name, "Old");
+            self.save(renamed)
+        }
+    }
+
     #[test]
     fn rename_trims_persists_and_redacts() {
         let repository = FakeRepository::new(None);
         let catalog_leases = AccountCatalogLeaseManager::default();
         let account_leases = AccountLeaseManager::default();
-        let service = AccountNamingService::new(&repository, &catalog_leases, &account_leases);
+        let service =
+            AccountNamingService::new(&repository, &catalog_leases, &account_leases, &repository);
 
         let result = service.rename("acount1", "  New Name  ").unwrap();
 
@@ -119,7 +135,8 @@ mod tests {
         let repository = FakeRepository::new(Some("Existing"));
         let catalog_leases = AccountCatalogLeaseManager::default();
         let account_leases = AccountLeaseManager::default();
-        let service = AccountNamingService::new(&repository, &catalog_leases, &account_leases);
+        let service =
+            AccountNamingService::new(&repository, &catalog_leases, &account_leases, &repository);
 
         assert!(service.rename("acount1", " ").is_err());
         assert!(service.rename("acount1", "existing").is_err());
@@ -127,5 +144,32 @@ mod tests {
         assert!(service.rename("ACOUNT1", "Available").is_err());
         assert_eq!(*repository.saves.lock().unwrap(), 0);
         drop(blocker);
+    }
+
+    #[test]
+    fn failed_runtime_transaction_keeps_the_original_name_and_releases_the_account_lease() {
+        struct RejectRename<'a>(&'a AccountLeaseManager);
+        impl AccountRenameTransaction for RejectRename<'_> {
+            fn commit(
+                &self,
+                original: &AccountMeta,
+                renamed: &AccountMeta,
+            ) -> Result<(), AppError> {
+                assert_eq!(original.display_name, "Old");
+                assert_eq!(renamed.display_name, "New");
+                assert!(self.0.try_acquire(&original.id).is_err());
+                Err(AppError::Unknown("window verification failed".into()))
+            }
+        }
+        let repository = FakeRepository::new(None);
+        let catalog_leases = AccountCatalogLeaseManager::default();
+        let account_leases = AccountLeaseManager::default();
+        let transaction = RejectRename(&account_leases);
+        let service =
+            AccountNamingService::new(&repository, &catalog_leases, &account_leases, &transaction);
+        assert!(service.rename("acount1", "New").is_err());
+        assert_eq!(repository.account.lock().unwrap().display_name, "Old");
+        assert_eq!(*repository.saves.lock().unwrap(), 0);
+        assert!(account_leases.is_empty());
     }
 }

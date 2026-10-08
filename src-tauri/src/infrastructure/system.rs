@@ -1511,7 +1511,15 @@ pub fn rename_game_window(pid: u32, new_title: &str) {
         ) -> i32;
         fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
         fn IsWindowVisible(hWnd: isize) -> i32;
-        fn SetWindowTextW(hWnd: isize, lpString: *const u16) -> i32;
+        fn SendMessageTimeoutW(
+            hwnd: isize,
+            message: u32,
+            wparam: usize,
+            lparam: isize,
+            flags: u32,
+            timeout: u32,
+            result: *mut usize,
+        ) -> isize;
         fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
     }
 
@@ -1533,7 +1541,18 @@ pub fn rename_game_window(pid: u32, new_title: &str) {
         if len > 0 {
             let title = String::from_utf16_lossy(&buf[..len as usize]);
             if title.to_lowercase().contains("diablo") {
-                SetWindowTextW(hwnd, ctx.title_wide.as_ptr());
+                // Startup title updates share the account identity lock with
+                // explicit renames; an unresponsive game must not hold it forever.
+                let mut result = 0;
+                SendMessageTimeoutW(
+                    hwnd,
+                    0x000C, // WM_SETTEXT
+                    0,
+                    ctx.title_wide.as_ptr() as isize,
+                    0x0001 | 0x0002 | 0x0020, // BLOCK | ABORTIFHUNG | ERRORONEXIT
+                    1000,
+                    &mut result,
+                );
                 return 0; // 找到并改名后停止
             }
         }

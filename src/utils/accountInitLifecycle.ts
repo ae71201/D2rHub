@@ -43,7 +43,7 @@ export function shouldCleanupOnDialogClose({
 /**
  * 关闭初始化弹窗是否需要显式下发取消。
  *
- * 重新初始化会占用宿主事务（最长等待 Battle.net 登录 120 秒），
+ * 重新初始化会占用宿主事务（最长等待 Battle.net 登录 600 秒），
  * 所以只要还没走到完成态，关闭窗口就必须取消，避免后台事务悬空。
  */
 export function shouldCancelInitializationOnClose({

@@ -961,7 +961,7 @@ const textMap: Record<string, string> = {
   "正在启动战网客户端，请在弹出的战网中登录账号...": "Launching Battle.net client. Log in with the account in the popup.",
   "重置已被主动取消": "Reset cancelled by user",
   "重置已被取消": "Reset cancelled",
-  "等待登录超时（120秒）": "Login wait timed out (120s)",
+  "等待登录超时（600 秒）": "Login wait timed out (600s)",
   "检测到登录成功！开始采集认证凭据...": "Login detected. Collecting auth credentials...",
   "正在采集并保存新账号快照...": "Collecting and saving new account snapshot...",
   "快照采集并保存完成！": "Snapshot collected and saved.",

@@ -42,9 +42,9 @@ pub use leases::{
 pub use ports::{
     AccountCatalog, AccountCreationRepository, AccountDeletionCleanupPort,
     AccountDeletionTransaction, AccountGameSettingsRepository, AccountInitializationTransaction,
-    AccountModRepository, AccountNameRepository, AccountRepository, AccountRuntimePort,
-    AccountSettingsPreferenceRepository, GameSettings, GameWindowIdentity, GameWindowPort,
-    InstanceStatusPort, WindowPosition,
+    AccountModRepository, AccountNameRepository, AccountRenameTransaction, AccountRepository,
+    AccountRuntimePort, AccountSettingsPreferenceRepository, GameSettings, GameWindowIdentity,
+    GameWindowPort, InstanceStatusPort, WindowPosition,
 };
 
 #[derive(Default)]

@@ -74,6 +74,12 @@ pub trait AccountNameRepository: AccountRepository {
     ) -> Result<(), AppError>;
 }
 
+/// Coordinates persisted display names with verified live window
+/// identity. The caller owns catalog/account leases; the adapter owns rollback.
+pub trait AccountRenameTransaction: Send + Sync {
+    fn commit(&self, original: &AccountMeta, renamed: &AccountMeta) -> Result<(), AppError>;
+}
+
 pub trait AccountCreationRepository: AccountNameRepository {
     fn next_account_id(&self) -> String;
     fn create(&self, account: &AccountMeta) -> Result<(), AppError>;

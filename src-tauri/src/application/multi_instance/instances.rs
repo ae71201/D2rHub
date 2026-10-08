@@ -77,6 +77,23 @@ impl InstanceRegistry {
         }
     }
 
+    /// Window identity and account metadata change together. Scans cannot take
+    /// a snapshot mid-transaction, and older scans must yield even after rollback.
+    pub fn with_account_identity_change<T, E>(
+        &self,
+        account_id: &str,
+        change: impl FnOnce(Option<u32>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let mut state = self.state.write();
+        let pid = state
+            .entries
+            .get(&account_key(account_id))
+            .and_then(|entry| entry.active_pid);
+        let result = change(pid);
+        state.revision = state.revision.wrapping_add(1);
+        result
+    }
+
     pub fn pid_for(&self, account_id: &str) -> Option<u32> {
         self.state
             .read()
@@ -330,5 +347,27 @@ mod tests {
             registry.get("new").unwrap().launch.unwrap().mod_args,
             "-mod new"
         );
+    }
+
+    #[test]
+    fn identity_change_preserves_the_launch_and_invalidates_older_scans_on_commit_or_rollback() {
+        let registry = InstanceRegistry::default();
+        registry.record_launched("one", 42, "-mod original");
+        for succeeds in [true, false] {
+            let scan = registry.snapshot();
+            let result = registry.with_account_identity_change("ONE", |pid| {
+                assert_eq!(pid, Some(42));
+                if succeeds {
+                    Ok(())
+                } else {
+                    Err("rolled back")
+                }
+            });
+            assert_eq!(result.is_ok(), succeeds);
+            assert!(registry.reconcile_if_unchanged(&scan, []).is_none());
+            let instance = registry.get("one").unwrap();
+            assert_eq!(instance.pid, 42);
+            assert_eq!(instance.launch.unwrap().mod_args, "-mod original");
+        }
     }
 }
