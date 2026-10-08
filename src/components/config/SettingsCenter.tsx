@@ -525,7 +525,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
             )}
 
             {activeTab === "agent" && config && (
-              <LaunchStrategyPanel config={config} updateConfig={updateConfig} />
+              <LaunchStrategyPanel config={config} accounts={accounts} updateConfig={updateConfig} />
             )}
 
             {activeTab === "appearance" && config && (

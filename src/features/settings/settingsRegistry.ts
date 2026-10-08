@@ -105,7 +105,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
   "zh-CN": {
     accounts: { label: "账号与实例", description: "账号身份、启动参数、窗口与游戏配置" },
     paths: { label: "运行环境", description: "游戏、战网、浏览器与存档位置" },
-    agent: { label: "启动策略", description: "战网 Agent 与实例启动等待策略" },
+    agent: { label: "启动策略", description: "战网 Agent、多开后保留战网与应用行为" },
     shortcuts: { label: "窗口快捷键", description: "呼出主面板并快速聚焦多开实例" },
     advanced: { label: "维护与迁移", description: "日志、路径向导与账号迁移" },
     tasks: { label: "后台任务", description: "进度、取消、重试与诊断时间线" },
@@ -120,7 +120,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
   "en-US": {
     accounts: { label: "Accounts & Instances", navigationLabel: "Accounts", description: "Identity, launch options, windows, and game settings" },
     paths: { label: "Runtime Paths", navigationLabel: "Game paths", description: "Game, Battle.net, browser, and saved-game locations" },
-    agent: { label: "Launch Strategy", navigationLabel: "Launch", description: "Battle.net Agent and instance launch timing" },
+    agent: { label: "Launch Strategy", navigationLabel: "Launch", description: "Battle.net Agent, client retention after launch, and application behavior" },
     shortcuts: { label: "Window Shortcuts", navigationLabel: "Shortcuts", description: "Show D2RHub or focus a game instance" },
     advanced: { label: "Maintenance & Transfer", navigationLabel: "Maintenance", description: "Logs, setup assistant, and account transfer" },
     tasks: { label: "Background Tasks", navigationLabel: "Tasks", description: "Progress, cancellation, retries, and diagnostic timelines" },

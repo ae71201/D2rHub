@@ -56,5 +56,15 @@ for (const mode of ["accounts", "scheme"] as const) {
       });
       expect(mocks.showToast).not.toHaveBeenCalled();
     });
+
+    it("preserves the game's result and warns if reopening Battle.net fails", async () => {
+      const warning = "游戏启动已完成，但保留战网失败: 战网配置快照不可用";
+      const result = { ...confirmed, error: warning };
+      mocks.invokeCommand.mockResolvedValue([result]);
+      await start();
+      expect(useLaunch.getState().results).toEqual([result]);
+      expect(mocks.emitEvent).toHaveBeenCalledWith("launch-ended", { success: true });
+      expect(mocks.showToast).toHaveBeenCalledWith("warning", warning);
+    });
   });
 }

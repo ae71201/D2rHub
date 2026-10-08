@@ -751,7 +751,16 @@ impl AccountDeletionTransaction for AccountDeletionTransactionAdapter<'_> {
                     }
                     let removed_from_launch_group =
                         cfg.remove_account_from_launch_groups(&stored_account_id);
-                    Ok(cleared_audio_target || removed_from_launch_group)
+                    let cleared_battle_net_target = cfg
+                        .keep_battle_net_account_id
+                        .as_deref()
+                        .is_some_and(|id| id.trim().eq_ignore_ascii_case(&stored_account_id));
+                    if cleared_battle_net_target {
+                        cfg.keep_battle_net_account_id = None;
+                    }
+                    Ok(cleared_audio_target
+                        || removed_from_launch_group
+                        || cleared_battle_net_target)
                 },
                 |_| {
                     let mut staged_deletion = staged_deletion.borrow_mut();
@@ -1802,6 +1811,12 @@ mod settings_json_tests {
         };
         assert!(config_references_account(&audio_config, &requested_id));
 
+        let battle_net_config = GlobalConfig {
+            keep_battle_net_account_id: Some(format!(" {stored_id} ")),
+            ..GlobalConfig::default()
+        };
+        assert!(config_references_account(&battle_net_config, &requested_id));
+
         let group_config = GlobalConfig {
             launch_groups: vec![crate::commands::global_config::LaunchGroup {
                 id: "group".to_string(),
@@ -2762,7 +2777,9 @@ fn run_bnet_initialization_transaction(
                 "error",
                 &format!("等待登录超时（{BNET_INITIALIZATION_LOGIN_TIMEOUT_SECS} 秒）"),
             );
-            return Err(AppError::LoginTimeout(BNET_INITIALIZATION_LOGIN_TIMEOUT_SECS));
+            return Err(AppError::LoginTimeout(
+                BNET_INITIALIZATION_LOGIN_TIMEOUT_SECS,
+            ));
         }
         emit("login", "ok", "已检测到登录完成");
 
@@ -2924,6 +2941,10 @@ fn config_references_account(config: &GlobalConfig, account_id: &str) -> bool {
         .rune_audio_target_account
         .trim()
         .eq_ignore_ascii_case(account_id)
+        || config
+            .keep_battle_net_account_id
+            .as_deref()
+            .is_some_and(|id| id.trim().eq_ignore_ascii_case(account_id))
         || config.launch_groups.iter().any(|group| {
             group
                 .account_ids

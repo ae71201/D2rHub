@@ -173,6 +173,9 @@ pub struct GlobalConfig {
         alias = "stilllite_trim_memory"
     )]
     pub launch_trim_memory: bool,
+    /// 多开完成后重新打开并保留的战网模式账号；None 表示关闭。
+    #[serde(default)]
+    pub keep_battle_net_account_id: Option<String>,
     /// 是否在每天启动时自动检查更新
     #[serde(default = "default_enable_auto_update")]
     pub enable_auto_update: bool,
@@ -491,6 +494,7 @@ impl Default for GlobalConfig {
             theme_overlay: "light".to_string(),
             auto_close_browser: true,
             launch_trim_memory: true,
+            keep_battle_net_account_id: None,
             enable_auto_update: true,
             download_source: DownloadSource::Auto,
             first_launch: true,

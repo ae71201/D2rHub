@@ -149,6 +149,30 @@ fn launch_login_is_ready(login_signal_ready: bool, mutex_closed: bool) -> bool {
     login_signal_ready && mutex_closed
 }
 
+fn battle_net_account_to_keep<'a>(
+    configured_account_id: Option<&str>,
+    results: &'a [LaunchResult],
+    cancelled: bool,
+) -> Option<&'a str> {
+    if cancelled
+        || results
+            .iter()
+            .any(|result| !launch_queue_can_continue(result.success, result.mutex_killed))
+    {
+        return None;
+    }
+    let configured_account_id = configured_account_id?.trim();
+    results
+        .iter()
+        .find(|result| {
+            result
+                .account_id
+                .eq_ignore_ascii_case(configured_account_id)
+                && result.d2r_pid.is_some()
+        })
+        .map(|result| result.account_id.as_str())
+}
+
 #[derive(Default)]
 struct MutexRemovalState {
     closed: std::sync::atomic::AtomicBool,
@@ -1534,6 +1558,51 @@ async fn launch_single_bnet_only(
     }
 }
 
+async fn reopen_battle_net_after_launch<'a>(
+    app: &tauri::AppHandle,
+    config: &GlobalConfig,
+    state: &'a SharedState,
+    cancellation_ticket: CancellationTicket,
+    account_id: &str,
+    host_runtime_lease: &mut Option<HostRuntimeLease<'a>>,
+) -> LaunchResult {
+    // The game's lifecycle lease has been released. Reacquire it and revalidate
+    // the saved account before restoring shared Battle.net files and registry.
+    let _account_lease = match AccountLifecycleLease::try_acquire(state, account_id) {
+        Ok(lease) => lease,
+        Err(error) => return account_path_error(account_id, error),
+    };
+    if let Err(error) = preflight_accounts(
+        config,
+        &[account_id.to_string()],
+        ContextPurpose::BattleNetOnly,
+    ) {
+        return account_path_error(account_id, error);
+    }
+    // A batch consisting entirely of existing windows has not acquired the
+    // host lease yet; reopening Battle.net still needs exclusive ownership.
+    if host_runtime_lease.is_none() {
+        match HostRuntimeLease::try_acquire_for_launch(state.as_ref()) {
+            Ok(lease) => *host_runtime_lease = Some(lease),
+            Err(error) => return account_path_error(account_id, error),
+        }
+    }
+    if is_cancelled(state, cancellation_ticket) {
+        return account_path_error(account_id, AppError::Unknown("启动已被用户取消".into()));
+    }
+
+    let _ = app.emit(
+        "launch-progress",
+        LaunchProgress::new(
+            account_id,
+            "keep-battle-net",
+            "running",
+            "多开流程已完成，正在重新打开所选账号的战网...",
+        ),
+    );
+    launch_single_bnet_only(app, config, state, cancellation_ticket, account_id).await
+}
+
 /// 一键启动选中的账号列表
 /// 逐个串行启动：一个账号完整走完（清理→覆盖→启动战网→游戏→清互斥→连接→关战网）
 /// 再开始下一个。两个账号之间留 2 秒缓冲。
@@ -1871,6 +1940,55 @@ async fn launch_accounts_impl(
 
     #[cfg(target_os = "windows")]
     memory_trim.trim(&state, cancellation_ticket).await;
+
+    // This runs inside the same task and host lease, after every game's cleanup,
+    // the final memory trim, and window arrangement. Only reopen the client.
+    let retained_account_id = battle_net_account_to_keep(
+        config.keep_battle_net_account_id.as_deref(),
+        &results,
+        is_cancelled(&state, cancellation_ticket),
+    )
+    .map(str::to_string);
+    if let Some(account_id) = retained_account_id {
+        let retained = reopen_battle_net_after_launch(
+            &app,
+            &config,
+            &state,
+            cancellation_ticket,
+            &account_id,
+            &mut host_runtime_lease,
+        )
+        .await;
+        let (status, message) = if retained.success {
+            ("ok", "多开完成，所选账号的战网已保留".to_string())
+        } else {
+            let warning = format!(
+                "游戏启动已完成，但保留战网失败: {}",
+                retained.error.as_deref().unwrap_or("未知错误"),
+            );
+            // Keep the original game's success, PID, and mutex result. The
+            // frontend presents success + error as a nonblocking warning.
+            if let Some(result) = results
+                .iter_mut()
+                .find(|result| result.account_id == account_id)
+            {
+                result.error = Some(match result.error.take() {
+                    Some(previous) => format!("{previous}；{warning}"),
+                    None => warning.clone(),
+                });
+            }
+            ("warning", warning)
+        };
+        crate::logger::log_msg(
+            if retained.success { "INFO" } else { "WARN" },
+            "Launch",
+            &format!("[Account {account_id}] [keep-battle-net] [{status}]: {message}"),
+        );
+        let _ = app.emit(
+            "launch-progress",
+            LaunchProgress::new(&account_id, "done", status, &message),
+        );
+    }
 
     Ok(results)
 }
@@ -3122,15 +3240,90 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_temporary_graphics_override_at_path, battle_net_launch_argument,
-        launch_login_is_ready, launch_queue_can_continue, parse_windows_command_line,
-        persist_window_position, preflight_accounts, replace_bnet_roaming_snapshot,
-        unique_account_window_executable, validate_legacy_reg_sections, LaunchGraphicsOverride,
+        apply_temporary_graphics_override_at_path, battle_net_account_to_keep,
+        battle_net_launch_argument, launch_login_is_ready, launch_queue_can_continue,
+        parse_windows_command_line, persist_window_position, preflight_accounts,
+        replace_bnet_roaming_snapshot, unique_account_window_executable,
+        validate_legacy_reg_sections, LaunchGraphicsOverride,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::domain::config::GlobalConfig;
     use crate::launch_context::ContextPurpose;
     use crate::state::{AccountLifecycleLease, AppState};
+
+    fn successful_game_launch(id: &str) -> super::LaunchResult {
+        super::LaunchResult {
+            account_id: id.into(),
+            success: true,
+            d2r_pid: Some(123),
+            error: None,
+            mutex_killed: true,
+        }
+    }
+
+    #[test]
+    fn retained_battle_net_uses_the_selected_account_even_when_it_was_not_last() {
+        let results = vec![
+            successful_game_launch("acount1"),
+            successful_game_launch("acount2"),
+        ];
+        assert_eq!(
+            battle_net_account_to_keep(Some("  ACOUNT1  "), &results, false),
+            Some("acount1")
+        );
+        assert_eq!(battle_net_account_to_keep(None, &results, false), None);
+        assert_eq!(battle_net_account_to_keep(Some(""), &results, false), None);
+        assert_eq!(
+            battle_net_account_to_keep(Some("acount3"), &results, false),
+            None
+        );
+        assert_eq!(
+            battle_net_account_to_keep(Some("acount1"), &[], false),
+            None
+        );
+    }
+
+    #[test]
+    fn retained_battle_net_is_skipped_for_cancelled_failed_or_unsafe_batches() {
+        let mut results = vec![
+            successful_game_launch("acount1"),
+            successful_game_launch("acount2"),
+        ];
+        assert_eq!(
+            battle_net_account_to_keep(Some("acount1"), &results, true),
+            None
+        );
+        results[1].success = false;
+        assert_eq!(
+            battle_net_account_to_keep(Some("acount1"), &results, false),
+            None
+        );
+        results[1].success = true;
+        results[1].mutex_killed = false;
+        assert_eq!(
+            battle_net_account_to_keep(Some("acount1"), &results, false),
+            None
+        );
+        results[1].mutex_killed = true;
+        results[0].d2r_pid = None;
+        assert_eq!(
+            battle_net_account_to_keep(Some("acount1"), &results, false),
+            None
+        );
+    }
+
+    #[test]
+    fn retained_battle_net_rechecks_auth_mode_before_restoring_the_environment() {
+        let root = temp_dir("retained_bnet_token");
+        let config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        let error = preflight_accounts(&config, &["acount1".into()], ContextPurpose::BattleNetOnly)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Token 认证账号不支持仅启动 Battle.net"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn dropping_launch_scope_aborts_background_mutex_worker() {

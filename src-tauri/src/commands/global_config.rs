@@ -692,6 +692,7 @@ mod validation_tests {
         let stale_candidate = GlobalConfig {
             rune_audio_enabled: true,
             rune_audio_target_account: retired_id.clone(),
+            keep_battle_net_account_id: Some(retired_id.to_ascii_uppercase()),
             launch_groups: vec![LaunchGroup {
                 id: "stale".to_string(),
                 name: "陈旧方案".to_string(),
@@ -714,6 +715,7 @@ mod validation_tests {
 
         assert!(!prepared.rune_audio_enabled);
         assert!(prepared.rune_audio_target_account.is_empty());
+        assert!(prepared.keep_battle_net_account_id.is_none());
         assert!(prepared.launch_groups[0].account_ids.is_empty());
         assert!(prepared.launch_groups[0].members.is_empty());
         let _ = std::fs::remove_dir_all(root);
@@ -807,10 +809,16 @@ mod validation_tests {
             cn_game_path: root.to_string_lossy().into_owned(),
             rune_audio_enabled: true,
             rune_audio_target_account: "keep-my-account".into(),
-            rune_audio_external_target: Some(crate::domain::config::ExternalAudioTarget { edition: "CN".into(), mod_name: "LocalAudio".into() }),
+            rune_audio_external_target: Some(crate::domain::config::ExternalAudioTarget {
+                edition: "CN".into(),
+                mod_name: "LocalAudio".into(),
+            }),
             ..GlobalConfig::default()
         };
-        assert!(config.resolve_rune_audio_target_account().unwrap().is_none());
+        assert!(config
+            .resolve_rune_audio_target_account()
+            .unwrap()
+            .is_none());
         config.normalize_rune_audio_configuration();
         assert!(config.rune_audio_enabled);
         assert_eq!(config.rune_audio_target_account, "keep-my-account");
@@ -1886,6 +1894,34 @@ mod validation_tests {
 #[cfg(test)]
 mod contract_tests {
     use super::{GlobalConfig, LegacyPathMigration};
+
+    #[test]
+    fn battle_net_retention_defaults_off_and_supports_global_config_patches() {
+        let mut old_config = serde_json::to_value(GlobalConfig::default()).unwrap();
+        old_config
+            .as_object_mut()
+            .unwrap()
+            .remove("keep_battle_net_account_id");
+        let config: GlobalConfig = serde_json::from_value(old_config).unwrap();
+        assert!(config.keep_battle_net_account_id.is_none());
+        let selected = config
+            .apply_user_patch(serde_json::json!({
+                "keep_battle_net_account_id": "acount1"
+            }))
+            .unwrap();
+        let round_trip: GlobalConfig =
+            serde_json::from_slice(&serde_json::to_vec(&selected).unwrap()).unwrap();
+        assert_eq!(
+            round_trip.keep_battle_net_account_id.as_deref(),
+            Some("acount1")
+        );
+        let disabled = selected
+            .apply_user_patch(serde_json::json!({
+                "keep_battle_net_account_id": null
+            }))
+            .unwrap();
+        assert!(disabled.keep_battle_net_account_id.is_none());
+    }
 
     #[test]
     fn rust_and_typescript_global_config_fields_stay_in_sync() {
@@ -3393,6 +3429,12 @@ fn prepare_global_config_with_retired_accounts(
             &cfg.rune_audio_tracked_charm_codes,
         );
     cfg.normalize_launch_groups();
+    cfg.keep_battle_net_account_id = cfg
+        .keep_battle_net_account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
     for account_id in retired_account_ids {
         if cfg
             .rune_audio_target_account
@@ -3405,6 +3447,16 @@ fn prepare_global_config_with_retired_accounts(
             }
         }
         cfg.remove_account_from_launch_groups(account_id);
+        if cfg
+            .keep_battle_net_account_id
+            .as_deref()
+            .is_some_and(|id| id.eq_ignore_ascii_case(account_id))
+        {
+            cfg.keep_battle_net_account_id = None;
+        }
+    }
+    if let Some(account_id) = &cfg.keep_battle_net_account_id {
+        AccountManager::validate_account_id(account_id)?;
     }
     cfg.validate_launch_groups()?;
     cfg.normalize_favorite_launch_group_ids();

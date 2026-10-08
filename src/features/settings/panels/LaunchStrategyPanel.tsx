@@ -1,12 +1,26 @@
 import { Toggle } from "../../../components/ui/Toggle";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
-import type { GlobalConfig } from "../../../store/types";
+import type { AccountMeta, GlobalConfig } from "../../../store/types";
+import { sortAccountsByCardOrder } from "../../../utils/accountOrder";
+import { requiresTokenMigration } from "../../../utils/regionPaths";
 
 interface LaunchStrategyPanelProps {
   config: GlobalConfig;
+  accounts: AccountMeta[];
   updateConfig: (updater: (config: GlobalConfig) => void) => void;
 }
-export function LaunchStrategyPanel({ config, updateConfig }: LaunchStrategyPanelProps) {
+export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchStrategyPanelProps) {
+  const battleNetAccounts = sortAccountsByCardOrder(accounts).filter(account => {
+    const authMode = account.auth_mode?.trim() || "bnet";
+    return account.initialized && authMode === "bnet"
+      && !requiresTokenMigration(authMode, account.region, config);
+  });
+  const configuredAccountId = config.keep_battle_net_account_id?.trim() ?? "";
+  const selectedAccountId = battleNetAccounts.find(account => account.id.toLowerCase() === configuredAccountId.toLowerCase())?.id
+    ?? configuredAccountId;
+  const selectedAccountUnavailable = !!selectedAccountId
+    && !battleNetAccounts.some(account => account.id === selectedAccountId);
+
   return (
     <div className="settings-content-grid">
       <section className="spatial-panel p-3 space-y-2" aria-labelledby="agent-strategy-title">
@@ -86,6 +100,34 @@ export function LaunchStrategyPanel({ config, updateConfig }: LaunchStrategyPane
             <p className="text-2xs text-text-muted">仅当活跃战网进程数达到或超过阈值时才终结 Agent，避免多开限制发生。</p>
           </div>
         )}
+      </section>
+
+      <section className="spatial-panel p-3 space-y-2" aria-labelledby="keep-battle-net-title">
+        <div>
+          <h2 id="keep-battle-net-title" className="text-sm font-semibold text-text-secondary mb-1">多开后保留战网</h2>
+          <p id="keep-battle-net-description" className="text-2xs text-text-muted">所选账号参与本次启动且全部账号启动成功后，单独重新打开它的战网客户端，不重复启动游戏；取消或启动失败时跳过。</p>
+        </div>
+        <label className="block text-xs text-text-secondary" htmlFor="keep-battle-net-account">保留战网的账号</label>
+        <select
+          id="keep-battle-net-account"
+          className="settings-input"
+          aria-describedby="keep-battle-net-description keep-battle-net-status"
+          value={selectedAccountId}
+          onChange={event => updateConfig(c => { c.keep_battle_net_account_id = event.target.value || null; })}
+        >
+          <option value="">不保留</option>
+          {selectedAccountUnavailable && <option value={selectedAccountId} disabled>原账号不可用，请重新选择</option>}
+          {battleNetAccounts.map(account => (
+            <option key={account.id} value={account.id} data-i18n-skip>{account.display_name || account.id}</option>
+          ))}
+        </select>
+        <p id="keep-battle-net-status" className={`text-2xs ${selectedAccountUnavailable ? "text-warning" : "text-text-muted"}`}>
+          {selectedAccountUnavailable
+            ? "原账号已删除、未初始化或已改为 Token 模式，请重新选择。"
+            : battleNetAccounts.length === 0
+              ? "暂无可用的战网模式账号，请先添加并初始化战网模式账号。"
+              : "仅可选择已初始化的战网模式账号。"}
+        </p>
       </section>
 
       <section className="spatial-panel p-3 space-y-2" aria-labelledby="application-options-title">

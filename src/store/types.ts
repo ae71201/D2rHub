@@ -61,6 +61,8 @@ export interface GlobalConfig {
   theme_overlay: string;
   auto_close_browser: boolean;
   launch_trim_memory?: boolean;
+  /** Reopen this account's Battle.net client after its game launch batch completes. */
+  keep_battle_net_account_id?: string | null;
   enable_auto_update: boolean;
   download_source?: "auto" | "gitee" | "github";
   first_launch: boolean;

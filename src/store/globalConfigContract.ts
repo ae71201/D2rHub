@@ -31,6 +31,7 @@ export const GLOBAL_CONFIG_FIELDS = [
   "theme_overlay",
   "auto_close_browser",
   "launch_trim_memory",
+  "keep_battle_net_account_id",
   "enable_auto_update",
   "download_source",
   "first_launch",
