@@ -224,7 +224,11 @@ pub async fn unpack_mod_capsule(
     let shared = state.inner().clone();
     let _mutation = shared.mod_mutations().try_acquire()?;
     let (config, root, name) = crate::mod_catalog::resolve_unpack_target(&shared, &capsule_id)?;
-    crate::audio_mod::ensure_audio_mod_not_in_use(&shared, &config, &name)?;
+    let game_directory = root
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("无法确认要解压的 Mod 所属游戏目录")?;
+    crate::audio_mod::ensure_audio_mod_not_in_use(&shared, &config, game_directory, &name)?;
     let task = shared
         .tasks()
         .begin(

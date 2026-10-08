@@ -2,6 +2,7 @@
 identifier = "main-window-commands"
 description = "Allows the main application window to invoke the complete D2RHub command surface."
 commands.allow = [
+  "get_external_audio_instances", "select_external_audio_instance",
   "check_mod_resource_updates", "check_software_update", "download_software_update", "launch_downloaded_update",
   "get_mod_resources", "install_mod_resource", "get_bundled_processor_status",
   "inspect_account_launch_health", "close_selected_accounts",

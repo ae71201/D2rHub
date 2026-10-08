@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { version as appVersion } from "../package.json";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
+import { recognitionSourceId } from "./utils/recognitionSource";
 import { normalizeTheme } from "./store/themeCatalog";
 import { PET_ITEMS, PET_ITEM_BY_ID } from "./features/pet/catalog";
 import type { PetAction, PetOutcome } from "./features/pet/types";
@@ -317,9 +318,13 @@ const baseConfig: GlobalConfig = {
     { id: "uber-team", name: "火炬队", account_ids: ["sorc-01", "pala-03"] },
   ],
   favorite_launch_group_ids: ["farm-core"],
+
 };
 
-let persistedGlobalConfig: GlobalConfig = { ...baseConfig };
+let persistedGlobalConfig: GlobalConfig = { ...baseConfig,
+  ...(params.get("recognition") === "external" ? { rune_audio_external_target: { edition: "Global" as const, mod_name: "jcy-tz" } } : {}) };
+let externalSelection: { pid: number; started_at: number } | null = null;
+if (params.get("accounts") === "none") accounts.splice(0);
 
 let roomAutomationSnapshot: RoomAutomationConfigSnapshot = {
   schema_version: 1,
@@ -577,7 +582,21 @@ function installIpcMock() {
           preferred_source: "gitee", mods: [{id:"LiteHub",installed_version:"mod-resources-20260920.1",update_available:true,protected:false,message:"发现 Mod 更新；关闭游戏后可原位更新"}],
           mods_directory: "C:\\Diablo II Resurrected\\mods", game_data_version: "93854", warning: null,
         };
+      case "get_external_audio_instances": {
+        const count = params.get("instances") === "many" ? 2 : params.get("instances") === "one" ? 1 : 0;
+        return Array.from({ length: count }, (_, index) => ({ pid: 42 + index, started_at: index + 1, mod_name: "jcy-tz", window_title: ["Ladder Sorc", "Trav Barb"][index],
+          ready: true, selected: externalSelection?.pid === 42 + index && externalSelection.started_at === index + 1, message: "" }));
+      }
+      case "select_external_audio_instance":
+        externalSelection = (payload as { identity: { pid: number; started_at: number } }).identity;
+        return null;
+      case "get_rune_audio_status":
+        return { running: !!externalSelection && persistedGlobalConfig.rune_audio_enabled, account_id: null, source_id: externalSelection ? recognitionSourceId(persistedGlobalConfig) : null,
+          target_pid: externalSelection?.pid ?? null, last_error: null, captured_frames: 0, audio_peak: 0, decoded_packets: 0, rune_events: 0, item_events: 0, scene_heartbeats: 0, last_marker: null, last_confidence: null, last_detected_at: null, diagnostic_recording: false, diagnostic_recording_path: null };
       case "get_audio_mod_setup_state":
+        if ((payload as { edition?: string })?.edition) return {
+          account_id: "", account_name: "本机游戏 · 国际服", current_mod_name: "jcy-tz", launch_arguments: "-mod jcy-tz -txt", has_txt: true, ready: true, update_required: false, recipe_version: 33, required_recipe_version: 33, build_mode: "augment", source_mod_name: "jcy", feature_groups: ["audio_telemetry"], auto_exit_on_death_enabled: false, reason_code: "ready", message: "准备完成", installed_mods: [{ name: "jcy", audio_ready: false, update_required: false, source_eligible: true, feature_groups: [], audio_reusable: false }], running_pid: null, session_verified: false, active_session_ready: null, active_session_update_required: null, restart_required: false,
+        };
         if (audioModState === "legacy") {
           return {
             account_id: String((payload as { accountId?: string })?.accountId ?? "sorc-01"),
@@ -791,7 +810,7 @@ async function primeStores() {
   ]);
 
   useGlobalConfig.setState({
-    config: { ...baseConfig, first_run_complete: surface !== "setup" },
+    config: { ...persistedGlobalConfig, first_run_complete: surface !== "setup" },
     initialLoading: false,
     saving: false,
     error: null,

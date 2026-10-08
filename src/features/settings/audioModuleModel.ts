@@ -1,4 +1,5 @@
 export interface RuneAudioStatus {
+  source_id?: string | null;
   running: boolean;
   account_id: string | null;
   target_pid: number | null;
@@ -14,6 +15,16 @@ export interface RuneAudioStatus {
   last_detected_at: string | null;
   diagnostic_recording: boolean;
   diagnostic_recording_path: string | null;
+}
+
+export interface ExternalAudioInstance {
+  pid: number;
+  started_at: number;
+  mod_name: string | null;
+  ready: boolean;
+  selected?: boolean;
+  window_title?: string | null;
+  message: string;
 }
 
 export const TRACKING_CATEGORIES = [

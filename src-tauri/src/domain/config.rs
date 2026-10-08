@@ -52,6 +52,14 @@ pub struct LegacyPathMigration {
     pub battle_net_path: String,
 }
 
+/// Optional account-free recognition target. Missing means the legacy account target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalAudioTarget {
+    pub edition: String,
+    #[serde(default)]
+    pub mod_name: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchGroupMember {
     pub account_id: String,
@@ -179,6 +187,9 @@ pub struct GlobalConfig {
     /// 被监控的账号 ID（对应 account.json 中的 id）。
     #[serde(default)]
     pub rune_audio_target_account: String,
+    /// Separate from the saved account target so changing modes never edits an account.
+    #[serde(default)]
+    pub rune_audio_external_target: Option<ExternalAudioTarget>,
     /// Gold 码相关识别阈值。
     #[serde(default = "default_rune_audio_detection_threshold")]
     pub rune_audio_detection_threshold: f32,
@@ -485,6 +496,7 @@ impl Default for GlobalConfig {
             first_launch: true,
             rune_audio_enabled: false,
             rune_audio_target_account: String::new(),
+            rune_audio_external_target: None,
             rune_audio_detection_threshold: default_rune_audio_detection_threshold(),
             rune_audio_tracked_categories: default_rune_audio_tracked_categories(),
             rune_audio_min_rune_number: default_rune_audio_min_rune_number(),

@@ -54,6 +54,8 @@ export const TAURI_COMMANDS = [
   "get_foreground_window_title",
   "get_global_config",
   "get_rune_audio_status",
+  "get_external_audio_instances",
+  "select_external_audio_instance",
   "get_scene_stats",
   "get_stats_data",
   "get_stats_page_preferences",

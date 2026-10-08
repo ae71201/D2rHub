@@ -66,6 +66,8 @@ export interface GlobalConfig {
   first_launch: boolean;
   rune_audio_enabled: boolean;
   rune_audio_target_account: string;
+  /** null/absent retains account monitoring and its saved target. */
+  rune_audio_external_target?: { edition: "CN" | "Global"; mod_name: string } | null;
   rune_audio_detection_threshold?: number;
   rune_audio_tracked_categories: string[];
   rune_audio_min_rune_number?: number;
@@ -141,6 +143,7 @@ export interface PersistedDropEntry {
 }
 
 export interface SceneRecord {
+  source_id?: string | null;
   id?: number;
   absolute_time: string;
   character_name: string;
@@ -159,6 +162,8 @@ export interface MergeStrategy {
 }
 
 export interface DropObservation {
+  source_id?: string;
+  source_name?: string;
   id: number;
   observed_at: string;
   account_id: string;
@@ -182,6 +187,7 @@ export interface StatsData {
 
 /// 符文声纹识别事件。
 export interface RuneAudioEvent {
+  source_id?: string;
   source: string;
   account_id: string;
   timestamp: string;
@@ -192,6 +198,7 @@ export interface RuneAudioEvent {
 }
 
 export interface ItemAudioEvent {
+  source_id?: string;
   source: string;
   account_id: string;
   timestamp: string;
@@ -215,6 +222,7 @@ export interface TrackingDropSnapshot {
 }
 
 export interface TrackingSnapshot {
+  source_id?: string;
   revision: number;
   account_id: string;
   current_area_id: number | null;

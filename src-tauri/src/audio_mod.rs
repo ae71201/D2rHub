@@ -171,6 +171,96 @@ fn configured_account(
     Ok((config, account, context))
 }
 
+fn mod_task_subject(account_id: &str, edition: Option<&str>) -> String {
+    edition
+        .filter(|_| account_id.is_empty())
+        .map(|edition| format!("installation:{edition}"))
+        .unwrap_or_else(|| account_id.to_string())
+}
+
+/// Existing account commands keep their original validation; installation-only
+/// operations resolve neither authentication nor Saved Games/account metadata.
+fn mod_directory_for_subject(
+    state: &SharedState,
+    account_id: &str,
+    edition: Option<&str>,
+) -> Result<(GlobalConfig, PathBuf, String), String> {
+    if !account_id.is_empty() {
+        if edition.is_some() {
+            return Err("请仅指定账号或游戏安装版本中的一种加工目标".into());
+        }
+        let (config, account, context) = configured_account(state, account_id)?;
+        return Ok((
+            config,
+            context.installation.game_directory,
+            account.mod_args,
+        ));
+    }
+    let config = state.configuration().snapshot().ok_or("尚未完成首次配置")?;
+    let edition = edition.ok_or("请选择加工目标账号或游戏安装版本")?;
+    let directory = crate::rune_audio::external::installation_directory(&config, edition)?;
+    let arguments = config
+        .rune_audio_external_target
+        .as_ref()
+        .filter(|target| target.edition == edition)
+        .filter(|target| !target.mod_name.is_empty())
+        .map(|target| arguments_with_audio_mod("", &target.mod_name))
+        .transpose()?
+        .unwrap_or_default();
+    Ok((config, directory, arguments))
+}
+
+fn installation_setup_state(
+    state: &SharedState,
+    edition: &str,
+    mod_name: Option<&str>,
+) -> Result<AudioModSetupState, String> {
+    let (config, directory, configured_arguments) =
+        mod_directory_for_subject(state, "", Some(edition))?;
+    let mods = directory.join("mods");
+    let arguments = mod_name
+        .filter(|name| !name.is_empty())
+        .map(|name| arguments_with_audio_mod("", name))
+        .transpose()?
+        .unwrap_or(configured_arguments);
+    let configured = credential_compatibility(&mods, &arguments);
+    let validated = configured
+        .mod_name
+        .as_deref()
+        .and_then(|name| validate_audio_mod_credential(&mods, name).ok());
+    Ok(AudioModSetupState {
+        account_id: String::new(),
+        account_name: crate::rune_audio::external::source_name(&config, edition),
+        current_mod_name: configured.mod_name,
+        launch_arguments: arguments,
+        has_txt: configured.has_txt,
+        ready: configured.ready,
+        update_required: configured.update_required,
+        recipe_version: configured.recipe_version,
+        required_recipe_version: REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+        build_mode: configured.build_mode,
+        source_mod_name: configured.source_mod_name,
+        feature_groups: validated
+            .as_ref()
+            .map(|mod_| {
+                mod_.feature_groups
+                    .iter()
+                    .map(|group| group.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        auto_exit_on_death_enabled: validated.is_some_and(|mod_| mod_.auto_exit_on_death_enabled),
+        reason_code: configured.reason_code,
+        message: configured.message,
+        installed_mods: installed_mods(&mods),
+        running_pid: None,
+        session_verified: false,
+        active_session_ready: None,
+        active_session_update_required: None,
+        restart_required: false,
+    })
+}
+
 fn session_arguments(state: &SharedState, account: &AccountMeta) -> (String, Option<u32>, bool) {
     if let Some(instance) = state.multi_instance().instances().get(&account.id) {
         if let Some(snapshot) = instance.launch {
@@ -264,8 +354,10 @@ fn validate_in_game_room_tools_for_arguments(
 fn running_accounts_using_mod(
     state: &SharedState,
     config: &GlobalConfig,
+    game_directory: &Path,
     mod_name: &str,
 ) -> Vec<(String, u32)> {
+    let executable = game_directory.join("D2R.exe");
     AccountManager::list_ids(&config.accounts_dir)
         .into_iter()
         .filter_map(|account_id| {
@@ -274,6 +366,18 @@ fn running_accounts_using_mod(
             let pid = pid?;
             let active_name = active_mod_name(&arguments).ok().flatten()?;
             if !active_name.eq_ignore_ascii_case(mod_name) {
+                return None;
+            }
+            // Unknown legacy installation identity stays conservative; a known
+            // different installation cannot hold this directory's Mod in use.
+            if crate::launch_context::account_game_executable_identity(config, &account).is_ok_and(
+                |account_executable| {
+                    !crate::launch_context::paths_have_same_identity(
+                        &account_executable,
+                        &executable,
+                    )
+                },
+            ) {
                 return None;
             }
             Some((
@@ -291,11 +395,30 @@ fn running_accounts_using_mod(
 pub(crate) fn ensure_audio_mod_not_in_use(
     state: &SharedState,
     config: &GlobalConfig,
+    game_directory: &Path,
     mod_name: &str,
 ) -> Result<(), String> {
-    let running = running_accounts_using_mod(state, config, mod_name);
+    ensure_audio_mod_not_in_use_with(
+        state,
+        config,
+        game_directory,
+        mod_name,
+        crate::rune_audio::external::ensure_mod_not_in_use,
+    )
+}
+
+fn ensure_audio_mod_not_in_use_with(
+    state: &SharedState,
+    config: &GlobalConfig,
+    game_directory: &Path,
+    mod_name: &str,
+    check_external_use: impl FnOnce(&Path, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    let running = running_accounts_using_mod(state, config, game_directory, mod_name);
     if running.is_empty() {
-        return Ok(());
+        // Filesystem protection follows the mutation, independently of which
+        // game or Mod is selected for audio recognition.
+        return check_external_use(game_directory, mod_name);
     }
     Err(format!(
         "请先关闭正在使用 Mod“{mod_name}”的游戏：{}",
@@ -370,11 +493,24 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
 pub async fn get_audio_mod_setup_state(
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    edition: Option<String>,
+    mod_name: Option<String>,
 ) -> Result<AudioModSetupState, String> {
     let shared = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         let _lease = shared.mod_mutations().try_acquire()?;
-        setup_state(&shared, &account_id)
+        if account_id.is_empty() {
+            installation_setup_state(
+                &shared,
+                edition.as_deref().ok_or("请选择游戏安装版本")?,
+                mod_name.as_deref(),
+            )
+        } else {
+            if edition.is_some() {
+                return Err("账号检查不能同时指定安装版本".into());
+            }
+            setup_state(&shared, &account_id)
+        }
     })
     .await
     .map_err(|error| format!("读取 Mod 加工凭证的后台任务异常退出: {error}"))?
@@ -386,6 +522,7 @@ pub async fn prepare_audio_mod(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    edition: Option<String>,
     mod_name: String,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
@@ -398,6 +535,7 @@ pub async fn prepare_audio_mod(
         state,
         AudioModTaskRetryPayload::Prepare {
             account_id,
+            edition,
             mod_name,
             source_mod_name,
             include_audio_telemetry,
@@ -418,6 +556,7 @@ async fn prepare_audio_mod_task(
 ) -> Result<AudioModPrepareResult, String> {
     let AudioModTaskRetryPayload::Prepare {
         account_id,
+        edition,
         mod_name,
         source_mod_name,
         include_audio_telemetry,
@@ -430,6 +569,7 @@ async fn prepare_audio_mod_task(
     };
     let retry_payload = serde_json::to_string(&AudioModTaskRetryPayload::Prepare {
         account_id: account_id.clone(),
+        edition: edition.clone(),
         mod_name: mod_name.clone(),
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
@@ -439,7 +579,7 @@ async fn prepare_audio_mod_task(
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
     let mut request = TaskRequest::new("audio-mod-prepare")
-        .for_subject(&account_id)
+        .for_subject(mod_task_subject(&account_id, edition.as_deref()))
         .with_conflict_key("audio-mod-build")
         .with_retry_payload(retry_payload)
         .with_initial_status("preflight", "正在检查 Mod 加工环境");
@@ -455,6 +595,7 @@ async fn prepare_audio_mod_task(
         state,
         PrepareAudioModRequest {
             account_id,
+            edition,
             mod_name,
             source_mod_name,
             include_audio_telemetry,
@@ -481,6 +622,7 @@ async fn prepare_audio_mod_task(
 
 struct PrepareAudioModRequest {
     account_id: String,
+    edition: Option<String>,
     mod_name: String,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
@@ -497,6 +639,7 @@ async fn prepare_audio_mod_impl(
 ) -> Result<AudioModPrepareResult, String> {
     let PrepareAudioModRequest {
         account_id,
+        edition,
         mod_name,
         source_mod_name,
         include_audio_telemetry,
@@ -506,8 +649,9 @@ async fn prepare_audio_mod_impl(
     } = request;
     let shared_state = state.inner().clone();
     let _lease = shared_state.mod_mutations().try_acquire()?;
-    let (_config, _account, context) = configured_account(&shared_state, &account_id)?;
-    let game_directory = context.installation.game_directory;
+    let (_config, game_directory, _) =
+        mod_directory_for_subject(&shared_state, &account_id, edition.as_deref())?;
+    let progress_id = mod_task_subject(&account_id, edition.as_deref());
     let mods_directory = game_directory.join("mods");
     let processor = crate::bundled_processor::resolve_processor(&app).await?;
     std::fs::create_dir_all(&mods_directory)
@@ -531,7 +675,7 @@ async fn prepare_audio_mod_impl(
     emit_prepare_progress(
         &app,
         Some(task),
-        &account_id,
+        &progress_id,
         "starting",
         1,
         "正在开始准备…",
@@ -541,7 +685,7 @@ async fn prepare_audio_mod_impl(
         task,
         GeneratorInvocation {
             processor: &processor,
-            account_id: &account_id,
+            account_id: &progress_id,
             game_directory: &game_directory,
             output_directory: &mods_directory,
             mod_name: &mod_name,
@@ -558,7 +702,7 @@ async fn prepare_audio_mod_impl(
     emit_prepare_progress(
         &app,
         None,
-        &account_id,
+        &progress_id,
         "complete",
         100,
         "识别 Mod 已准备完成",
@@ -579,6 +723,7 @@ pub async fn upgrade_audio_mod(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    edition: Option<String>,
     mod_name: Option<String>,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
@@ -593,6 +738,7 @@ pub async fn upgrade_audio_mod(
         state,
         AudioModTaskRetryPayload::Upgrade {
             account_id,
+            edition,
             mod_name,
             source_mod_name,
             include_audio_telemetry,
@@ -614,6 +760,7 @@ async fn upgrade_audio_mod_task(
 ) -> Result<AudioModSetupState, String> {
     let AudioModTaskRetryPayload::Upgrade {
         account_id,
+        edition,
         mod_name,
         source_mod_name,
         include_audio_telemetry,
@@ -627,6 +774,7 @@ async fn upgrade_audio_mod_task(
     };
     let retry_payload = serde_json::to_string(&AudioModTaskRetryPayload::Upgrade {
         account_id: account_id.clone(),
+        edition: edition.clone(),
         mod_name: mod_name.clone(),
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
@@ -637,7 +785,7 @@ async fn upgrade_audio_mod_task(
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
     let mut request = TaskRequest::new("audio-mod-upgrade")
-        .for_subject(&account_id)
+        .for_subject(mod_task_subject(&account_id, edition.as_deref()))
         .with_conflict_key("audio-mod-build")
         .with_retry_payload(retry_payload)
         .with_initial_status("preflight", "正在检查 Mod 更新环境");
@@ -653,6 +801,7 @@ async fn upgrade_audio_mod_task(
         state,
         UpgradeAudioModRequest {
             account_id,
+            edition,
             requested_mod_name: mod_name,
             source_mod_name,
             include_audio_telemetry,
@@ -683,6 +832,8 @@ async fn upgrade_audio_mod_task(
 pub(crate) enum AudioModTaskRetryPayload {
     Prepare {
         account_id: String,
+        #[serde(default)]
+        edition: Option<String>,
         mod_name: String,
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
@@ -692,6 +843,8 @@ pub(crate) enum AudioModTaskRetryPayload {
     },
     Upgrade {
         account_id: String,
+        #[serde(default)]
+        edition: Option<String>,
         mod_name: Option<String>,
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
@@ -725,6 +878,7 @@ pub(crate) async fn retry_audio_mod_task(
 
 struct UpgradeAudioModRequest {
     account_id: String,
+    edition: Option<String>,
     requested_mod_name: Option<String>,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
@@ -742,6 +896,7 @@ async fn upgrade_audio_mod_impl(
 ) -> Result<AudioModSetupState, String> {
     let UpgradeAudioModRequest {
         account_id,
+        edition,
         requested_mod_name,
         source_mod_name,
         include_audio_telemetry,
@@ -752,15 +907,17 @@ async fn upgrade_audio_mod_impl(
     } = request;
     let shared_state = state.inner().clone();
     let _lease = shared_state.mod_mutations().try_acquire()?;
-    let (config, account, context) = configured_account(&shared_state, &account_id)?;
-    let mods_directory = context.installation.game_directory.join("mods");
+    let (config, game_directory, configured_arguments) =
+        mod_directory_for_subject(&shared_state, &account_id, edition.as_deref())?;
+    let progress_id = mod_task_subject(&account_id, edition.as_deref());
+    let mods_directory = game_directory.join("mods");
     let processor = crate::bundled_processor::resolve_processor(&app).await?;
     recover_audio_mod_replacements(&mods_directory)?;
     let current = if let Some(requested_mod_name) = requested_mod_name.as_deref() {
         let requested_arguments = arguments_with_audio_mod("", requested_mod_name)?;
         compatibility(&mods_directory, &requested_arguments)
     } else {
-        compatibility(&mods_directory, &account.mod_args)
+        compatibility(&mods_directory, &configured_arguments)
     };
     let mod_name = current
         .mod_name
@@ -819,7 +976,7 @@ async fn upgrade_audio_mod_impl(
     {
         return Err("当前 Mod 已包含所选模块，无需增补".into());
     }
-    ensure_audio_mod_not_in_use(&shared_state, &config, mod_name)?;
+    ensure_audio_mod_not_in_use(&shared_state, &config, &game_directory, mod_name)?;
     let source_directory = if rebuilding {
         if current.build_mode.as_deref() == Some("augment") && source_mod_name.is_none() {
             return Err("重做需要当时未经加工的源 Mod，请重新指定来源".into());
@@ -839,7 +996,7 @@ async fn upgrade_audio_mod_impl(
     emit_prepare_progress(
         &app,
         Some(task),
-        &account_id,
+        &progress_id,
         "starting",
         1,
         "正在生成同名新版 Mod…",
@@ -853,8 +1010,8 @@ async fn upgrade_audio_mod_impl(
         task,
         GeneratorInvocation {
             processor: &processor,
-            account_id: &account_id,
-            game_directory: &context.installation.game_directory,
+            account_id: &progress_id,
+            game_directory: &game_directory,
             output_directory: temporary_output.path(),
             mod_name,
             source_directory: source_directory.as_deref(),
@@ -888,7 +1045,7 @@ async fn upgrade_audio_mod_impl(
     emit_prepare_progress(
         &app,
         Some(task),
-        &account_id,
+        &progress_id,
         "staging",
         90,
         "正在校验并暂存新版 Mod…",
@@ -920,13 +1077,13 @@ async fn upgrade_audio_mod_impl(
     emit_prepare_progress(
         &app,
         Some(task),
-        &account_id,
+        &progress_id,
         "switching",
         96,
         "正在替换同名旧版 Mod…",
     );
     // 生成过程可能持续数分钟；切换前再次检查，避免另一账号中途启动同名 Mod。
-    ensure_audio_mod_not_in_use(&shared_state, &config, mod_name)?;
+    ensure_audio_mod_not_in_use(&shared_state, &config, &game_directory, mod_name)?;
     let backup_directory = mods_directory.join(format!(".d2rhub-upgrade-backup-{transaction_id}"));
     replace_audio_mod_directory(
         &mods_directory,
@@ -948,12 +1105,16 @@ async fn upgrade_audio_mod_impl(
     emit_prepare_progress(
         &app,
         None,
-        &account_id,
+        &progress_id,
         "complete",
         100,
         "同名识别 Mod 已更新完成",
     );
-    setup_state(&shared_state, &account_id)
+    if let Some(edition) = edition.as_deref().filter(|_| account_id.is_empty()) {
+        installation_setup_state(&shared_state, edition, Some(mod_name))
+    } else {
+        setup_state(&shared_state, &account_id)
+    }
 }
 
 #[tauri::command]
@@ -984,7 +1145,14 @@ pub(crate) fn validate_runtime_audio_mod(
 ) -> Result<PathBuf, String> {
     let context = LaunchContext::for_account(config, account, ContextPurpose::Settings)
         .map_err(|error| error.to_string())?;
-    let mods_directory = context.installation.game_directory.join("mods");
+    validate_runtime_audio_mod_directory(&context.installation.game_directory, launch_arguments)
+}
+
+pub(crate) fn validate_runtime_audio_mod_directory(
+    game_directory: &Path,
+    launch_arguments: &str,
+) -> Result<PathBuf, String> {
+    let mods_directory = game_directory.join("mods");
     let result = compatibility(&mods_directory, launch_arguments);
     if !result.ready {
         return Err(result.message);
@@ -1006,6 +1174,7 @@ pub(crate) fn emit_runtime_compatibility_warning(
 ) {
     if !config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
         || !config.rune_audio_enabled
+        || config.rune_audio_external_target.is_some()
         || config.rune_audio_target_account != account.id
     {
         return;

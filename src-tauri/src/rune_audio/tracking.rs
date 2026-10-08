@@ -198,6 +198,7 @@ pub struct TrackedDrop {
 /// segments sharing a journey_id, but this source record is never pre-merged.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompletedSegment {
+    pub source_id: String,
     pub absolute_time: String,
     pub character_name: String,
     pub scene_key: String,
@@ -214,6 +215,8 @@ pub struct CompletedSegment {
 pub struct TrackingSnapshot {
     pub revision: u64,
     pub account_id: String,
+    #[serde(default)]
+    pub source_id: String,
     pub current_area_id: Option<u32>,
     pub current_scene: String,
     pub current_scene_en: String,
@@ -320,6 +323,7 @@ impl TrackedLocation {
 #[derive(Debug, Clone)]
 pub struct SegmentTracker {
     account_id: String,
+    source_id: String,
     character_name: String,
     current_location: Option<TrackedLocation>,
     active_segment: Option<ActiveSegment>,
@@ -351,6 +355,7 @@ impl SegmentTracker {
         catalog: LocationCatalog,
     ) -> Self {
         Self {
+            source_id: account_id.clone(),
             account_id,
             character_name,
             current_location: None,
@@ -363,6 +368,34 @@ impl SegmentTracker {
             revision: 0,
             sample_rate,
             catalog,
+        }
+    }
+
+    pub fn with_source_id(mut self, source_id: String) -> Self {
+        self.source_id = source_id;
+        self
+    }
+
+    /// Account-free process exit/connection changes settle the last wilderness
+    /// segment once, including time after the last captured audio frame.
+    pub fn finish_session(&mut self, observed_at_ms: i64) -> TrackingOutcome {
+        let elapsed = self
+            .active_segment
+            .as_ref()
+            .map(|segment| (observed_at_ms - segment.started_at_ms).max(0) as f64 / 1000.0);
+        let mut completed_segment = self.finish_active_segment(0, observed_at_ms);
+        if let (Some(segment), Some(elapsed)) = (completed_segment.as_mut(), elapsed) {
+            segment.timer_seconds = (elapsed * 10.0).round() / 10.0;
+        }
+        let changed = self.current_location.take().is_some() || completed_segment.is_some();
+        self.journey_id = None;
+        if changed {
+            self.revision += 1;
+        }
+        TrackingOutcome {
+            changed,
+            completed_segment,
+            snapshot: self.snapshot(),
         }
     }
 
@@ -551,6 +584,7 @@ impl SegmentTracker {
         TrackingSnapshot {
             revision: self.revision,
             account_id: self.account_id.clone(),
+            source_id: self.source_id.clone(),
             current_area_id: location.and_then(|item| item.area_id),
             current_scene: location
                 .as_ref()
@@ -634,6 +668,7 @@ impl SegmentTracker {
             .entry(session_run_key(&active.scene_name, active.tz))
             .or_default() += 1;
         Some(CompletedSegment {
+            source_id: self.source_id.clone(),
             absolute_time: active.absolute_time,
             character_name: self.character_name.clone(),
             scene_key: active.scene_key,
@@ -724,6 +759,21 @@ mod tests {
         assert!(frontend.completed_segment.is_some());
         assert!(frontend.snapshot.is_frontend);
         assert!(!frontend.snapshot.is_timing);
+    }
+
+    #[test]
+    fn external_session_exit_settles_the_segment_once_and_keeps_its_source() {
+        let mut tracker = tracker().with_source_id("external:CN:local".into());
+        tracker
+            .observe_location(area(6), 0, 1_000, "start".into())
+            .unwrap();
+        let outcome = tracker.finish_session(5_000);
+        let segment = outcome.completed_segment.unwrap();
+        assert_eq!(segment.timer_seconds, 4.0);
+        assert_eq!(segment.source_id, "external:CN:local");
+        assert_eq!(outcome.snapshot.source_id, segment.source_id);
+        assert!(!outcome.snapshot.is_timing);
+        assert!(tracker.finish_session(7_000).completed_segment.is_none());
     }
 
     #[test]

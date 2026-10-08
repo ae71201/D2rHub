@@ -51,6 +51,8 @@ pub struct DropEntry {
 /// 单条场景记录（新版）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
     /// 数据库主键（用于删除操作），None 表示未持久化
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<i64>,
@@ -85,6 +87,10 @@ pub struct DropObservation {
     pub id: i64,
     pub observed_at: String,
     pub account_id: String,
+    #[serde(default)]
+    pub source_id: String,
+    #[serde(default)]
+    pub source_name: String,
     pub kind: DropKind,
     pub telemetry_id: u32,
     pub item_code: Option<String>,
@@ -191,6 +197,10 @@ fn ensure_scene_segment_columns(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("迁移恐怖区域标记字段失败: {e}"))?;
     }
+    if !scene_columns.iter().any(|column| column == "source_id") {
+        conn.execute("ALTER TABLE scene_records ADD COLUMN source_id TEXT", [])
+            .map_err(|e| format!("迁移统计来源字段失败: {e}"))?;
+    }
     Ok(())
 }
 
@@ -241,7 +251,25 @@ fn ensure_drop_observation_schema(conn: &Connection) -> Result<(), String> {
                  WHERE id = OLD.legacy_rune_observation_id;
             END;",
     )
-    .map_err(|error| format!("初始化通用掉落观测表失败: {error}"))
+    .map_err(|error| format!("初始化通用掉落观测表失败: {error}"))?;
+    let mut statement = conn
+        .prepare("PRAGMA table_info(drop_observations)")
+        .map_err(|e| e.to_string())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    for column in ["source_id", "source_name"] {
+        if !columns.iter().any(|existing| existing == column) {
+            conn.execute(
+                &format!("ALTER TABLE drop_observations ADD COLUMN {column} TEXT"),
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn get_db_path(app_data_dir: &str) -> String {
@@ -355,6 +383,8 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
 pub(crate) struct NewDropObservation<'a> {
     pub observed_at: &'a str,
     pub account_id: &'a str,
+    pub source_id: &'a str,
+    pub source_name: &'a str,
     pub kind: &'a str,
     pub telemetry_id: u32,
     pub item_code: Option<&'a str>,
@@ -374,11 +404,18 @@ pub(crate) fn insert_drop_observation(
     let conn = db
         .lock()
         .map_err(|error| format!("数据库锁失败: {error}"))?;
+    insert_drop_observation_into(&conn, observation)
+}
+
+fn insert_drop_observation_into(
+    conn: &Connection,
+    observation: NewDropObservation<'_>,
+) -> Result<i64, String> {
     conn.execute(
         "INSERT INTO drop_observations
          (observed_at, account_id, kind, telemetry_id, item_code, category,
-          display_name, display_name_en, rune_number, confidence, source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+          display_name, display_name_en, rune_number, confidence, source, source_id, source_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         rusqlite::params![
             observation.observed_at,
             observation.account_id,
@@ -391,6 +428,8 @@ pub(crate) fn insert_drop_observation(
             observation.rune_number,
             observation.confidence,
             observation.source,
+            observation.source_id,
+            observation.source_name,
         ],
     )
     .map_err(|error| format!("保存掉落观测失败: {error}"))?;
@@ -478,8 +517,8 @@ pub(crate) fn save_scene_record_inner(
 
     conn.execute(
         "INSERT INTO scene_records
-         (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             &record.absolute_time,
             &record.character_name,
@@ -489,6 +528,7 @@ pub(crate) fn save_scene_record_inner(
             &record.journey_id,
             record.segment_index,
             drops_json,
+            &record.source_id,
         ],
     )
     .map_err(|e| format!("保存记录失败: {}", e))?;
@@ -501,6 +541,7 @@ pub(crate) fn save_completed_segment(
     segment: &crate::rune_audio::tracking::CompletedSegment,
 ) -> Result<i64, String> {
     let record = SceneRecord {
+        source_id: Some(segment.source_id.clone()),
         id: None,
         absolute_time: segment.absolute_time.clone(),
         character_name: segment.character_name.clone(),
@@ -539,8 +580,8 @@ pub(crate) fn save_completed_segment(
     transaction
         .execute(
             "INSERT INTO scene_records
-             (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 &record.absolute_time,
                 &record.character_name,
@@ -550,6 +591,7 @@ pub(crate) fn save_completed_segment(
                 &record.journey_id,
                 record.segment_index,
                 drops_json,
+            &record.source_id,
             ],
         )
         .map_err(|error| format!("保存自动刷图记录失败: {error}"))?;
@@ -577,7 +619,7 @@ fn query_scene_records(conn: &Connection) -> Result<Vec<SceneRecord>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, absolute_time, character_name, scene_name, timer_seconds,
-                    tz, journey_id, segment_index, drops_json
+                    tz, journey_id, segment_index, drops_json, source_id
              FROM scene_records ORDER BY id ASC",
         )
         .map_err(|e| format!("查询准备失败: {e}"))?;
@@ -586,6 +628,7 @@ fn query_scene_records(conn: &Connection) -> Result<Vec<SceneRecord>, String> {
             let drops_json: String = row.get(8)?;
             Ok(SceneRecord {
                 id: Some(row.get(0)?),
+                source_id: row.get(9)?,
                 absolute_time: row.get(1)?,
                 character_name: row.get(2)?,
                 scene_name: row.get(3)?,
@@ -743,7 +786,7 @@ fn query_drop_observations(conn: &Connection) -> Result<Vec<DropObservation>, St
         .prepare(
             "SELECT id, observed_at, account_id, kind, telemetry_id, item_code, category,
                     display_name, display_name_en, rune_number, confidence, source,
-                    scene_record_id
+                    scene_record_id, COALESCE(source_id, account_id), COALESCE(source_name, account_id)
              FROM drop_observations
              ORDER BY id ASC",
         )
@@ -758,6 +801,8 @@ fn query_drop_observations(conn: &Connection) -> Result<Vec<DropObservation>, St
                 id: row.get(0)?,
                 observed_at: row.get(1)?,
                 account_id: row.get(2)?,
+                source_id: row.get(13)?,
+                source_name: row.get(14)?,
                 kind,
                 telemetry_id: row.get(4)?,
                 item_code: row.get(5)?,
@@ -1789,6 +1834,34 @@ mod tests {
 
         ensure_drop_observation_schema(&conn).unwrap();
         ensure_drop_observation_schema(&conn).unwrap();
+        let old = super::query_drop_observations(&conn).unwrap();
+        assert_eq!(old[0].source_id, "account");
+        assert_eq!(old[0].account_id, "account");
+        super::insert_drop_observation_into(
+            &conn,
+            super::NewDropObservation {
+                observed_at: "2026-10-08T00:00:00+08:00",
+                account_id: "",
+                source_id: "external:CN:local",
+                source_name: "本机游戏 · 国服",
+                kind: "rune",
+                telemetry_id: 15,
+                item_code: Some("r15"),
+                category: "runes",
+                display_name: "海尔",
+                display_name_en: "Hel",
+                rune_number: Some(15),
+                confidence: 0.95,
+                source: "rune_audio",
+            },
+        )
+        .unwrap();
+        let mixed = super::query_drop_observations(&conn).unwrap();
+        assert_eq!(mixed[1].source_id, "external:CN:local");
+        assert_eq!(mixed[1].source_name, "本机游戏 · 国服");
+        assert!(mixed[1].account_id.is_empty());
+        conn.execute("DELETE FROM drop_observations WHERE id = ?1", [mixed[1].id])
+            .unwrap();
         let migrated = conn
             .query_row(
                 "SELECT kind, telemetry_id, item_code, display_name, scene_record_id

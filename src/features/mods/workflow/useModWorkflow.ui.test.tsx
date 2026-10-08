@@ -213,3 +213,29 @@ it("retains intentional edits as a draft and allows explicit discard without sta
   expect(result.current.view).toBe("library");
   expect(vi.mocked(invokeCommand).mock.calls.some(([name]) => name === "prepare_audio_mod")).toBe(false);
 });
+
+
+describe("installation-only Mod processing", () => {
+  it("builds for a game installation without creating or configuring an account", async () => {
+    vi.mocked(invokeCommand).mockImplementation(async (command, args) => {
+      if (command === "get_audio_mod_setup_state") return { ...modState, account_id: "", ...(args && "modName" in args && args.modName === "New" ? { ...ready, account_id: "", launch_arguments: "-mod New -txt" } : {}) } as never;
+      if (command === "prepare_audio_mod") return { mod_name: "New", feature_groups: [{ id: "audio_telemetry" }] } as never;
+      return null as never;
+    });
+    const { result, onApplied } = mount([]);
+    act(() => result.current.actions.requestProcessing({ origin: "recognition", edition: "CN", installationOnly: true }));
+    await waitFor(() => expect(result.current.inspection.state?.account_id).toBe(""));
+    act(() => { result.current.actions.changeRecipe({ kind: "create", source: null, name: "New" }); result.current.actions.setProcessorReady(true); });
+    expect(result.current.blockedReason).toBe("");
+    await act(() => result.current.actions.prepare());
+    expect(invokeCommand).toHaveBeenCalledWith("prepare_audio_mod", expect.objectContaining({ accountId: "", edition: "CN", modName: "New" }));
+    expect(onApplied).toHaveBeenCalledWith(expect.objectContaining({ accountId: "", installationEdition: "CN", state: expect.objectContaining({ launch_arguments: "-mod New -txt" }) }));
+    expect(vi.mocked(invokeCommand).mock.calls.some(([command]) => command === "apply_audio_mod_to_account" || command === "create_account" || command === "assign_mod_capsule_to_account")).toBe(false);
+  });
+  it("also lets an empty-account Mod library use the selected installation", async () => {
+    const { result } = mount([]);
+    act(() => result.current.actions.requestProcessing({ origin: "library", edition: "Global" }));
+    expect(result.current.draft).toMatchObject({ accountId: "", edition: "Global", installationOnly: true });
+    await waitFor(() => expect(invokeCommand).toHaveBeenCalledWith("get_audio_mod_setup_state", { accountId: "", edition: "Global", modName: null }));
+  });
+});

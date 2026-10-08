@@ -12,6 +12,7 @@ export interface ModProcessingRequest {
   origin: ModWorkflowOrigin;
   accountId?: string;
   edition?: ModEdition;
+  installationOnly?: boolean;
   source?: { name: string; processed: boolean };
   autoStart?: boolean;
 }
@@ -20,6 +21,7 @@ export interface ModProcessingDraft {
   origin: ModWorkflowOrigin;
   accountId: string;
   edition: ModEdition;
+  installationOnly?: boolean;
   recipe: ModRecipe;
   features: AudioModFeatureSelection;
 }
@@ -28,4 +30,5 @@ export interface ModAppliedResult {
   origin: ModWorkflowOrigin;
   accountId: string;
   state: AudioModSetupState;
+  installationEdition?: ModEdition;
 }

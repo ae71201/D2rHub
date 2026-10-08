@@ -799,6 +799,30 @@ mod validation_tests {
     }
 
     #[test]
+    fn external_recognition_requires_no_account_authentication_or_saved_games_path() {
+        let root = temp_dir("external_recognition");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("D2R.exe"), []).unwrap();
+        let mut config = GlobalConfig {
+            cn_game_path: root.to_string_lossy().into_owned(),
+            rune_audio_enabled: true,
+            rune_audio_target_account: "keep-my-account".into(),
+            rune_audio_external_target: Some(crate::domain::config::ExternalAudioTarget { edition: "CN".into(), mod_name: "LocalAudio".into() }),
+            ..GlobalConfig::default()
+        };
+        assert!(config.resolve_rune_audio_target_account().unwrap().is_none());
+        config.normalize_rune_audio_configuration();
+        assert!(config.rune_audio_enabled);
+        assert_eq!(config.rune_audio_target_account, "keep-my-account");
+        assert!(!root.join("accounts").exists());
+        config.rune_audio_external_target.as_mut().unwrap().mod_name = "../invalid".into();
+        assert!(config.resolve_rune_audio_target_account().is_err());
+        config.rune_audio_external_target = None;
+        assert!(config.resolve_rune_audio_target_account().is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn enabled_rune_audio_requires_an_initialized_account() {
         let accounts_dir = temp_dir("rune_audio_uninitialized_account");
         let account = AccountMeta::new("acount1");
@@ -2121,6 +2145,12 @@ impl GlobalConfig {
             return Ok(None);
         }
 
+        if let Some(target) = self.rune_audio_external_target.as_ref() {
+            crate::rune_audio::external::validate_target(self, target)
+                .map_err(AppError::ConfigWriteError)?;
+            return Ok(None);
+        }
+
         let account_id = self.rune_audio_target_account.trim();
         if account_id.is_empty() {
             return Err(AppError::ConfigWriteError(
@@ -3370,7 +3400,9 @@ fn prepare_global_config_with_retired_accounts(
             .eq_ignore_ascii_case(account_id)
         {
             cfg.rune_audio_target_account.clear();
-            cfg.rune_audio_enabled = false;
+            if cfg.rune_audio_external_target.is_none() {
+                cfg.rune_audio_enabled = false;
+            }
         }
         cfg.remove_account_from_launch_groups(account_id);
     }

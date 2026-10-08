@@ -340,6 +340,8 @@ pub fn run() {
             rune_audio::monitor::restart_rune_audio_monitor,
             rune_audio::monitor::stop_rune_audio_monitor,
             rune_audio::monitor::get_rune_audio_status,
+            rune_audio::external::get_external_audio_instances,
+            rune_audio::external::select_external_audio_instance,
             rune_audio::monitor::start_rune_audio_diagnostic_recording,
             rune_audio::monitor::stop_rune_audio_diagnostic_recording,
             // ── 数据统计 ──

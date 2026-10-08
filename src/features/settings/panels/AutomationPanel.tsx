@@ -27,7 +27,11 @@ import {
   GEM_LEVELS,
   TRACKING_CATEGORIES,
   type RuneAudioStatus,
+  type ExternalAudioInstance,
 } from "../audioModuleModel";
+
+import { defaultExternalAudioTarget, type ExternalAudioTarget } from "../../../utils/recognitionSource";
+import { ExternalRecognitionTarget } from "./ExternalRecognitionTarget";
 
 type TrackingTarget = ReturnType<typeof validateTrackingTarget>;
 
@@ -51,6 +55,10 @@ interface AutomationPanelProps {
   hasReadyAudioMod: boolean;
   isAudioEnableRequested: boolean;
   isAudioRecognitionActive: boolean;
+  externalInstances?: ExternalAudioInstance[];
+  externalInstancesError?: string | null;
+  onExternalTargetChange?: (target: ExternalAudioTarget) => Promise<void>;
+  onSelectExternalInstance?: (instance: ExternalAudioInstance) => Promise<void>;
   onAudioTargetChange: (accountId: string) => Promise<void>;
   onAudioToggle: (enabled: boolean) => Promise<boolean | void>;
   onToggleDiagnosticRecording: () => Promise<void>;
@@ -78,12 +86,14 @@ export function AutomationPanel({
   hasReadyAudioMod,
   isAudioEnableRequested,
   isAudioRecognitionActive,
+  externalInstances = [], externalInstancesError = null, onExternalTargetChange, onSelectExternalInstance,
   onAudioTargetChange: handleAudioTargetChange,
   onAudioToggle: handleAudioToggle,
   onToggleDiagnosticRecording: toggleAudioDiagnosticRecording,
   onClose,
   onInitializeAccount,
 }: AutomationPanelProps) {
+  const external = config.rune_audio_external_target;
   const isEnglish = config.app_language === "en-US";
   const trackingAccountId = trackingTarget.valid ? trackingTarget.account.id : "";
   const audioCapsules = compatibleCapsulesForAccount(modCapsulePool, trackingAccountId)
@@ -119,7 +129,7 @@ export function AutomationPanel({
     <div className="flex items-center justify-between py-1">
       <div className="min-w-0 pr-4">
         <span className="text-sm font-bold text-text-secondary">音频声纹自动识别</span>
-        <p className="text-xs text-text-muted">{isEnglish ? "Track drops and run times for the selected account." : "记录所选账号的掉落与刷图用时。"}</p>
+        <p className="text-xs text-text-muted">{external ? (isEnglish ? "Track drops and run times for the selected game." : "记录所选游戏的掉落与刷图用时。") : isEnglish ? "Track drops and run times for the selected account." : "记录所选账号的掉落与刷图用时。"}</p>
       </div>
       <Toggle
         checked={isAudioEnableRequested}
@@ -130,6 +140,7 @@ export function AutomationPanel({
       />
     </div>
 
+    {!external && (
     <div
       id="rune-audio-readiness"
       className="recognition-readiness"
@@ -237,38 +248,42 @@ export function AutomationPanel({
       </ol>
     </div>
 
+    )}
+
     <div className="recognition-target-section">
       <div className="flex items-center justify-between gap-4">
         <div>
           <label htmlFor="rune-audio-target-account" className="text-sm font-semibold text-text-secondary">
-            识别目标账号
+            {isEnglish ? "Listening target" : "监听目标"}
           </label>
-          <p className="text-2xs text-text-muted">选择一个已初始化账号，声音只从其 D2R PID 捕获</p>
+          <p className="text-2xs text-text-muted">{isEnglish ? "Choose an account or specify a game process" : "选择账号，或指定要监听的游戏进程"}</p>
         </div>
         <select
           id="rune-audio-target-account"
-          value={trackingTarget.valid ? trackingTarget.account.id : ""}
-          disabled={initializedTrackingAccounts.length === 0}
+          value={external ? "external" : trackingTarget.valid ? trackingTarget.account.id : ""}
+          disabled={audioPreparing || audioModStateLoading}
           aria-describedby="rune-audio-target-help"
-          onChange={e => void handleAudioTargetChange(e.target.value)}
+          onChange={e => e.target.value === "external"
+            ? void onExternalTargetChange?.(defaultExternalAudioTarget(config)) : void handleAudioTargetChange(e.target.value)}
           className="h-8 min-w-36 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <option value="" disabled>
             {initializedTrackingAccounts.length === 0 ? "暂无可用账号" : "请选择账号"}
           </option>
+          <option value="external">{isEnglish ? "Specify game process (no account needed)" : "指定游戏进程（无需账号）"}</option>
           {initializedTrackingAccounts.map(account => (
             <option key={account.id} value={account.id}>{account.display_name || account.id}</option>
           ))}
         </select>
       </div>
       <p id="rune-audio-target-help" aria-live="polite" className="text-2xs text-text-secondary">
-        {initializedTrackingAccounts.length === 0
+        {external ? (isEnglish ? "Choose a process below, including games started through Battle.net or a shortcut." : "在下方指定游戏进程，也支持通过战网或快捷方式启动的游戏。") : initializedTrackingAccounts.length === 0
           ? "上方“初始化账号”会直接打开账号向导；完成后回到这里继续。"
           : trackingTarget.valid
             ? `只识别“${trackingTarget.account.display_name || trackingTarget.account.id}”对应的游戏声音。`
             : "必须先选择目标账号；也可点击上方“选择首个账号”快速继续。"}
       </p>
-      {trackingTarget.valid && (
+      {!external && trackingTarget.valid && (
         <div className="recognition-capsule-selector">
           <select
             className="settings-input recognition-capsule-select"
@@ -299,7 +314,11 @@ export function AutomationPanel({
       )}
     </div>
 
-    {config.rune_audio_enabled && trackingTarget.valid && (
+    {external && <ExternalRecognitionTarget config={config} state={audioModState} status={audioStatus} pool={modCapsulePool}
+      busy={audioPreparing || audioModStateLoading} instances={externalInstances} instancesError={externalInstancesError}
+      onChange={onExternalTargetChange ?? (async () => {})} onSelectInstance={onSelectExternalInstance ?? (async () => {})} onPrepare={onOpenModProcessing} />}
+
+    {config.rune_audio_enabled && (trackingTarget.valid || external) && (
       <details className="group border-t border-border-default/50 pt-3">
         <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-secondary">
           诊断工具
@@ -568,7 +587,7 @@ export function AutomationPanel({
       <div>
         <span className="text-xs font-bold text-text-primary block mb-1">识别说明</span>
         <p className="text-2xs text-text-muted">
-          D2RHub 只捕获所选账号的游戏声音，不读取游戏内存，也不会向游戏注入代码。
+          {external ? (isEnglish ? "D2RHub captures only the selected game process, without reading game memory or injecting code." : "D2RHub 只捕获所选游戏进程的声音，不读取游戏内存，也不会向游戏注入代码。") : "D2RHub 只捕获所选账号的游戏声音，不读取游戏内存，也不会向游戏注入代码。"}
         </p>
       </div>
       <p className="text-2xs text-text-secondary">

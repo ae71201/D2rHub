@@ -18,6 +18,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
   if (!draft || !analysis) return null;
   const initializedAccounts = workflow.accounts;
   const trackingTarget = validateTrackingTarget(draft.accountId, initializedAccounts);
+  const targetReady = !!draft.installationOnly || trackingTarget.valid;
   const inspectionState = inspection.state;
   const inspecting = inspection.loading;
   const preparing = workflow.busy;
@@ -66,7 +67,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             size="sm"
             variant="ghost"
             loading={inspecting}
-            disabled={!trackingTarget.valid || preparing}
+            disabled={!targetReady || preparing}
             title={scannedLabel ? `${isEnglish ? "Last scan" : "上次扫描"} ${scannedLabel}` : (isEnglish ? "Rescan Mod directory" : "重新扫描 Mod 目录")}
             onClick={() => void actions.refresh()}
           >
@@ -82,12 +83,13 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
       <section className="mod-processing-section mod-processing-target">
         <div className="mod-processing-section-heading">
           <div>
-            <h3>{isEnglish ? "Target account" : "加工目标"}</h3>
+            <h3>{draft.installationOnly ? (isEnglish ? "Game installation" : "游戏安装目录") : (isEnglish ? "Target account" : "加工目标")}</h3>
             <span className="micro-meta">{draft.edition === "CN" ? (isEnglish ? "China edition" : "国服") : (isEnglish ? "Global edition" : "国际服")}</span>
-            <p>{isEnglish ? "The selected account receives the generated launch arguments." : "加工完成后会自动写入这个账号的启动参数。"}</p>
+            <p>{draft.installationOnly ? (isEnglish ? "Copy the generated launch arguments to your game launcher." : "无需账号，完成后将生成的启动参数配置到游戏启动器。") : isEnglish ? "The selected account receives the generated launch arguments." : "加工完成后会自动写入这个账号的启动参数。"}</p>
           </div>
         </div>
         <div className="mod-section-body">
+          {!draft.installationOnly && (
           <select
             className="settings-input mod-processing-account-select"
             aria-label={isEnglish ? "Target account" : "加工目标账号"}
@@ -100,6 +102,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               <option key={account.id} value={account.id}>{account.display_name || account.id}</option>
             ))}
           </select>
+          )}
           <div className="mod-processing-rebuild">
             {draft.recipe.kind === "augment" && <label className="mod-processing-rebuild-toggle"><input type="checkbox" checked={!!draft.recipe.rebuild || !!analysis.selected?.update_required}
               disabled={preparing || !!analysis.selected?.update_required}
@@ -168,7 +171,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
         </div>
       </section>
 
-      {!trackingTarget.valid ? (
+      {!targetReady ? (
         <div className="room-automation-state room-automation-state-block mod-processing-main-state" data-tone="danger" role="status">
           <AlertTriangle size={16} />
           <div>
@@ -238,7 +241,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Feature modules" : "功能模块"}</h3>
-                <p>{operationKind === "augment"
+                <p>{draft.installationOnly ? (isEnglish ? "Build and validate in this game directory, then copy the launch arguments." : "在所选游戏目录加工并校验，完成后复制启动参数。") : operationKind === "augment"
                   ? (isEnglish
                     ? "Installed modules remain intact. Choose only the additional capabilities you need."
                     : "目标 Mod 已有模块会完整保留，只需选择这次要增补的功能。")
@@ -301,7 +304,9 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Output" : "输出与应用"}</h3>
-                <p>{analysis.updating
+                <p>{draft.installationOnly
+                  ? (isEnglish ? "Process and validate in this game directory, then copy the launch arguments." : "在所选游戏目录加工并校验，完成后复制启动参数。")
+                  : analysis.updating
                   ? (isEnglish ? "Rebuild from the original source and saved modules, then replace the same name after verification and apply it to the account." : "从原始来源与已保存模块重新生成，校验后替换同名成品并应用到账号。")
                   : operationKind === "augment"
                   ? (isEnglish ? "The selected Mod is augmented in place after verification, then applied to the target account." : "校验成功后原位增补所选 Mod，再应用到目标账号。")

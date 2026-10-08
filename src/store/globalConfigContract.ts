@@ -36,6 +36,7 @@ export const GLOBAL_CONFIG_FIELDS = [
   "first_launch",
   "rune_audio_enabled",
   "rune_audio_target_account",
+  "rune_audio_external_target",
   "rune_audio_detection_threshold",
   "rune_audio_tracked_categories",
   "rune_audio_min_rune_number",

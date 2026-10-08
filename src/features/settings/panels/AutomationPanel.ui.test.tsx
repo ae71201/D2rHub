@@ -59,6 +59,9 @@ describe("Recognition onboarding", () => {
     expect(screen.getByRole("option", { name: "Choose a Mod to prepare" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Prepare Mod" })).toBeTruthy();
     expect(screen.queryByText("记录哪些掉落")).toBeNull();
+    expect(screen.getByRole("option", { name: "Leader" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /Follow account/ })).toBeNull();
+    expect(screen.getByRole("option", { name: "Specify game process (no account needed)" })).toBeTruthy();
   });
   it("shows enabled-but-waiting state without another enable action and keeps diagnostics collapsed", () => {
     render(<AutomationPanel {...panelProps({ config: { ...config, rune_audio_enabled: true },

@@ -1,3 +1,4 @@
+import { matchesRecognitionSource } from "../utils/recognitionSource";
 import React, { useEffect, useState, useRef } from "react";
 import { ChevronLeft, ChevronRight, Eye } from "lucide-react";
 import { useAccounts } from "../store/accounts";
@@ -1414,13 +1415,16 @@ export function Overlay() {
   // Set character name from monitored account
   useEffect(() => {
     if (!isStatsOverlay || (!isPollerActive && !isAudioTrackingActive)) return;
-    if (config?.rune_audio_target_account) {
+    if (config?.rune_audio_external_target) {
+      const global = config.rune_audio_external_target.edition === "Global";
+      stats.setCharacterName(config.app_language === "en-US" ? `Local game · ${global ? "Global" : "China"}` : `本机游戏 · ${global ? "国际服" : "国服"}`);
+    } else if (config?.rune_audio_target_account) {
       const target = accounts.find((a) => a.id === config.rune_audio_target_account);
       if (target) {
         stats.setCharacterName(target.display_name || target.id);
       }
     }
-  }, [config?.rune_audio_target_account, accounts, stats.setCharacterName, isAudioTrackingActive, isPollerActive, isStatsOverlay]);
+  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, accounts, stats.setCharacterName, isAudioTrackingActive, isPollerActive, isStatsOverlay]);
 
   // Restore position and each mode's independent preferred size. The geometry
   // file is only a migration fallback for whichever mode was active last.
@@ -1690,7 +1694,7 @@ export function Overlay() {
   useEffect(() => {
     if (startupCheckDoneRef.current) return;
     if (!isStatsOverlay || (!isPollerActive && !isAudioTrackingActive)) return;
-    if (!config?.rune_audio_target_account) return;
+    if (!config?.rune_audio_target_account || config.rune_audio_external_target) return;
     (async () => {
       try {
         startupCheckDoneRef.current = true;
@@ -1720,7 +1724,7 @@ export function Overlay() {
         }
       } catch {}
     })();
-  }, [config?.rune_audio_target_account, isAudioTrackingActive, isPollerActive, isStatsOverlay, loadAccounts]);
+  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive, isPollerActive, isStatsOverlay, loadAccounts]);
 
   // 前台窗口标题轮询
   useEffect(() => {
@@ -1749,7 +1753,7 @@ export function Overlay() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listenEvent<RuneAudioEvent>("rune-audio-detected", (event) => {
-      if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
+      if (cancelled || !matchesRecognitionSource(config, event.payload)) return;
       stats.processRuneDrop({
         rune_number: event.payload.rune_number,
         rune_name: event.payload.rune_name,
@@ -1763,14 +1767,14 @@ export function Overlay() {
       cancelled = true;
       unlisten?.();
     };
-  }, [config?.rune_audio_target_account, isAudioTrackingActive, stats.processRuneDrop]);
+  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive, stats.processRuneDrop]);
 
   useEffect(() => {
     if (!isAudioTrackingActive) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listenEvent<ItemAudioEvent>("item-audio-detected", (event) => {
-      if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
+      if (cancelled || !matchesRecognitionSource(config, event.payload)) return;
       stats.processItemDrop(event.payload);
     }).then((stop) => {
       if (cancelled) stop();
@@ -1780,14 +1784,14 @@ export function Overlay() {
       cancelled = true;
       unlisten?.();
     };
-  }, [config?.rune_audio_target_account, isAudioTrackingActive, stats.processItemDrop]);
+  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive, stats.processItemDrop]);
 
   useEffect(() => {
     if (!isAudioTrackingActive) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listenEvent<TrackingSnapshot>("audio-tracking-state", (event) => {
-      if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
+      if (cancelled || !matchesRecognitionSource(config, event.payload)) return;
       useStats.getState().applyTrackingSnapshot(event.payload);
     }).then((stop) => {
       if (cancelled) stop();
@@ -1797,10 +1801,10 @@ export function Overlay() {
       cancelled = true;
       unlisten?.();
     };
-  }, [config?.rune_audio_target_account, isAudioTrackingActive]);
+  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive]);
 
   useEffect(() => {
-    if (!isAudioTrackingActive || !config?.rune_audio_target_account) return;
+    if (!isAudioTrackingActive || !config?.rune_audio_target_account || config.rune_audio_external_target) return;
     const target = accounts.find((account) => account.id === config.rune_audio_target_account);
     if (!target?.is_running) return;
     let cancelled = false;
@@ -1808,7 +1812,7 @@ export function Overlay() {
       if (!cancelled && !status.running) return invokeCommand("start_rune_audio_monitor");
     }).catch((error) => reportOverlayIssue("WARN", "启动符文声纹监控失败", error));
     return () => { cancelled = true; };
-  }, [accounts, config?.rune_audio_target_account, isAudioTrackingActive]);
+  }, [accounts, config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive]);
 
   // ── 计时器 tick (100ms → 0.1s 精度) ──
   useEffect(() => {
@@ -2083,7 +2087,7 @@ export function Overlay() {
         {activeAccounts.length > 0 ? (
           activeAccounts.map((a) => {
             const isMonitored =
-              config?.rune_audio_enabled && config?.rune_audio_target_account === a.id;
+              config?.rune_audio_enabled && !config.rune_audio_external_target && config?.rune_audio_target_account === a.id;
             const displayName = a.display_name || a.id;
             const isFocused = a.id === focusedAccountId;
 

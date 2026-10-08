@@ -1,5 +1,7 @@
 //! Cross-adapter acceptance tests for Mod processing, trust and recovery.
-use super::filesystem::{find_existing_mod_name, traverse_safe_directory_tree, SafeTreeNodeKind};
+use super::filesystem::{
+    find_existing_mod_name, traverse_safe_directory_tree, SafeTreeNodeKind, TemporaryDirectory,
+};
 use super::replacement::{
     replace_audio_mod_directory, replace_journal_paths_are_valid, write_replace_journal,
     write_replace_journal_with_stage_sync,
@@ -34,6 +36,117 @@ use crate::rune_audio::{
 };
 
 const TEST_TRANSACTION_ID: &str = "0123456789abcdef0123456789abcdef";
+
+fn mod_use_fixture() -> (
+    TemporaryDirectory,
+    crate::state::SharedState,
+    crate::domain::config::GlobalConfig,
+) {
+    let root = TemporaryDirectory::create(test_mods_directory("mod_use")).unwrap();
+    let config = crate::domain::config::GlobalConfig {
+        accounts_dir: root.path().join("accounts").to_string_lossy().into_owned(),
+        cn_game_path: root.path().join("cn").to_string_lossy().into_owned(),
+        global_game_path: root.path().join("global").to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    std::fs::create_dir(root.path().join("accounts")).unwrap();
+    let state = std::sync::Arc::new(crate::state::AppState::new());
+    (root, state, config)
+}
+
+#[test]
+fn external_mod_guard_uses_mutation_directory_instead_of_recognition_target() {
+    let (_root, state, mut config) = mod_use_fixture();
+    config.rune_audio_external_target = Some(crate::domain::config::ExternalAudioTarget {
+        edition: "Global".into(),
+        mod_name: "Audio".into(),
+    });
+    let cn = std::path::Path::new(&config.cn_game_path);
+    let global = std::path::Path::new(&config.global_game_path);
+    let external_use = |directory: &std::path::Path, name: &str| {
+        assert_eq!(name, "Audio");
+        if directory == global {
+            Err("Global game is using Audio".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    super::ensure_audio_mod_not_in_use_with(&state, &config, cn, "Audio", external_use).unwrap();
+    assert_eq!(
+        super::ensure_audio_mod_not_in_use_with(&state, &config, global, "Audio", external_use),
+        Err("Global game is using Audio".to_string())
+    );
+}
+
+#[test]
+fn external_mod_guard_does_not_depend_on_recognition_preferences() {
+    let (_root, state, mut config) = mod_use_fixture();
+    for target in [
+        None,
+        Some(crate::domain::config::ExternalAudioTarget {
+            edition: "Global".into(),
+            mod_name: "Other".into(),
+        }),
+    ] {
+        config.rune_audio_external_target = target;
+        let cn = std::path::Path::new(&config.cn_game_path);
+        assert_eq!(
+            super::ensure_audio_mod_not_in_use_with(
+                &state,
+                &config,
+                cn,
+                "Audio",
+                |directory, name| {
+                    assert_eq!(directory, cn);
+                    assert_eq!(name, "Audio");
+                    Err("CN game is using Audio".to_string())
+                }
+            ),
+            Err("CN game is using Audio".to_string())
+        );
+    }
+}
+
+#[test]
+fn registered_mod_use_is_scoped_to_installation_and_active_launch_arguments() {
+    let (root, state, config) = mod_use_fixture();
+    for (id, region, saved_mod, launched_mod, pid) in [
+        ("acount1", "CN", "Other", "Audio", 1),
+        ("acount2", "KR", "Audio", "Audio", 2),
+        ("acount3", "CN", "Audio", "Other", 3),
+    ] {
+        let mut account = crate::domain::account::AccountMeta::new(id);
+        account.display_name = id.into();
+        account.region = Some(region.into());
+        account.mod_args = format!("-mod {saved_mod} -txt");
+        account.initialized = true;
+        std::fs::create_dir(root.path().join("accounts").join(id)).unwrap();
+        crate::commands::account::AccountManager::save_meta(&config.accounts_dir, &account)
+            .unwrap();
+        state.multi_instance().instances().record_launched(
+            id,
+            pid,
+            &format!("-mod {launched_mod} -txt"),
+        );
+    }
+    for (directory, account_id, pid) in [
+        (&config.cn_game_path, "acount1", 1),
+        (&config.global_game_path, "acount2", 2),
+    ] {
+        let directory = std::path::Path::new(directory);
+        assert_eq!(
+            super::running_accounts_using_mod(&state, &config, directory, "audio"),
+            vec![(account_id.to_string(), pid)]
+        );
+        let error =
+            super::ensure_audio_mod_not_in_use_with(&state, &config, directory, "audio", |_, _| {
+                panic!("the registered active session already blocks this mutation")
+            })
+            .unwrap_err();
+        assert!(error.contains(account_id));
+        assert!(!error.contains("acount3"));
+    }
+}
 
 fn write_test_audio_mod(
     mods_directory: &std::path::Path,

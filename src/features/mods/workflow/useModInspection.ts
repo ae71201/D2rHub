@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invokeCommand } from "../../../platform/tauri";
 import type { AudioModSetupState } from "../../../store/types";
 
+interface InstallationInspection { edition: "CN" | "Global"; modName?: string }
 interface Inspection { state: AudioModSetupState | null; scannedAt: number | null; loading: boolean; error: string | null }
 const empty: Inspection = { state: null, scannedAt: null, loading: false, error: null };
 
 /** Account-scoped reads with no navigation, draft, or configuration side effects. */
-export function useModInspection(active: boolean, accountId: string, identity = "") {
+export function useModInspection(active: boolean, accountId: string, identity = "", installation?: InstallationInspection) {
   const cache = useRef(new Map<string, { state: AudioModSetupState; scannedAt: number }>());
   const requests = useRef(new Map<string, { version: number; promise: Promise<AudioModSetupState> }>());
   const versions = useRef(new Map<string, number>());
@@ -14,24 +15,24 @@ export function useModInspection(active: boolean, accountId: string, identity = 
   const revision = useRef(0);
   const displayedIdentity = useRef(identity);
   const [inspection, setInspection] = useState<Inspection>(empty);
-  const current = useRef({ active, accountId, identity });
-  current.current = { active, accountId, identity };
+  const current = useRef({ active, accountId, identity, installation });
+  current.current = { active, accountId, identity, installation };
 
   const invalidate = useCallback((id: string) => {
     versions.current.set(id, (versions.current.get(id) ?? 0) + 1);
     cache.current.delete(id);
   }, []);
-  const accept = useCallback((state: AudioModSetupState) => {
+  const accept = useCallback((state: AudioModSetupState, targetId = state.account_id || current.current.accountId) => {
     const entry = { state, scannedAt: Date.now() };
-    versions.current.set(state.account_id, (versions.current.get(state.account_id) ?? 0) + 1);
-    cache.current.set(state.account_id, entry);
-    if (current.current.active && current.current.accountId === state.account_id) {
+    versions.current.set(targetId, (versions.current.get(targetId) ?? 0) + 1);
+    cache.current.set(targetId, entry);
+    if (current.current.active && current.current.accountId === targetId) {
       displayedIdentity.current = current.current.identity;
       setInspection({ ...entry, loading: false, error: null });
     }
   }, []);
 
-  const inspect = useCallback((id: string, force = false): Promise<AudioModSetupState> => {
+  const inspect = useCallback((id: string, force = false, external = current.current.installation): Promise<AudioModSetupState> => {
     if (force) invalidate(id);
     const cached = cache.current.get(id);
     if (cached) return Promise.resolve(cached.state);
@@ -40,7 +41,8 @@ export function useModInspection(active: boolean, accountId: string, identity = 
     if (pending?.version === version) return pending.promise;
     const request = (async () => {
       try {
-        const state = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: id });
+        const state = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", external && id.startsWith("installation:")
+          ? { accountId: "", edition: external.edition, modName: external.modName || null } : { accountId: id });
         if ((versions.current.get(id) ?? 0) !== version) {
           const newer = cache.current.get(id);
           if (newer) return newer.state;
@@ -61,7 +63,7 @@ export function useModInspection(active: boolean, accountId: string, identity = 
     setInspection(previous => ({ ...previous, loading: true, error: null }));
     try {
       const state = await inspect(id, force);
-      if (ticket === revision.current && current.current.active && current.current.accountId === id) accept(state);
+      if (ticket === revision.current && current.current.active && current.current.accountId === id) accept(state, id);
       return state;
     } catch (error) {
       if (ticket === revision.current && current.current.active && current.current.accountId === id) setInspection({ ...empty, error: String(error) });
@@ -83,6 +85,6 @@ export function useModInspection(active: boolean, accountId: string, identity = 
   }, [active, accountId, identity, invalidate, refresh]);
 
   return { ...inspection,
-    state: displayedIdentity.current === identity && inspection.state?.account_id === accountId ? inspection.state : null,
+    state: displayedIdentity.current === identity && (installation ? inspection.state?.account_id === "" : inspection.state?.account_id === accountId) ? inspection.state : null,
     refresh, inspect, accept };
 }

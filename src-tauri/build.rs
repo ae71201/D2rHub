@@ -129,6 +129,8 @@ const APP_COMMANDS: &[&str] = &[
     "restart_rune_audio_monitor",
     "stop_rune_audio_monitor",
     "get_rune_audio_status",
+    "get_external_audio_instances",
+    "select_external_audio_instance",
     "start_rune_audio_diagnostic_recording",
     "stop_rune_audio_diagnostic_recording",
     "save_scene_record",

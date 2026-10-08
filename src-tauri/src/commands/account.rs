@@ -744,7 +744,9 @@ impl AccountDeletionTransaction for AccountDeletionTransactionAdapter<'_> {
                         .trim()
                         .eq_ignore_ascii_case(&stored_account_id);
                     if cleared_audio_target {
-                        cfg.rune_audio_enabled = false;
+                        if cfg.rune_audio_external_target.is_none() {
+                            cfg.rune_audio_enabled = false;
+                        }
                         cfg.rune_audio_target_account.clear();
                     }
                     let removed_from_launch_group =

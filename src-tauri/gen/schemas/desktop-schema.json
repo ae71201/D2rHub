@@ -645,6 +645,12 @@
           "markdownDescription": "Enables the get_d2r_window_titles command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_external_audio_instances command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-external-audio-instances",
+          "markdownDescription": "Enables the get_external_audio_instances command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_foreground_window_title command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-foreground-window-title",
@@ -1125,6 +1131,12 @@
           "markdownDescription": "Enables the scan_mod_capsule_pool command without any pre-configured scope."
         },
         {
+          "description": "Enables the select_external_audio_instance command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-select-external-audio-instance",
+          "markdownDescription": "Enables the select_external_audio_instance command without any pre-configured scope."
+        },
+        {
           "description": "Enables the send_keys_to_window command without any pre-configured scope.",
           "type": "string",
           "const": "allow-send-keys-to-window",
@@ -1519,6 +1531,12 @@
           "type": "string",
           "const": "deny-get-d2r-window-titles",
           "markdownDescription": "Denies the get_d2r_window_titles command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_external_audio_instances command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-external-audio-instances",
+          "markdownDescription": "Denies the get_external_audio_instances command without any pre-configured scope."
         },
         {
           "description": "Denies the get_foreground_window_title command without any pre-configured scope.",
@@ -1999,6 +2017,12 @@
           "type": "string",
           "const": "deny-scan-mod-capsule-pool",
           "markdownDescription": "Denies the scan_mod_capsule_pool command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the select_external_audio_instance command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-select-external-audio-instance",
+          "markdownDescription": "Denies the select_external_audio_instance command without any pre-configured scope."
         },
         {
           "description": "Denies the send_keys_to_window command without any pre-configured scope.",

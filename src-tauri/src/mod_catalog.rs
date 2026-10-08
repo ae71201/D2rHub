@@ -682,12 +682,17 @@ pub fn set_mod_auto_exit_on_death_enabled(
             target.installed.name
         ));
     }
-    ensure_audio_mod_not_in_use(state.inner(), &config, &target.installed.name)?;
     let game_directory = if target.edition == "CN" {
         config.cn_game_path.trim()
     } else {
         config.global_game_path.trim()
     };
+    ensure_audio_mod_not_in_use(
+        state.inner(),
+        &config,
+        Path::new(game_directory),
+        &target.installed.name,
+    )?;
     let mods_directory = Path::new(game_directory).join("mods");
     set_auto_exit_on_death_enabled(&mods_directory, &target.installed.name, enabled)?;
 
@@ -967,7 +972,17 @@ pub fn delete_mod_capsule(
     if scanned_mod.installed.unpack_recovery_required {
         return Err("此 Mod 有未完成的解压事务，请先点击解压恢复，再删除".to_string());
     }
-    ensure_audio_mod_not_in_use(state.inner(), &config, &scanned_mod.installed.name)?;
+    let game_directory = if scanned_mod.edition == "CN" {
+        config.cn_game_path.trim()
+    } else {
+        config.global_game_path.trim()
+    };
+    ensure_audio_mod_not_in_use(
+        state.inner(),
+        &config,
+        Path::new(game_directory),
+        &scanned_mod.installed.name,
+    )?;
     delete_scanned_mod_directory(&config, &scanned_mod.edition, &scanned_mod.installed.name)?;
     payload.argument_overrides.remove(&current.id);
     let (generation, payload) = save_payload(state.inner(), generation, payload)?;

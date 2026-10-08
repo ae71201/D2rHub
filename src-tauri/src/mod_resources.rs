@@ -778,7 +778,7 @@ pub async fn install_mod_resource(
                 );
             }
             let config = shared.configuration().snapshot().ok_or("配置未就绪")?;
-            crate::audio_mod::ensure_audio_mod_not_in_use(&shared, &config, &a.id)?;
+            crate::audio_mod::ensure_audio_mod_not_in_use(&shared, &config, &game, &a.id)?;
             let system = sysinfo::System::new_all();
             if system
                 .processes()

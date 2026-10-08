@@ -92,7 +92,7 @@ export function useLaunchEvents(config: GlobalConfig | null, optionalFeaturesAva
     const wasLaunching = prevLaunchingRef.current;
     prevLaunchingRef.current = launching;
     if (!optionalFeaturesAvailable || !wasLaunching || launching || !config) return;
-    if (!config.rune_audio_enabled) return;
+    if (!config.rune_audio_enabled || config.rune_audio_external_target) return;
 
     const target = validateTrackingTarget(config.rune_audio_target_account, accounts);
     if (!target.valid) return;

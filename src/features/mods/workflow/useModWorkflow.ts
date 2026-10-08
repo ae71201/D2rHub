@@ -10,6 +10,7 @@ import { describeModDraft, initialModFeatures } from "./model";
 import { useBatchProcessing } from "./useBatchProcessing";
 import { useModInspection } from "./useModInspection";
 import { useModPreparationTask } from "./useModPreparationTask";
+import { installationTargetId } from "../../../utils/recognitionSource";
 import type { ModAppliedResult, ModEdition, ModProcessingDraft, ModProcessingRequest, ModRecipe, ModWorkflowOrigin } from "./types";
 
 interface Options {
@@ -19,6 +20,7 @@ interface Options {
   catalog: ModCapsuleController;
   language?: string | null;
   optionalFeaturesAvailable: boolean;
+  installationPaths?: Partial<Record<ModEdition, string>>;
   onNavigate: (destination: ModWorkflowOrigin) => void;
   onApplied: (result: ModAppliedResult) => Promise<void>;
 }
@@ -47,9 +49,11 @@ export function useModWorkflow(options: Options) {
   const [autoStart, setAutoStart] = useState(false);
   const [processorReady, setProcessorReady] = useState<boolean | null>(null);
   const target = options.accounts.find(account => account.id === draft?.accountId);
-  const inspectionIdentity = JSON.stringify([target?.initialized, target?.region, target?.mod_args, target?.is_running, target?.running_pid, options.catalog.pool?.scanned_at]);
-  const inspection = useModInspection(options.open && options.active && view === "processing" && target?.initialized === true, draft?.accountId ?? "", inspectionIdentity);
-  const preparationTask = useModPreparationTask({ accountId: draft?.accountId ?? "", busy });
+  const inspectionIdentity = JSON.stringify([draft?.installationOnly, draft?.edition, options.installationPaths?.[draft?.edition ?? "CN"], target?.initialized, target?.region, target?.mod_args, target?.is_running, target?.running_pid, options.catalog.pool?.scanned_at]);
+  const inspectionTargetId = draft?.installationOnly ? installationTargetId(draft.edition) : draft?.accountId ?? "";
+  const inspection = useModInspection(options.open && options.active && view === "processing" && (draft?.installationOnly === true || target?.initialized === true),
+    inspectionTargetId, inspectionIdentity, draft?.installationOnly ? { edition: draft.edition } : undefined);
+  const preparationTask = useModPreparationTask({ accountId: inspectionTargetId, busy });
   const observedTask = useRef(preparationTask.currentTask);
   observedTask.current = preparationTask.currentTask;
   const en = options.language === "en-US";
@@ -101,12 +105,14 @@ export function useModWorkflow(options: Options) {
     const requestedEdition = request.edition ?? editionForAccount(initialized.find(account => account.id === request.accountId));
     const candidates = initialized.filter(account => !!editionForAccount(account)
       && (!requestedEdition || editionForAccount(account) === requestedEdition));
-    const account = request.accountId ? candidates.find(account => account.id === request.accountId) : candidates[0];
+    const account = request.installationOnly ? undefined : request.accountId ? candidates.find(account => account.id === request.accountId) : candidates[0];
+    const installationOnly = request.installationOnly || (!account && request.origin === "library");
     const edition = (requestedEdition ?? editionForAccount(account)) === "Global" ? "Global" : "CN";
     const existing = request.origin !== "library" && account ? selectedCapsuleForAccount(catalog.pool, account.id) : null;
     const source = request.source ?? (existing ? { name: existing.name, processed: existing.processed || existing.update_required } : undefined);
     const next: ModProcessingDraft = {
-      origin: request.origin, accountId: account?.id ?? "", edition,
+      origin: request.origin, accountId: installationOnly ? "" : account?.id ?? "", edition,
+      ...(installationOnly ? { installationOnly: true } : {}),
       recipe: source?.processed
         ? { kind: "augment", modName: source.name }
         : { kind: "create", source: source?.name ?? null, name: "" },
@@ -155,23 +161,25 @@ export function useModWorkflow(options: Options) {
 
   useEffect(() => {
     if ((!options.open || !options.active || view !== "processing") && !busy) return;
-    if (!draft?.accountId) return;
+    if (!inspectionTargetId) return;
     let disposed = false;
     let stop: (() => void) | undefined;
     void listenEvent<AudioModPrepareProgress>("audio-mod-prepare-progress", event => {
-      if (!disposed && operation.current && event.payload.account_id === draft.accountId) setProgress(event.payload);
+      if (!disposed && operation.current && event.payload.account_id === inspectionTargetId) setProgress(event.payload);
     }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; }).catch(() => undefined);
     return () => { disposed = true; stop?.(); };
-  }, [busy, draft?.accountId, options.open, options.active, view]);
+  }, [busy, inspectionTargetId, options.open, options.active, view]);
 
   const prepare = async () => {
     const current = draftRef.current;
     if (!current || operation.current) return;
+    const installationPath = latest.current.installationPaths?.[current.edition];
     const targetStillValid = () => {
+      if (current.installationOnly) return installationPath === latest.current.installationPaths?.[current.edition];
       const account = latest.current.accounts.find(account => account.id === current.accountId);
       return account?.initialized && editionForAccount(account) === current.edition;
     };
-    const targetUnavailable = en ? "The target account is no longer available for this game edition. Select an account again."
+    const targetUnavailable = current.installationOnly ? (en ? "The game installation changed. Inspect the new directory before continuing." : "游戏安装目录已改变，请重新检查后继续加工。") : en ? "The target account is no longer available for this game edition. Select an account again."
       : "目标账号已不可用或游戏版本已改变，请重新选择账号。";
     if (!targetStillValid()) {
       setError(targetUnavailable);
@@ -184,28 +192,34 @@ export function useModWorkflow(options: Options) {
     operation.current = true;
     setBusy(true); setAutoStart(false); setError(null); setNotice(null);
     let completed = recovery;
-    setProgress({ account_id: current.accountId, phase: completed ? "applying" : "starting", percent: 1,
+    setProgress({ account_id: current.installationOnly ? installationTargetId(current.edition) : current.accountId, phase: completed ? "applying" : "starting", percent: 1,
       message: en ? "Preparing selected features…" : "正在准备所选功能…" });
     try {
       if (!completed) {
         const features = audioModFeatureInvokeOptions(currentAnalysis.selection);
         if (current.recipe.kind === "augment") {
           const upgraded = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
-            accountId: current.accountId, modName: current.recipe.modName, forceRebuild: current.recipe.rebuild ?? false,
+            accountId: current.accountId, ...(current.installationOnly ? { edition: current.edition } : {}), modName: current.recipe.modName, forceRebuild: current.recipe.rebuild ?? false,
             sourceModName: current.recipe.sourceOverride ?? currentAnalysis.selected?.source_mod_name
               ?? (inspection.state?.current_mod_name?.toLocaleLowerCase() === current.recipe.modName.toLocaleLowerCase() ? inspection.state.source_mod_name : null),
             ...features,
           });
-          const alreadyAssigned = inspection.state?.current_mod_name?.toLocaleLowerCase() === current.recipe.modName.toLocaleLowerCase();
+          const alreadyAssigned = current.installationOnly || inspection.state?.current_mod_name?.toLocaleLowerCase() === current.recipe.modName.toLocaleLowerCase();
           completed = { key, modName: current.recipe.modName, ...(alreadyAssigned ? { applied: upgraded } : {}) };
         } else {
           const built = await invokeCommand<AudioModPrepareResult>("prepare_audio_mod", {
-            accountId: current.accountId, modName: current.recipe.name.trim(), sourceModName: current.recipe.source, ...features,
+            accountId: current.accountId, ...(current.installationOnly ? { edition: current.edition } : {}), modName: current.recipe.name.trim(), sourceModName: current.recipe.source, ...features,
           });
           completed = { key, modName: built.mod_name };
         }
         receiptRef.current = completed;
         setReceipt(completed);
+      }
+      if (!completed.applied && current.installationOnly) {
+        if (!targetStillValid()) throw new Error(targetUnavailable);
+        const state = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: "", edition: current.edition, modName: completed.modName });
+        completed = { ...completed, applied: state };
+        receiptRef.current = completed; setReceipt(completed);
       }
       if (!completed.applied) {
         if (!targetStillValid()) throw new Error(targetUnavailable);
@@ -216,7 +230,8 @@ export function useModWorkflow(options: Options) {
       }
       inspection.accept(completed.applied!);
       if (!targetStillValid()) throw new Error(targetUnavailable);
-      await latest.current.onApplied({ origin: current.origin, accountId: current.accountId, state: completed.applied! });
+      await latest.current.onApplied({ origin: current.origin, accountId: current.accountId, state: completed.applied!,
+        ...(current.installationOnly ? { installationEdition: current.edition } : {}) });
       await latest.current.catalog.refresh();
       receiptRef.current = null; setReceipt(null); setProgress(null);
       draftRef.current = null; setDraft(null); accountDrafts.current.clear();

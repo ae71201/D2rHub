@@ -361,8 +361,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const modWorkflow = useModWorkflow({
     open, active: activeTab === "mod-processing", accounts, catalog: modCapsules,
     language: config?.app_language, optionalFeaturesAvailable: !minimalMode,
+    installationPaths: { CN: config?.cn_game_path ?? "", Global: config?.global_game_path ?? "" },
     onNavigate: origin => setActiveTab(origin === "recognition" ? "automation" : origin === "room-automation" ? "room-automation" : "mod-processing"),
-    onApplied: async result => { await loadAccounts(); await audio.completeModProcessing(result); },
+    onApplied: async result => { if (!result.installationEdition) await loadAccounts(); await audio.completeModProcessing(result); },
   });
   const modFeatures = useModFeatureCoordination({
     accounts, trackingTargetId, modCatalog: modCapsules, toggleAudio: audio.handleAudioToggle,
@@ -572,15 +573,22 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                   if (next && accountId === trackingTargetId) await audio.refreshAudioModState();
                   return next;
                 }}
-                onOpenModProcessing={() => modWorkflow.actions.requestProcessing({ origin: "recognition", accountId: trackingTargetId })}
+                onOpenModProcessing={() => modWorkflow.actions.requestProcessing(config.rune_audio_external_target
+                  ? { origin: "recognition", installationOnly: true, edition: config.rune_audio_external_target.edition,
+                    ...(config.rune_audio_external_target.mod_name ? { source: { name: config.rune_audio_external_target.mod_name, processed: !!audio.audioModState?.feature_groups.length || !!audio.audioModState?.update_required } } : {}) }
+                  : { origin: "recognition", accountId: trackingTargetId })}
                 audioPreparing={modWorkflow.busy}
                 hasInitializedAudioAccount={audio.hasInitializedAudioAccount}
                 hasAudioTarget={audio.hasAudioTarget}
                 hasReadyAudioMod={audio.hasReadyAudioMod}
                 isAudioEnableRequested={audio.isAudioEnableRequested}
                 isAudioRecognitionActive={audio.isAudioRecognitionActive}
+                externalInstances={audio.externalInstances}
+                externalInstancesError={audio.externalInstancesError}
+                onExternalTargetChange={audio.handleExternalTargetChange}
+                onSelectExternalInstance={audio.selectExternalInstance}
                 onAudioTargetChange={audio.handleAudioTargetChange}
-                onAudioToggle={modFeatures.toggleRecognition}
+                onAudioToggle={config.rune_audio_external_target ? audio.handleAudioToggle : modFeatures.toggleRecognition}
                 onPrepareModCapsule={(accountId, capsuleId) => {
                   void modFeatures.prepareFeature(accountId, capsuleId, "recognition");
                 }}
