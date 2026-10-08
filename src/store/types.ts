@@ -50,6 +50,7 @@ export interface LayoutMonitor {
 }
 
 export interface LayoutSlot extends LayoutRect {
+  /** width/height are Settings.json game resolution, not native window size. */
   monitor_id: string;
 }
 

@@ -2,6 +2,8 @@ import type { LayoutMonitor, LayoutRect, LayoutSlot, WindowLayout } from "../../
 
 export const MIN_LAYOUT_WIDTH = 800;
 export const MIN_LAYOUT_HEIGHT = 600;
+export const MAX_LAYOUT_WIDTH = 7680;
+export const MAX_LAYOUT_HEIGHT = 4320;
 export const MAX_LAYOUT_WINDOWS = 32;
 export type PresetResolution = "1080p" | "2k" | "4k";
 export type ResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
@@ -18,10 +20,10 @@ export function defaultPresetResolution(monitor?: LayoutMonitor): PresetResoluti
 
 export function constrainSlot(slot: LayoutSlot, monitor: LayoutMonitor): LayoutSlot {
   const work = monitor.work_area;
-  const width = clamp(slot.width, MIN_LAYOUT_WIDTH, work.width);
-  const height = clamp(slot.height, MIN_LAYOUT_HEIGHT, work.height);
+  const width = clamp(slot.width, MIN_LAYOUT_WIDTH, MAX_LAYOUT_WIDTH);
+  const height = clamp(slot.height, MIN_LAYOUT_HEIGHT, MAX_LAYOUT_HEIGHT);
   return { ...slot, monitor_id: monitor.id, width, height,
-    x: clamp(slot.x, 0, work.width - width), y: clamp(slot.y, 0, work.height - height) };
+    x: clamp(slot.x, 0, Math.max(0, work.width - width)), y: clamp(slot.y, 0, Math.max(0, work.height - height)) };
 }
 
 export function slotRect(slot: LayoutSlot, monitors: readonly LayoutMonitor[]): LayoutRect {
@@ -42,8 +44,7 @@ export function adaptLayout(layout: WindowLayout, monitors: LayoutMonitor[]): Wi
   return { ...layout, monitors, windows: layout.windows.map(slot => {
     const saved = layout.monitors.find(monitor => monitor.id === slot.monitor_id) ?? primary;
     const current = monitors.find(monitor => monitor.id === slot.monitor_id) ?? primary;
-    const width = Math.min(slot.width, current.work_area.width);
-    const height = Math.min(slot.height, current.work_area.height);
+    const { width, height } = slot;
     return constrainSlot({ ...slot, monitor_id: current.id, width, height,
       x: adaptAxis(slot.x, slot.width, saved.work_area.width, width, current.work_area.width),
       y: adaptAxis(slot.y, slot.height, saved.work_area.height, height, current.work_area.height) }, current);
@@ -59,9 +60,8 @@ export function presetSlots(monitors: readonly LayoutMonitor[], count: number, r
   const mainSize = resolution === "4k" ? [1920, 1080] : resolution === "2k" ? [1600, 900] : [1280, 720];
   const followerSize = resolution === "4k" && total <= 4 ? [1600, 900] : [1280, 720];
   const create = (size: number[], anchorX: number, anchorY: number): LayoutSlot => {
-    const width = Math.min(work.width, size[0]);
-    const height = Math.min(work.height, size[1]);
-    return { monitor_id: monitor.id, width, height, x: Math.round((work.width - width) * anchorX), y: Math.round((work.height - height) * anchorY) };
+    const [width, height] = size;
+    return { monitor_id: monitor.id, width, height, x: Math.round(Math.max(0, work.width - width) * anchorX), y: Math.round(Math.max(0, work.height - height) * anchorY) };
   };
   // Balanced corners first, then the middle of the outer edges. The larger
   // primary stays centered instead of being squeezed into a tiny grid cell.
@@ -127,18 +127,18 @@ export function resizeSlot(layout: WindowLayout, index: number, start: LayoutSlo
   const { xs, ys } = snapTargets(layout, index, monitor);
   let left = start.x, right = start.x + start.width, top = start.y, bottom = start.y + start.height;
   if (handle.includes("w")) left = clamp(left + dx, 0, right - MIN_LAYOUT_WIDTH);
-  if (handle.includes("e")) right = clamp(right + dx, left + MIN_LAYOUT_WIDTH, monitor.work_area.width);
+  if (handle.includes("e")) right = clamp(right + dx, left + MIN_LAYOUT_WIDTH, left + MAX_LAYOUT_WIDTH);
   if (handle.includes("n")) top = clamp(top + dy, 0, bottom - MIN_LAYOUT_HEIGHT);
-  if (handle.includes("s")) bottom = clamp(bottom + dy, top + MIN_LAYOUT_HEIGHT, monitor.work_area.height);
+  if (handle.includes("s")) bottom = clamp(bottom + dy, top + MIN_LAYOUT_HEIGHT, top + MAX_LAYOUT_HEIGHT);
   if (handle.includes("w")) left += closestDelta([left], xs, tolerance);
   if (handle.includes("e")) right += closestDelta([right], xs, tolerance);
   if (handle.includes("n")) top += closestDelta([top], ys, tolerance);
   if (handle.includes("s")) bottom += closestDelta([bottom], ys, tolerance);
   left = clamp(left, 0, right - MIN_LAYOUT_WIDTH);
-  right = clamp(right, left + MIN_LAYOUT_WIDTH, monitor.work_area.width);
+  right = clamp(right, left + MIN_LAYOUT_WIDTH, left + MAX_LAYOUT_WIDTH);
   top = clamp(top, 0, bottom - MIN_LAYOUT_HEIGHT);
-  bottom = clamp(bottom, top + MIN_LAYOUT_HEIGHT, monitor.work_area.height);
-  return { monitor_id: monitor.id, x: left, y: top, width: right - left, height: bottom - top };
+  bottom = clamp(bottom, top + MIN_LAYOUT_HEIGHT, top + MAX_LAYOUT_HEIGHT);
+  return constrainSlot({ monitor_id: monitor.id, x: left, y: top, width: right - left, height: bottom - top }, monitor);
 }
 
 export function validateLayout(layout: WindowLayout): string | null {
@@ -147,8 +147,8 @@ export function validateLayout(layout: WindowLayout): string | null {
   for (const slot of layout.windows) {
     const monitor = layout.monitors.find(monitor => monitor.id === slot.monitor_id);
     if (!monitor || ![slot.x, slot.y, slot.width, slot.height].every(Number.isInteger)) return "窗口坐标和尺寸必须为整数";
-    if (slot.width < MIN_LAYOUT_WIDTH || slot.height < MIN_LAYOUT_HEIGHT) return "窗口最小尺寸为 800 × 600";
-    if (slot.x < 0 || slot.y < 0 || slot.x + slot.width > monitor.work_area.width || slot.y + slot.height > monitor.work_area.height) return "窗口必须完整位于显示器工作区内";
+    if (slot.width < MIN_LAYOUT_WIDTH || slot.height < MIN_LAYOUT_HEIGHT || slot.width > MAX_LAYOUT_WIDTH || slot.height > MAX_LAYOUT_HEIGHT) return "游戏分辨率须在 800 × 600 到 7680 × 4320 之间";
+    if (slot.x < 0 || slot.y < 0 || slot.x > Math.max(0, monitor.work_area.width - slot.width) || slot.y > Math.max(0, monitor.work_area.height - slot.height)) return "窗口坐标超出显示器工作区";
   }
   return null;
 }

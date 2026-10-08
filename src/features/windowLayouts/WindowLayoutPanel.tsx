@@ -3,6 +3,7 @@ import { AlignCenter, ArrowLeft, Check, ChevronDown, LayoutDashboard, Maximize, 
 import type { GlobalConfig, LayoutMonitor, LayoutSlot, WindowLayout } from "../../store/types";
 import { Toggle } from "../../components/ui/Toggle";
 import { Button } from "../../components/ui/Button";
+import { ResolutionInput } from "../../components/ui/ResolutionInput";
 import { useAccounts } from "../../store/accounts";
 import { layoutAccountLabels } from "./accountLabels";
 import { useLaunch } from "../../store/launch";
@@ -305,7 +306,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
           <LayoutCanvas layout={layout} labels={labels} selected={selectedIndex} onSelect={setSelected} onChange={changeWindows}
             focusedMonitor={monitors.some(monitor => monitor.id === focusedMonitor) ? focusedMonitor : undefined} english={english} disabled={launching || busy || !capable} />
           <div className="layout-stage-hint"><span>{english ? "Overlap allowed · magnetic edges" : "允许重叠 · 边缘磁吸"}</span>
-            <span>{english ? "Shift-drag bypasses snap · arrows move · Shift+arrows resize" : "Shift 拖动关闭吸附 · 方向键移动 · Shift＋方向键缩放"}</span></div>
+            <span>{english ? "Shift-drag bypasses snap · arrows move · Shift+arrows change resolution" : "Shift 拖动关闭吸附 · 方向键移动 · Shift＋方向键调整分辨率"}</span></div>
         </div>
         <div className="layout-slot-list" role="group" aria-label={english ? "Accounts in launch order" : "启动顺序对应账号"}>
           {layout.windows.map((slot, index) => <button key={index} type="button" aria-pressed={index === selectedIndex}
@@ -325,24 +326,26 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
           </button>)}
         </div>
         {slot && monitor && rect && <div className="layout-inspector">
-          <div className="layout-inspector-heading"><strong>{labels[selectedIndex]}</strong><span>{english ? "Window position and size" : "窗口位置与尺寸"}</span></div>
+          <div className="layout-inspector-heading"><strong>{labels[selectedIndex]}</strong><span>{english ? "Window position and game resolution" : "窗口位置与游戏分辨率"}</span></div>
           <label className="layout-monitor-field"><span>{english ? "Display" : "所在显示器"}</span><select className="settings-input" value={slot.monitor_id}
             onChange={event => changeSlot({ monitor_id: event.target.value })}>
             {monitors.map(monitor => <option key={monitor.id} value={monitor.id} disabled={monitor.work_area.width < MIN_LAYOUT_WIDTH || monitor.work_area.height < MIN_LAYOUT_HEIGHT}>
               {monitor.name}{monitor.primary ? (english ? " · Primary" : " · 主屏") : ""}</option>)}
           </select></label>
-          <GeometryField label="X" value={rect.x} min={monitor.work_area.x} max={monitor.work_area.x + monitor.work_area.width - slot.width} onChange={value => changeSlot({ x: value - monitor.work_area.x })} />
-          <GeometryField label="Y" value={rect.y} min={monitor.work_area.y} max={monitor.work_area.y + monitor.work_area.height - slot.height} onChange={value => changeSlot({ y: value - monitor.work_area.y })} />
-          <GeometryField label={english ? "Width" : "宽度"} value={slot.width} min={MIN_LAYOUT_WIDTH} max={monitor.work_area.width} onChange={value => changeSlot({ width: value })} />
-          <GeometryField label={english ? "Height" : "高度"} value={slot.height} min={MIN_LAYOUT_HEIGHT} max={monitor.work_area.height} onChange={value => changeSlot({ height: value })} />
+          <GeometryField label="X" value={rect.x} min={monitor.work_area.x} max={monitor.work_area.x + Math.max(0, monitor.work_area.width - slot.width)} onChange={value => changeSlot({ x: value - monitor.work_area.x })} />
+          <GeometryField label="Y" value={rect.y} min={monitor.work_area.y} max={monitor.work_area.y + Math.max(0, monitor.work_area.height - slot.height)} onChange={value => changeSlot({ y: value - monitor.work_area.y })} />
+          <div className="layout-resolution-field"><span>{english ? "Game resolution" : "游戏分辨率"}</span>
+            <ResolutionInput label={english ? "Game resolution" : "游戏分辨率"} value={`${slot.width}x${slot.height}`}
+              onChange={value => { const [width, height] = value.split("x").map(Number); changeSlot({ width, height }); }} />
+          </div>
           <div className="layout-inspector-actions">
             <Button type="button" size="sm" onClick={() => changeSlot({ x: Math.round((monitor.work_area.width - slot.width) / 2), y: Math.round((monitor.work_area.height - slot.height) / 2) })}
               title={english ? "Center on this display" : "在此显示器居中"}><AlignCenter size={14} /><span>{english ? "Center" : "居中"}</span></Button>
-            <Button type="button" size="sm" onClick={() => changeSlot({ x: 0, y: 0, width: monitor.work_area.width, height: monitor.work_area.height })}
-              title={english ? "Fill work area" : "铺满工作区"}><Maximize size={14} /><span>{english ? "Fill" : "铺满"}</span></Button>
+            <Button type="button" size="sm" onClick={() => changeSlot({ x: 0, y: 0, width: monitor.bounds.width, height: monitor.bounds.height })}
+              title={english ? "Use display resolution" : "使用显示器分辨率"}><Maximize size={14} /><span>{english ? "Match display" : "匹配显示器"}</span></Button>
           </div>
         </div>}
-        <div className="layout-panel-footer"><p>{english ? "Running accounts follow launch order; other nicknames preview dashboard order. Layouts override account positions and sizes." : "运行账号按启动顺序对应，未运行账号按主界面顺序预览。启用后，布局优先于账号的窗口位置与尺寸。"}</p>
+        <div className="layout-panel-footer"><p>{english ? "Resolution has the same meaning as account resolution and takes effect on the next launch. Restoring a layout moves existing windows without resizing them. The canvas previews placement; it excludes window borders." : "分辨率与账号分辨率含义相同，下次启动时生效。恢复布局仅移动运行中的窗口，不改变其大小。画布用于预览排列，不包含窗口边框。"}</p>
           <div>{editor.baseline && <Button type="button" size="sm" variant="danger" onClick={remove}><Trash2 size={13} />{confirmDelete ? (english ? "Confirm delete" : "确认删除") : (english ? "Delete layout" : "删除布局")}</Button>}
             <Button type="button" size="sm" onClick={() => save(true)}><Check size={14} />{english ? "Save & use layout" : "保存并使用布局"}</Button></div>
         </div>

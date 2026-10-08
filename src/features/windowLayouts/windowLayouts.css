@@ -9,6 +9,8 @@
 .layout-name-field > span, .layout-geometry-field > span, .layout-monitor-field > span { color: var(--text-secondary); font-size: var(--text-xs); font-weight: 500; }
 .layout-name-field input { width: 100%; min-width: 0; }
 .layout-geometry-field { width: 96px; min-width: 0; }
+.layout-resolution-field { min-width: 0; grid-column: span 2; display: grid; gap: 6px; }
+.layout-resolution-field > span { color: var(--text-secondary); font-size: var(--text-xs); }
 .layout-geometry-field input { min-width: 0; width: 100%; font-variant-numeric: tabular-nums; }
 .layout-error { color: var(--error); font-size: var(--text-sm); line-height: 1.6; margin: 0; }
 .layout-preset-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 3px; color: var(--text-secondary); font-size: var(--text-xs); }

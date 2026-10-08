@@ -107,13 +107,11 @@ describe("window layout library and editor", () => {
     await screen.findByRole("button", { name: "编辑布局：新布局" });
     expect(mocks.persist).toHaveBeenCalledTimes(2);
   });
-  it("supports precise sizing, negative display coordinates, and keyboard movement", async () => {
+  it("supports game resolution, negative display coordinates, and keyboard movement", async () => {
     render(<Harness />);
     await create();
-    for (const [name, value] of [["宽度", "800"], ["高度", "600"]]) {
-      fireEvent.change(screen.getByRole("spinbutton", { name }), { target: { value } });
-      fireEvent.blur(screen.getByRole("spinbutton", { name }));
-    }
+    fireEvent.change(screen.getByRole("combobox", { name: "游戏分辨率" }), { target: { value: "800x600" } });
+    fireEvent.blur(screen.getByRole("combobox", { name: "游戏分辨率" }));
     fireEvent.change(screen.getByRole("combobox", { name: "所在显示器" }), { target: { value: "left" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "X" }), { target: { value: "-1800" } });
     fireEvent.blur(screen.getByRole("spinbutton", { name: "X" }));
@@ -121,6 +119,16 @@ describe("window layout library and editor", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "雷董2，800 × 600" }), { key: "ArrowDown", shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "保存布局" }));
     await waitFor(() => expect(latest.window_layouts?.[0].windows[0]).toMatchObject({ monitor_id: "left", x: 121, width: 800, height: 610 }));
+  });
+  it("preserves full display resolution despite the taskbar and a smaller monitor", async () => {
+    render(<Harness />);
+    await create();
+    fireEvent.change(screen.getByRole("combobox", { name: "游戏分辨率" }), { target: { value: "2560x1440" } });
+    fireEvent.blur(screen.getByRole("combobox", { name: "游戏分辨率" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "所在显示器" }), { target: { value: "left" } });
+    expect((screen.getByRole("combobox", { name: "游戏分辨率" }) as HTMLInputElement).value).toBe("2560x1440");
+    fireEvent.click(screen.getByRole("button", { name: "保存布局" }));
+    await waitFor(() => expect(latest.window_layouts?.[0].windows[0]).toMatchObject({ monitor_id: "left", x: 0, y: 0, width: 2560, height: 1440 }));
   });
   it("saves and applies explicitly, and marks the applied capsule", async () => {
     render(<Harness />);

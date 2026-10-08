@@ -34,3 +34,7 @@ assert(resized.x + resized.width === 1780 && resized.y + resized.height === 920,
 const recovered = adaptLayout({ ...layout, windows: [{ monitor_id: "left", x: 320, y: 160, width: 1280, height: 720 }] }, [monitor(1024, 768)]);
 assert(recovered.windows[0].monitor_id === "main" && recovered.windows[0].x === 0 && recovered.windows[0].y === 24, "Disconnected displays recover a centered window on the primary");
 assert(validateLayout(recovered) === null, "Recovered layout remains valid");
+assert(recovered.windows[0].width === 1280 && recovered.windows[0].height === 720, "Monitor recovery never changes game resolution");
+const fullResolution = adaptLayout({ ...layout, windows: [{ monitor_id: "main", x: 0, y: 0, width: 2560, height: 1440 }] }, [monitor(1920, 1040)]);
+assert(fullResolution.windows[0].width === 2560 && fullResolution.windows[0].height === 1440, "Game resolution is independent of the taskbar and monitor size");
+assert(validateLayout(fullResolution) === null, "A resolution larger than the work area is valid");

@@ -38,8 +38,8 @@ mod native {
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindow, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
         IsWindow, IsWindowVisible, IsZoomed, SetWindowPos, ShowWindowAsync, GW_OWNER, HWND_TOP,
-        MONITORINFOF_PRIMARY, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
-        SW_RESTORE,
+        MONITORINFOF_PRIMARY, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+        SWP_NOZORDER, SW_RESTORE,
     };
 
     use super::*;
@@ -233,21 +233,14 @@ mod native {
             let flags = SWP_NOACTIVATE
                 | SWP_NOOWNERZORDER
                 | SWP_ASYNCWINDOWPOS
+                | SWP_NOSIZE
                 | if raise {
                     Default::default()
                 } else {
                     SWP_NOZORDER
                 };
-            SetWindowPos(
-                hwnd,
-                HWND_TOP,
-                rect.x,
-                rect.y,
-                rect.width as i32,
-                rect.height as i32,
-                flags,
-            )
-            .map_err(|error| AppError::FileError(format!("调整游戏窗口失败：{error}")))
+            SetWindowPos(hwnd, HWND_TOP, rect.x, rect.y, 0, 0, flags)
+                .map_err(|error| AppError::FileError(format!("调整游戏窗口失败：{error}")))
         }
     }
 

@@ -483,6 +483,8 @@ fn apply_temporary_window_settings_at_path(
         }
     }
     if let Some(rect) = layout_rect {
+        // Layout dimensions have the same meaning as account resolution.
+        // Native placement must not resize the outer window to these values.
         settings.insert("Window Mode".into(), serde_json::json!(0));
         settings.insert(
             "Screen Resolution (Windowed)".into(),
@@ -3613,7 +3615,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_window_mode_and_dimensions_are_temporary_and_preserve_fps_intent() {
+    fn layout_game_resolution_is_temporary_and_preserves_fps_intent() {
         let root = temp_dir("layout_window_settings");
         let path = root.join("Settings.json");
         let original = br#"{"Window Mode":1,"Screen Resolution (Windowed)":"2560x1440","Framerate Cap":75,"VSync":true}"#;

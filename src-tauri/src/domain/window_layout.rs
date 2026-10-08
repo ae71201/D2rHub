@@ -8,8 +8,8 @@ pub const MIN_WINDOW_WIDTH: u32 = 800;
 pub const MIN_WINDOW_HEIGHT: u32 = 600;
 pub const MAX_LAYOUT_WINDOWS: usize = 32;
 
-/// Physical desktop pixels, including the window frame. Never mix these with
-/// WebView logical pixels; a monitor may have a negative desktop origin.
+/// Physical desktop coordinates. For launch targets, width/height are game
+/// resolution values for Settings.json, not native window-frame dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutRect {
     pub x: i32,
@@ -34,6 +34,7 @@ pub struct LayoutSlot {
     /// Relative to this monitor's work-area origin, in physical pixels.
     pub x: i32,
     pub y: i32,
+    /// Game resolution, with the same meaning and limits as account settings.
     pub width: u32,
     pub height: u32,
 }
@@ -102,13 +103,15 @@ impl WindowLayout {
                 .iter()
                 .find(|monitor| monitor.id == slot.monitor_id)
                 .ok_or_else(|| invalid("窗口引用了不存在的显示器"))?;
-            if slot.width < MIN_WINDOW_WIDTH || slot.height < MIN_WINDOW_HEIGHT {
-                return Err(invalid("窗口最小尺寸为 800 × 600"));
+            if !(MIN_WINDOW_WIDTH..=7680).contains(&slot.width)
+                || !(MIN_WINDOW_HEIGHT..=4320).contains(&slot.height)
+            {
+                return Err(invalid("游戏分辨率须在 800 × 600 到 7680 × 4320 之间"));
             }
             if slot.x < 0
                 || slot.y < 0
-                || i64::from(slot.x) + i64::from(slot.width) > i64::from(monitor.work_area.width)
-                || i64::from(slot.y) + i64::from(slot.height) > i64::from(monitor.work_area.height)
+                || slot.x as u32 > monitor.work_area.width.saturating_sub(slot.width)
+                || slot.y as u32 > monitor.work_area.height.saturating_sub(slot.height)
             {
                 return Err(invalid("窗口必须完整位于显示器工作区内"));
             }
@@ -117,7 +120,7 @@ impl WindowLayout {
     }
 
     /// Preserve edge/center anchors when resolution changes. A disconnected
-    /// monitor falls back to the primary; rectangles remain wholly reachable.
+    /// monitor falls back to the primary. Game resolution remains unchanged.
     pub fn resolve(&self, monitors: &[LayoutMonitor]) -> Result<Vec<LayoutRect>, AppError> {
         self.validate()?;
         let primary = monitors
@@ -144,8 +147,10 @@ impl WindowLayout {
                         current.name
                     )));
                 }
-                let width = slot.width.min(work.width);
-                let height = slot.height.min(work.height);
+                // Monitor adaptation changes placement only. Never silently
+                // replace the user's game resolution with a work-area size.
+                let width = slot.width;
+                let height = slot.height;
                 Ok(LayoutRect {
                     x: work.x.saturating_add(adapt_axis(
                         slot.x,
@@ -257,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_monitor_and_smaller_work_area_keep_windows_inside() {
+    fn missing_monitor_and_smaller_work_area_preserve_game_resolution() {
         let rectangles = layout()
             .resolve(&[monitor("main", 20, 1024, 768, true)])
             .unwrap();
@@ -266,7 +271,7 @@ mod tests {
             LayoutRect {
                 x: 20,
                 y: 24,
-                width: 1024,
+                width: 1280,
                 height: 720
             }
         );

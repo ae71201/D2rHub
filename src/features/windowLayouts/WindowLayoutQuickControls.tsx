@@ -71,7 +71,7 @@ export function WindowLayoutQuickControls({ onOpenSettings, disabled = false }: 
         <div className="layout-quick-summary">
           <span className="layout-status-dot" data-active={active} aria-hidden="true" />
           <div><strong>{active ? selected.name : enabled ? (english ? "Choose a layout" : "尚未选用布局") : (english ? "Layouts are off" : "布局已关闭")}</strong>
-            <p>{active ? (english ? "Positions and sizes follow this layout." : "启动与恢复窗口时使用此布局的位置和尺寸。")
+            <p>{active ? (english ? "Resolution applies on the next launch. Restore moves running windows only." : "分辨率在下次启动时生效，恢复布局仅调整运行窗口的位置。")
               : (english ? "Using individual account positions." : "当前使用各账号的窗口坐标。")}</p></div>
         </div>
         <div className="layout-capsules" role="group" aria-label={english ? "Choose a layout" : "选择布局"}>
@@ -91,7 +91,7 @@ export function WindowLayoutQuickControls({ onOpenSettings, disabled = false }: 
           <button type="button" className="room-automation-quick-settings" disabled={busy}
             onClick={() => { setOpen(false); onOpenSettings(); }}><Settings2 size={12} />{english ? "Manage layouts" : "管理布局"}</button>
           <button type="button" className="control-btn" disabled={locked || !active} onClick={() => void run(() => restore())}
-            title={english ? "Restore positions and sizes in launch order" : "按启动顺序恢复运行窗口的位置和尺寸"}>
+            title={english ? "Restore window positions in launch order" : "按启动顺序恢复运行窗口的位置"}>
             {busy ? <LoaderCircle className="animate-spin" size={13} /> : <RotateCcw size={13} />}
             {busy ? (english ? "Applying…" : "调整中…") : (english ? "Restore layout" : "恢复布局")}</button>
         </footer>
