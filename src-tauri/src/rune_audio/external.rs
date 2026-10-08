@@ -466,30 +466,55 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
+    fn process_output_fixture() {
+        use std::io::Write;
+        let Ok(mode) = std::env::var("D2RHUB_METADATA_OUTPUT_FIXTURE") else {
+            return;
+        };
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(&vec![b'x'; 262144]).unwrap();
+        stdout.flush().unwrap();
+        if mode == "timeout" {
+            std::thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn output_fixture_command(mode: &str) -> std::process::Command {
+        let executable = std::env::current_exe().unwrap();
+        let mut command = crate::infrastructure::process::silent_cmd(&executable.to_string_lossy());
+        command
+            .args([
+                "--exact",
+                "rune_audio::external::tests::process_output_fixture",
+                "--nocapture",
+            ])
+            .env("D2RHUB_METADATA_OUTPUT_FIXTURE", mode);
+        command
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
     fn process_scan_drains_output_larger_than_the_pipe_capacity() {
-        let mut command = crate::infrastructure::process::silent_cmd("powershell.exe");
-        command.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "[Console]::Out.Write('x' * 262144)",
-        ]);
-        let output = read_process_output(&mut command, Duration::from_secs(5)).unwrap();
-        assert_eq!(output, vec![b'x'; 262144]);
+        let output = read_process_output(
+            &mut output_fixture_command("output"),
+            Duration::from_secs(15),
+        )
+        .unwrap();
+        // libtest adds its own header/footer around the fixture's raw payload.
+        let payload = vec![b'x'; 262144];
+        assert!(output.windows(payload.len()).any(|bytes| bytes == payload));
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn process_scan_timeout_terminates_child_and_joins_output_reader() {
-        let mut command = crate::infrastructure::process::silent_cmd("powershell.exe");
-        command.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "[Console]::Out.Write('x' * 262144); Start-Sleep -Seconds 30",
-        ]);
         let started = Instant::now();
-        let error = read_process_output(&mut command, Duration::from_secs(2)).unwrap_err();
+        let error = read_process_output(
+            &mut output_fixture_command("timeout"),
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
         assert!(error.contains("超时"));
         assert!(started.elapsed() < Duration::from_secs(10));
     }
