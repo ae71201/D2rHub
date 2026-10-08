@@ -419,19 +419,19 @@ impl WorkflowTaskState {
             WorkflowPhase::Followers,
             "record follower dispatch",
         )?;
-        if !self
+        let account_id = account_id.trim();
+        let canonical_account_id = self
             .status
             .follower_account_ids
             .iter()
-            .any(|candidate| candidate == account_id)
-        {
-            return Err(WorkflowStateError::UnknownFollower(account_id.to_string()));
-        }
+            .find(|candidate| candidate.eq_ignore_ascii_case(account_id))
+            .cloned()
+            .ok_or_else(|| WorkflowStateError::UnknownFollower(account_id.to_string()))?;
         if self
             .status
             .completed_follower_account_ids
             .iter()
-            .any(|candidate| candidate == account_id)
+            .any(|candidate| candidate.eq_ignore_ascii_case(&canonical_account_id))
         {
             return Ok(self.snapshot());
         }
@@ -441,11 +441,11 @@ impl WorkflowTaskState {
         if !delivered {
             self.status
                 .undelivered_follower_account_ids
-                .push(account_id.to_string());
+                .push(canonical_account_id.clone());
         }
         self.status
             .completed_follower_account_ids
-            .push(account_id.to_string());
+            .push(canonical_account_id);
         if self.status.completed_follower_account_ids.len()
             == self.status.follower_account_ids.len()
         {
@@ -577,6 +577,77 @@ impl WorkflowTaskState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn follower_dispatch_uses_canonical_ids_and_ignores_duplicate_case_variants() {
+        let mut config = enabled_config();
+        config.follower_account_ids = vec!["Follower-A".to_string(), "Follower-B".to_string()];
+        let mut state = WorkflowTaskState::default();
+        let task = state.begin_primary(&config, None).unwrap();
+        state.primary_ready(task.id, WaitingMode::Manual).unwrap();
+        state.begin_followers(task.id).unwrap();
+
+        state
+            .record_follower_dispatch(task.id, " follower-a ", false)
+            .unwrap();
+        let before_duplicate = state.snapshot();
+        state
+            .record_follower_dispatch(task.id, "FOLLOWER-A", true)
+            .unwrap();
+        assert_eq!(state.snapshot(), before_duplicate);
+        assert_eq!(
+            state.status().completed_follower_account_ids,
+            ["Follower-A"]
+        );
+        assert_eq!(
+            state.status().undelivered_follower_account_ids,
+            ["Follower-A"]
+        );
+        assert!(matches!(
+            state.record_follower_dispatch(task.id, "unknown", true),
+            Err(WorkflowStateError::UnknownFollower(_))
+        ));
+
+        state
+            .record_follower_dispatch(task.id, "follower-b", true)
+            .unwrap();
+        assert_eq!(state.status().phase, WorkflowPhase::Complete);
+        assert_eq!(
+            state.status().completed_follower_account_ids,
+            ["Follower-A", "Follower-B"]
+        );
+    }
+
+    #[test]
+    fn follower_retry_accepts_recanonicalized_completed_account_ids() {
+        let mut config = enabled_config();
+        config.follower_account_ids = vec!["Follower-A".to_string(), "Follower-B".to_string()];
+        let mut state = WorkflowTaskState::default();
+        let task = state.begin_primary(&config, None).unwrap();
+        state.primary_ready(task.id, WaitingMode::Manual).unwrap();
+        state.begin_followers(task.id).unwrap();
+        state
+            .record_follower_complete(task.id, "Follower-A")
+            .unwrap();
+        let completed = state.status().completed_follower_account_ids.clone();
+        state.fail(task.id, "injected follower failure").unwrap();
+
+        config.follower_account_ids = vec!["follower-a".to_string(), "follower-b".to_string()];
+        let retry = state.resume_followers(&config, None).unwrap();
+        for account_id in completed {
+            state
+                .record_follower_complete(retry.id, &account_id)
+                .unwrap();
+        }
+        state
+            .record_follower_complete(retry.id, "follower-b")
+            .unwrap();
+        assert_eq!(state.status().phase, WorkflowPhase::Complete);
+        assert_eq!(
+            state.status().completed_follower_account_ids,
+            ["follower-a", "follower-b"]
+        );
+    }
 
     #[test]
     fn manual_workflow_preserves_v16_primary_then_followers_behavior() {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ROOM_AUTOMATION_COPY } from "./copy";
 import {
   canonicalizeRoomAutomationShortcut,
+  DEFAULT_ROOM_FLOW_TIMING,
   roomAutomationConfigsEqual,
   validateRoomAutomationConfig,
 } from "./model";
@@ -77,5 +78,28 @@ describe("room automation configuration validation", () => {
   it("compares the unified persisted configuration", () => {
     expect(roomAutomationConfigsEqual(validConfig, { ...validConfig })).toBe(true);
     expect(roomAutomationConfigsEqual(validConfig, { ...validConfig, name_prefix: "other-" })).toBe(false);
+  });
+
+  it("defaults missing message timeouts and detects a custom timeout change", () => {
+    expect(DEFAULT_ROOM_FLOW_TIMING.sync_message_timeout_ms).toBe(2000);
+    expect(roomAutomationConfigsEqual(validConfig, {
+      ...validConfig, flow: { ...validConfig.flow, sync_message_timeout_ms: 2000 },
+    })).toBe(true);
+    expect(roomAutomationConfigsEqual(validConfig, {
+      ...validConfig, flow: { ...validConfig.flow, sync_message_timeout_ms: 3500 },
+    })).toBe(false);
+  });
+
+  it("accepts bounded integer message timeouts and rejects invalid drafts", () => {
+    for (const sync_message_timeout_ms of [250, 1000, 2000, 3500, 5000]) {
+      expect(validateRoomAutomationConfig({
+        ...validConfig, flow: { ...validConfig.flow, sync_message_timeout_ms },
+      }, ROOM_AUTOMATION_COPY["en-US"], ["one", "two"]).valid).toBe(true);
+    }
+    for (const sync_message_timeout_ms of [0, 249, 5001, 1000.5, NaN, Infinity]) {
+      expect(validateRoomAutomationConfig({
+        ...validConfig, flow: { ...validConfig.flow, sync_message_timeout_ms },
+      }, ROOM_AUTOMATION_COPY["en-US"], ["one", "two"]).fieldErrors.timing).toBeTruthy();
+    }
   });
 });

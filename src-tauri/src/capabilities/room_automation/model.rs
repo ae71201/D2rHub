@@ -10,6 +10,9 @@ const DEFAULT_CHARACTER_DELAY_MS: u64 = 50;
 const DEFAULT_KEY_HOLD_MS: u64 = 50;
 const DEFAULT_CHORD_HOLD_MS: u64 = 100;
 const MAX_STEP_DELAY_MS: u64 = 2_000;
+const DEFAULT_SYNC_MESSAGE_TIMEOUT_MS: u64 = 2_000;
+const MIN_SYNC_MESSAGE_TIMEOUT_MS: u64 = 250;
+const MAX_SYNC_MESSAGE_TIMEOUT_MS: u64 = 5_000;
 const MIN_CHARACTER_DELAY_MS: u64 = 0;
 const MAX_CHARACTER_DELAY_MS: u64 = 250;
 const MIN_AUTO_FOLLOWERS_DELAY_SECS: f64 = 0.5;
@@ -43,6 +46,10 @@ fn default_ctrl_settle_ms() -> u64 {
     50
 }
 
+fn default_sync_message_timeout_ms() -> u64 {
+    DEFAULT_SYNC_MESSAGE_TIMEOUT_MS
+}
+
 /// Keyboard pacing for one room-form workflow profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -61,6 +68,9 @@ pub struct FlowStrategy {
     /// Delay from Ctrl-down to A-down.
     #[serde(default = "default_ctrl_settle_ms")]
     pub physical_ctrl_settle_ms: u64,
+    /// Maximum wait for one synchronous window message, without replaying it.
+    #[serde(default = "default_sync_message_timeout_ms")]
+    pub sync_message_timeout_ms: u64,
 }
 
 impl FlowStrategy {
@@ -72,6 +82,7 @@ impl FlowStrategy {
             chord_hold_ms: DEFAULT_CHORD_HOLD_MS,
             form_settle_ms: default_form_settle_ms(),
             physical_ctrl_settle_ms: default_ctrl_settle_ms(),
+            sync_message_timeout_ms: default_sync_message_timeout_ms(),
         }
     }
 
@@ -84,6 +95,9 @@ impl FlowStrategy {
         self.chord_hold_ms = self.chord_hold_ms.min(1_000);
         self.form_settle_ms = self.form_settle_ms.min(MAX_STEP_DELAY_MS);
         self.physical_ctrl_settle_ms = self.physical_ctrl_settle_ms.min(MAX_STEP_DELAY_MS);
+        self.sync_message_timeout_ms = self
+            .sync_message_timeout_ms
+            .clamp(MIN_SYNC_MESSAGE_TIMEOUT_MS, MAX_SYNC_MESSAGE_TIMEOUT_MS);
     }
 
     fn validate(&self, profile: &'static str) -> Result<(), RoomAutomationConfigError> {
@@ -93,6 +107,8 @@ impl FlowStrategy {
             || self.chord_hold_ms > 1_000
             || self.form_settle_ms > MAX_STEP_DELAY_MS
             || self.physical_ctrl_settle_ms > MAX_STEP_DELAY_MS
+            || !(MIN_SYNC_MESSAGE_TIMEOUT_MS..=MAX_SYNC_MESSAGE_TIMEOUT_MS)
+                .contains(&self.sync_message_timeout_ms)
         {
             return Err(RoomAutomationConfigError::InvalidFlowStrategy {
                 profile,
@@ -102,6 +118,7 @@ impl FlowStrategy {
                 chord_hold_ms: self.chord_hold_ms,
                 form_settle_ms: self.form_settle_ms,
                 physical_ctrl_settle_ms: self.physical_ctrl_settle_ms,
+                sync_message_timeout_ms: self.sync_message_timeout_ms,
             });
         }
         Ok(())
@@ -289,7 +306,7 @@ pub enum RoomAutomationConfigError {
     #[error("background text strategy {0:?} is unsupported")]
     InvalidBackgroundTextStrategy(String),
     #[error(
-        "flow profile {profile} has invalid timing (step {step_delay_ms} ms, V-to-Ctrl release {character_delay_ms} ms, key hold {key_hold_ms} ms, A-to-V {chord_hold_ms} ms, form {form_settle_ms} ms, Ctrl-to-A {physical_ctrl_settle_ms} ms)"
+        "flow profile {profile} has invalid timing (step {step_delay_ms} ms, V-to-Ctrl release {character_delay_ms} ms, key hold {key_hold_ms} ms, A-to-V {chord_hold_ms} ms, form {form_settle_ms} ms, Ctrl-to-A {physical_ctrl_settle_ms} ms, synchronous message timeout {sync_message_timeout_ms} ms)"
     )]
     InvalidFlowStrategy {
         profile: &'static str,
@@ -299,6 +316,7 @@ pub enum RoomAutomationConfigError {
         chord_hold_ms: u64,
         form_settle_ms: u64,
         physical_ctrl_settle_ms: u64,
+        sync_message_timeout_ms: u64,
     },
     #[error("primary account is not configured")]
     MissingPrimaryAccount,
@@ -767,6 +785,44 @@ mod tests {
     }
 
     #[test]
+    fn legacy_flow_defaults_message_timeout_without_resetting_existing_timing() {
+        let flow: FlowStrategy = serde_json::from_value(serde_json::json!({
+            "step_delay_ms": 123,
+            "key_hold_ms": 80
+        }))
+        .unwrap();
+        assert_eq!(flow.sync_message_timeout_ms, 2_000);
+        assert_eq!(flow.step_delay_ms, 123);
+        assert_eq!(flow.key_hold_ms, 80);
+        flow.validate("unified").unwrap();
+    }
+
+    #[test]
+    fn synchronous_message_timeout_is_bounded_and_preserves_valid_custom_values() {
+        for timeout_ms in [0, 249, 5_001, u64::MAX] {
+            let mut flow = FlowStrategy {
+                sync_message_timeout_ms: timeout_ms,
+                ..FlowStrategy::default()
+            };
+            assert!(flow.validate("unified").is_err());
+            flow.normalize();
+            assert_eq!(flow.sync_message_timeout_ms, timeout_ms.clamp(250, 5_000));
+            flow.validate("unified").unwrap();
+        }
+        for timeout_ms in [250, 1_000, 2_000, 3_500, 5_000] {
+            let mut config = RoomAutomationConfig::default();
+            config.flow.sync_message_timeout_ms = timeout_ms;
+            config.flow.step_delay_ms = 123;
+            config.normalize_legacy().unwrap();
+            assert_eq!(config.flow.sync_message_timeout_ms, timeout_ms);
+            assert_eq!(config.flow.step_delay_ms, 123);
+            let reloaded: RoomAutomationConfig =
+                serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+            assert_eq!(reloaded.flow, config.flow);
+        }
+    }
+
+    #[test]
     fn v25_configuration_resets_legacy_delivery_and_timing_once() {
         let mut legacy = RoomAutomationConfig {
             strategy_version: 25,
@@ -778,6 +834,7 @@ mod tests {
                 chord_hold_ms: 50,
                 form_settle_ms: 600,
                 physical_ctrl_settle_ms: 120,
+                sync_message_timeout_ms: 1_000,
             },
             ..RoomAutomationConfig::default()
         };

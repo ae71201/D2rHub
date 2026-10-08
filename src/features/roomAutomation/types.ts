@@ -9,6 +9,8 @@ export interface RoomFlowStrategy {
   form_settle_ms?: number;
   /** Ctrl lead time before A/V down; defaults to 50 ms. */
   physical_ctrl_settle_ms?: number;
+  /** Maximum wait for one synchronous key message; defaults to 2000 ms. */
+  sync_message_timeout_ms?: number;
 }
 
 export type FollowerJoinMode = "simultaneous" | "interval";

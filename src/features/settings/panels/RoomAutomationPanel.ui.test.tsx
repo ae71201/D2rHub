@@ -310,6 +310,9 @@ describe("RoomAutomationPanel", () => {
 
     const stepDelay = await screen.findByLabelText("Step delay (ms)") as HTMLInputElement;
     expect(stepDelay.value).toBe("80");
+    const timeout = screen.getByLabelText("Synchronous key timeout (ms)") as HTMLInputElement;
+    expect(timeout.value).toBe("2000");
+    fireEvent.change(timeout, { target: { value: "3500" } });
 
     await user.click(screen.getByRole("button", { name: "Restore default timing" }));
 
@@ -319,6 +322,7 @@ describe("RoomAutomationPanel", () => {
     expect((screen.getByLabelText("Ctrl-to-A delay (ms)") as HTMLInputElement).value).toBe("50");
     expect((screen.getByLabelText("V to Ctrl release delay (ms)") as HTMLInputElement).value).toBe("50");
     expect((screen.getByLabelText("Key hold duration (ms)") as HTMLInputElement).value).toBe("50");
+    expect(timeout.value).toBe("2000");
 
     const saved = () => saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1];
     await waitFor(() => expect(saved()?.flow).toEqual({
@@ -328,7 +332,19 @@ describe("RoomAutomationPanel", () => {
       chord_hold_ms: 100,
       form_settle_ms: 300,
       physical_ctrl_settle_ms: 50,
+      sync_message_timeout_ms: 2000,
     }));
+  });
+
+  it("persists a custom synchronous key timeout from advanced input timing", async () => {
+    const { gateway, saveConfig } = makeGateway();
+    render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
+    const timeout = await screen.findByLabelText("Synchronous key timeout (ms)") as HTMLInputElement;
+    expect(timeout.min).toBe("250");
+    expect(timeout.max).toBe("5000");
+    expect(timeout.closest("details")?.querySelector("summary")?.textContent).toContain("Advanced input timing");
+    fireEvent.change(timeout, { target: { value: "3500" } });
+    await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].flow.sync_message_timeout_ms).toBe(3500));
   });
 
 });

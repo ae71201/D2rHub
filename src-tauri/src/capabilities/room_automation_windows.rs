@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::FILETIME;
+use windows::Win32::Foundation::{
+    GetLastError, SetLastError, ERROR_TIMEOUT, FILETIME, WIN32_ERROR,
+};
 
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
@@ -30,6 +32,49 @@ const VK_RIGHT: u16 = 0x27;
 const MAPVK_VK_TO_VSC: u32 = 0;
 const GATEWAY_DIRECTION_REPETITIONS: usize = 2;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+#[derive(Clone, Copy)]
+struct KeyDelivery<'a> {
+    task_id: Option<u64>,
+    account_id: &'a str,
+    primary: bool,
+    pid: u32,
+    hwnd: isize,
+    created: u64,
+    strategy: BackgroundTextStrategy,
+    timeout_ms: u32,
+}
+
+impl<'a> KeyDelivery<'a> {
+    fn new(
+        config: &RoomAutomationConfig,
+        account_id: &'a str,
+        pid: u32,
+        hwnd: isize,
+        created: u64,
+        cancel: &dyn CancellationCheck,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            task_id: cancel.task_id(),
+            account_id,
+            primary: account_id.eq_ignore_ascii_case(&config.primary_account_id),
+            pid,
+            hwnd,
+            created,
+            strategy: BackgroundTextStrategy::from_value(&config.background_text_strategy),
+            timeout_ms: u32::try_from(config.flow().sync_message_timeout_ms)
+                .map_err(|_| "同步按键超时超出 Windows 支持的范围")?,
+        })
+    }
+
+    fn send(&self, key: u16, pressed: bool, step: &'static str) -> Result<(), String> {
+        deliver_key_message(self, key, pressed, step, false)
+    }
+
+    fn release(&self, key: u16, step: &'static str) -> Result<(), String> {
+        deliver_key_message(self, key, false, step, true)
+    }
+}
 
 struct EnteredPassword {
     process_created_at: u64,
@@ -111,28 +156,41 @@ pub(crate) fn prepare_background_room(
         wait(cancel, Duration::from_millis(25))?;
     }
     let mut targets = Vec::new();
-    for pid in std::iter::once(primary_pid).chain(follower_pids.iter().copied()) {
+    for (index, pid) in std::iter::once(primary_pid)
+        .chain(follower_pids.iter().copied())
+        .enumerate()
+    {
         let hwnd = crate::infrastructure::system::find_game_hwnd(pid)
             .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {pid})"))?;
         validate_target(hwnd)?;
         let created = process_creation_time(pid).ok_or("无法确认游戏进程身份")?;
-        targets.push((pid, hwnd, created));
+        let account_id = if index == 0 {
+            config.primary_account_id.as_str()
+        } else {
+            config
+                .follower_account_ids
+                .get(index - 1)
+                .ok_or("跟随账号与进程列表不一致")?
+                .as_str()
+        };
+        targets.push(KeyDelivery::new(
+            config, account_id, pid, hwnd, created, cancel,
+        )?);
     }
     if foreground_pid() != Some(primary_pid) {
         return Err("同步粘贴前请保持主号在前台".to_string());
     }
-    let mut input = DesktopInput::acquire(targets[0].1, primary_pid)?;
-    let strategy = BackgroundTextStrategy::from_value(&config.background_text_strategy);
+    let mut input = DesktopInput::acquire(targets[0].hwnd, primary_pid)?;
     let flow = config.flow();
     let forms = PREPARED_FORMS.get_or_init(|| Mutex::new(HashMap::new()));
     let passwords = ENTERED_PASSWORDS.get_or_init(|| Mutex::new(HashMap::new()));
     let password_needed = {
         let cached = passwords.lock();
-        targets.iter().any(|(pid, hwnd, created)| {
-            !cached.get(pid).is_some_and(|entry| {
-                entry.hwnd == *hwnd
-                    && entry.process_created_at == *created
-                    && entry.create == (*pid == primary_pid)
+        targets.iter().any(|target| {
+            !cached.get(&target.pid).is_some_and(|entry| {
+                entry.hwnd == target.hwnd
+                    && entry.process_created_at == target.created
+                    && entry.create == target.primary
                     && entry.password == config.password
             })
         })
@@ -140,33 +198,34 @@ pub(crate) fn prepare_background_room(
     // A partial paste must not become a password-cache hit on the next attempt.
     if password_needed {
         let mut cached = passwords.lock();
-        for (pid, _, _) in &targets {
-            cached.remove(pid);
+        for target in &targets {
+            cached.remove(&target.pid);
         }
     }
     let results = std::thread::scope(|scope| {
         let handles = targets
             .iter()
-            .map(|&(pid, hwnd, created)| {
+            .map(|target| {
                 scope.spawn(move || -> Result<(), String> {
-                    let previous = forms.lock().remove(&pid);
-                    if pid != primary_pid
-                        && previous
-                            .is_some_and(|entry| entry.created == created && entry.hwnd == hwnd)
+                    let previous = forms.lock().remove(&target.pid);
+                    if !target.primary
+                        && previous.is_some_and(|entry| {
+                            entry.created == target.created && entry.hwnd == target.hwnd
+                        })
                     {
                         // A second create during manual waiting replaces the open
                         // join form, instead of navigating inside that old form.
                         deliver_key(
-                            hwnd,
+                            target,
                             VK_ESCAPE,
                             false,
-                            strategy,
                             flow.key_hold_ms,
                             flow.step_delay_ms,
                             cancel,
+                            "form.replace",
                         )?;
                     }
-                    open_room_form(hwnd, pid == primary_pid, strategy, flow, cancel)?;
+                    open_room_form(target, flow, cancel)?;
                     Ok(())
                 })
             })
@@ -183,12 +242,15 @@ pub(crate) fn prepare_background_room(
     for result in results {
         result?;
     }
-    let background = targets
-        .iter()
-        .skip(1)
-        .map(|(_, hwnd, _)| *hwnd)
-        .collect::<Vec<_>>();
-    paste_group(&mut input, &background, room_name, strategy, flow, cancel)?;
+    let background = targets.iter().skip(1).copied().collect::<Vec<_>>();
+    paste_group(
+        &mut input,
+        &background,
+        room_name,
+        flow,
+        cancel,
+        "room_name.paste",
+    )?;
     if password_needed {
         // Every participant uses the same password; refresh the group when any
         // participant lacks a valid cache, otherwise leave all passwords alone.
@@ -200,26 +262,34 @@ pub(crate) fn prepare_background_room(
             Duration::from_millis(flow.key_hold_ms.clamp(10, 250)),
         )?;
         input.release_all()?;
-        for &hwnd in &background {
-            deliver_key(hwnd, VK_TAB, false, strategy, flow.key_hold_ms, 0, cancel)?;
+        for target in &background {
+            deliver_key(
+                target,
+                VK_TAB,
+                false,
+                flow.key_hold_ms,
+                0,
+                cancel,
+                "password.tab",
+            )?;
         }
         wait(cancel, Duration::from_millis(flow.step_delay_ms))?;
         paste_group(
             &mut input,
             &background,
             &config.password,
-            strategy,
             flow,
             cancel,
+            "password.paste",
         )?;
     }
     // Let the game observe Ctrl-up before the externally visible submit.
     // This gap is outside the Ctrl+A/V step and prevents Ctrl+Enter coupling.
     wait(cancel, Duration::from_millis(flow.step_delay_ms))?;
     input.check_target()?;
-    for &(pid, hwnd, created) in &targets {
-        if process_creation_time(pid) != Some(created)
-            || crate::infrastructure::system::find_game_hwnd(pid) != Some(hwnd)
+    for target in &targets {
+        if process_creation_time(target.pid) != Some(target.created)
+            || crate::infrastructure::system::find_game_hwnd(target.pid) != Some(target.hwnd)
         {
             return Err("同步粘贴期间游戏进程或窗口已变化".to_string());
         }
@@ -227,32 +297,32 @@ pub(crate) fn prepare_background_room(
     // Consume the primary's prepared marker before the externally visible submit.
     forms.lock().remove(&primary_pid);
     deliver_key(
-        targets[0].1,
+        &targets[0],
         VK_RETURN,
         false,
-        strategy,
         flow.key_hold_ms,
         flow.step_delay_ms,
         cancel,
+        "submit.primary",
     )?;
-    for &(pid, hwnd, created) in &targets {
+    for target in &targets {
         if password_needed {
             passwords.lock().insert(
-                pid,
+                target.pid,
                 EnteredPassword {
-                    process_created_at: created,
-                    hwnd,
+                    process_created_at: target.created,
+                    hwnd: target.hwnd,
                     password: config.password.clone(),
-                    create: pid == primary_pid,
+                    create: target.primary,
                 },
             );
         }
-        if pid != primary_pid {
+        if !target.primary {
             forms.lock().insert(
-                pid,
+                target.pid,
                 PreparedForm {
-                    created,
-                    hwnd,
+                    created: target.created,
+                    hwnd: target.hwnd,
                     room_name: room_name.to_string(),
                 },
             );
@@ -264,20 +334,20 @@ pub(crate) fn prepare_background_room(
 
 fn paste_group(
     input: &mut DesktopInput,
-    background: &[isize],
+    background: &[KeyDelivery<'_>],
     value: &str,
-    strategy: BackgroundTextStrategy,
     flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
+    step: &'static str,
 ) -> Result<(), String> {
     if !value.is_empty() {
         input.clipboard_text(value)?;
     }
     if value.is_empty() {
-        group_chord(input, background, 0x41, true, strategy, flow, cancel)?;
-        group_chord(input, background, VK_BACK, false, strategy, flow, cancel)
+        group_chord(input, background, 0x41, true, flow, cancel, step)?;
+        group_chord(input, background, VK_BACK, false, flow, cancel, step)
     } else {
-        paste_select_and_paste(input, background, strategy, flow, cancel)?;
+        paste_select_and_paste(input, background, flow, cancel, step)?;
         input.check_clipboard()?;
         Ok(())
     }
@@ -287,10 +357,10 @@ fn paste_group(
 /// sequence; the three flow delays are Ctrl->A, A->V, and V->Ctrl-up.
 fn paste_select_and_paste(
     input: &mut DesktopInput,
-    background: &[isize],
-    strategy: BackgroundTextStrategy,
+    background: &[KeyDelivery<'_>],
     flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
+    step: &'static str,
 ) -> Result<(), String> {
     let mut background_ctrl = Vec::new();
     let mut background_a_down = Vec::new();
@@ -302,25 +372,22 @@ fn paste_select_and_paste(
             return Err("检测到修饰键或鼠标按键按下，已停止自动输入".to_string());
         }
         input.key_down(0x11)?;
-        for &hwnd in background {
+        for target in background {
             cancel.check()?;
             input.check_target()?;
             input.check_clipboard()?;
-            background_ctrl.push(hwnd);
-            deliver_key_message(hwnd, 0x11, true, strategy)?;
+            background_ctrl.push(target);
+            target.send(0x11, true, step)?;
         }
 
         wait(cancel, Duration::from_millis(flow.physical_ctrl_settle_ms))?;
 
-        for &hwnd in background {
+        for target in background {
             cancel.check()?;
             input.check_target()?;
-            background_a_down.push(hwnd);
-            deliver_key_message(hwnd, 0x41, true, strategy)?;
-            if let Err(error) = deliver_key_message(hwnd, 0x41, false, strategy) {
-                let _ = deliver_key_message(hwnd, 0x41, false, strategy);
-                return Err(error);
-            }
+            background_a_down.push(target);
+            target.send(0x41, true, step)?;
+            target.send(0x41, false, step)?;
             background_a_down.pop();
         }
         input.key_down(0x41)?;
@@ -329,16 +396,13 @@ fn paste_select_and_paste(
         wait(cancel, Duration::from_millis(flow.chord_hold_ms))?;
         input.check_clipboard()?;
 
-        for &hwnd in background {
+        for target in background {
             cancel.check()?;
             input.check_target()?;
             input.check_clipboard()?;
-            background_v_down.push(hwnd);
-            deliver_key_message(hwnd, 0x56, true, strategy)?;
-            if let Err(error) = deliver_key_message(hwnd, 0x56, false, strategy) {
-                let _ = deliver_key_message(hwnd, 0x56, false, strategy);
-                return Err(error);
-            }
+            background_v_down.push(target);
+            target.send(0x56, true, step)?;
+            target.send(0x56, false, step)?;
             background_v_down.pop();
         }
         input.key_down(0x56)?;
@@ -347,43 +411,28 @@ fn paste_select_and_paste(
         wait(cancel, Duration::from_millis(flow.character_delay_ms))?;
         Ok(())
     })();
-    let mut cleanup_error = None;
-    for &hwnd in background_v_down.iter().rev() {
-        if let Err(error) = deliver_key_message(hwnd, 0x56, false, strategy) {
-            cleanup_error = Some(error);
-        }
+    let mut cleanup = Ok(());
+    for target in background_v_down.iter().rev() {
+        cleanup = combine_cleanup(cleanup, target.release(0x56, step));
     }
-    for &hwnd in background_a_down.iter().rev() {
-        if let Err(error) = deliver_key_message(hwnd, 0x41, false, strategy) {
-            cleanup_error = Some(error);
-        }
+    for target in background_a_down.iter().rev() {
+        cleanup = combine_cleanup(cleanup, target.release(0x41, step));
     }
-    for &hwnd in background_ctrl.iter().rev() {
-        if let Err(error) = deliver_key_message(hwnd, 0x11, false, strategy) {
-            cleanup_error = Some(error);
-        }
+    for target in background_ctrl.iter().rev() {
+        cleanup = combine_cleanup(cleanup, target.release(0x11, step));
     }
-    let release = input.release_all();
-    if let Err(error) = result {
-        let _ = release;
-        return Err(error);
-    }
-    if let Some(error) = cleanup_error {
-        let _ = release;
-        return Err(error);
-    }
-    release?;
-    Ok(())
+    cleanup = combine_cleanup(cleanup, input.release_all());
+    combine_cleanup(result, cleanup)
 }
 
 fn group_chord(
     input: &mut DesktopInput,
-    background: &[isize],
+    background: &[KeyDelivery<'_>],
     key: u16,
     ctrl: bool,
-    strategy: BackgroundTextStrategy,
     flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
+    step: &'static str,
 ) -> Result<(), String> {
     // Record presses before delivery so partial failures still release them.
     let mut background_ctrl = Vec::new();
@@ -396,24 +445,24 @@ fn group_chord(
         }
         if ctrl {
             input.key_down(0x11)?;
-            for &hwnd in background {
+            for target in background {
                 cancel.check()?;
                 input.check_target()?;
-                background_ctrl.push(hwnd);
-                deliver_key_message(hwnd, 0x11, true, strategy)?;
+                background_ctrl.push(target);
+                target.send(0x11, true, step)?;
             }
             // One lead interval after all Ctrl-down events, before any A/V.
             wait(cancel, Duration::from_millis(flow.physical_ctrl_settle_ms))?;
         }
-        for &hwnd in background {
+        for target in background {
             cancel.check()?;
             input.check_target()?;
             if key == 0x56 && ctrl {
                 input.check_clipboard()?;
             }
-            validate_target(hwnd)?;
-            background_keys.push(hwnd);
-            deliver_key_message(hwnd, key, true, strategy)?;
+            validate_target(target.hwnd)?;
+            background_keys.push(target);
+            target.send(key, true, step)?;
         }
         if key == 0x56 && ctrl {
             input.check_clipboard()?;
@@ -423,8 +472,8 @@ fn group_chord(
         input.key_down(key)?;
         wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
         input.release_last()?;
-        while let Some(&hwnd) = background_keys.last() {
-            deliver_key_message(hwnd, key, false, strategy)?;
+        while let Some(target) = background_keys.last() {
+            target.send(key, false, step)?;
             background_keys.pop();
         }
         // The tail interval starts only after every A/V-up was delivered.
@@ -436,25 +485,20 @@ fn group_chord(
     })();
     // Cancellation/errors skip the remaining waits, but always release keys.
     let mut cleanup = Ok(());
-    for &hwnd in &background_keys {
-        if let Err(error) = deliver_key_message(hwnd, key, false, strategy) {
-            cleanup = Err(error);
-        }
+    for target in &background_keys {
+        cleanup = combine_cleanup(cleanup, target.release(key, step));
     }
-    for &hwnd in &background_ctrl {
-        if let Err(error) = deliver_key_message(hwnd, 0x11, false, strategy) {
-            cleanup = Err(error);
-        }
+    for target in &background_ctrl {
+        cleanup = combine_cleanup(cleanup, target.release(0x11, step));
     }
-    let release = input.release_all();
-    result?;
-    cleanup?;
-    release?;
+    cleanup = combine_cleanup(cleanup, input.release_all());
+    combine_cleanup(result, cleanup)?;
     wait(cancel, Duration::from_millis(flow.character_delay_ms))
 }
 
 pub(crate) fn submit_prepared_follower(
     config: &RoomAutomationConfig,
+    account_id: &str,
     pid: u32,
     room_name: &str,
     cancel: &dyn CancellationCheck,
@@ -479,18 +523,18 @@ pub(crate) fn submit_prepared_follower(
         return Err("小号预填表单与当前房间或进程不匹配，请重新触发创建快捷键".to_string());
     }
     validate_target(entry.hwnd)?;
-    let hwnd = entry.hwnd;
+    let target = KeyDelivery::new(config, account_id, pid, entry.hwnd, entry.created, cancel)?;
     // Consume the prepared form before its single submission.
     cached.remove(&pid);
     drop(cached);
     deliver_key(
-        hwnd,
+        &target,
         VK_RETURN,
         false,
-        BackgroundTextStrategy::from_value(&config.background_text_strategy),
         config.flow().key_hold_ms,
         0,
         cancel,
+        "submit.follower",
     )
 }
 
@@ -543,6 +587,10 @@ extern "system" {
 }
 
 pub(crate) trait CancellationCheck: Send + Sync {
+    fn task_id(&self) -> Option<u64> {
+        None
+    }
+
     fn check(&self) -> Result<(), String>;
     fn wait_cancelled(&self, duration: Duration) -> bool;
 }
@@ -580,44 +628,46 @@ pub(crate) fn foreground_pid() -> Option<u32> {
 }
 
 fn open_room_form(
-    hwnd: isize,
-    create: bool,
-    strategy: BackgroundTextStrategy,
+    target: &KeyDelivery<'_>,
     flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
     let step = flow.step_delay_ms;
     deliver_key(
-        hwnd,
+        target,
         VK_ESCAPE,
         false,
-        strategy,
         flow.key_hold_ms,
         step,
         cancel,
+        "form.escape",
     )?;
     // This path sends only one Esc, followed by direction keys. Its next
     // operation uses the configured interval, not the double-Esc timeout.
-    let direction = if create { VK_LEFT } else { VK_RIGHT };
-    for _ in 0..GATEWAY_DIRECTION_REPETITIONS {
+    let direction = if target.primary { VK_LEFT } else { VK_RIGHT };
+    for index in 0..GATEWAY_DIRECTION_REPETITIONS {
         deliver_key(
-            hwnd,
+            target,
             direction,
             false,
-            strategy,
             flow.key_hold_ms,
             step,
             cancel,
+            if index == 0 {
+                "form.direction.1"
+            } else {
+                "form.direction.2"
+            },
         )?;
     }
     deliver_key(
-        hwnd,
+        target,
         VK_RETURN,
         false,
-        strategy,
         flow.key_hold_ms,
-        room_form_settle_ms(create, flow.form_settle_ms),
+        room_form_settle_ms(target.primary, flow.form_settle_ms),
         cancel,
+        "form.open",
     )
 }
 
@@ -633,82 +683,205 @@ fn room_form_settle_ms(create: bool, configured_ms: u64) -> u64 {
 }
 
 fn deliver_key(
-    hwnd: isize,
+    target: &KeyDelivery<'_>,
     key: u16,
     shift: bool,
-    strategy: BackgroundTextStrategy,
     key_hold_ms: u64,
     release_gap_ms: u64,
     cancel: &dyn CancellationCheck,
+    step: &'static str,
 ) -> Result<(), String> {
     cancel.check()?;
-    if shift {
-        deliver_key_message(hwnd, VK_SHIFT, true, strategy)?;
-        if let Err(error) = cancel.check() {
-            let _ = deliver_key_message(hwnd, VK_SHIFT, false, strategy);
-            return Err(error);
-        }
-    }
-    if let Err(error) = deliver_key_message(hwnd, key, true, strategy) {
+    deliver_key_sequence(
+        key,
+        shift,
+        key_hold_ms,
+        release_gap_ms,
+        |key, pressed, cleanup| deliver_key_message(target, key, pressed, step, cleanup),
+        |duration| wait(cancel, duration),
+    )
+}
+
+/// A failed down can already have reached the window. Track it before sending
+/// and attempt only matching releases on failure; never replay a key-down.
+fn deliver_key_sequence(
+    key: u16,
+    shift: bool,
+    key_hold_ms: u64,
+    release_gap_ms: u64,
+    mut send: impl FnMut(u16, bool, bool) -> Result<(), String>,
+    mut pause: impl FnMut(Duration) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut held = Vec::with_capacity(2);
+    let result = (|| {
         if shift {
-            let _ = deliver_key_message(hwnd, VK_SHIFT, false, strategy);
+            held.push(VK_SHIFT);
+            send(VK_SHIFT, true, false)?;
+            pause(Duration::ZERO)?;
         }
-        return Err(error);
-    }
+        held.push(key);
+        send(key, true, false)?;
+        pause(Duration::from_millis(key_hold_ms.clamp(10, 250)))?;
 
-    // Cancellation may arrive during the key-down hold. Always emit matching
-    // key-up messages before returning so the target window cannot retain a
-    // logically pressed key (especially Shift) after the capability stops.
-    if let Err(error) = wait(cancel, Duration::from_millis(key_hold_ms.clamp(10, 250))) {
-        let key_release = deliver_key_message(hwnd, key, false, strategy);
-        let shift_release = shift
-            .then(|| deliver_key_message(hwnd, VK_SHIFT, false, strategy))
-            .transpose();
-        if let Err(release_error) = key_release.and(shift_release) {
-            return Err(format!("{error}；同时释放按键失败：{release_error}"));
+        let key_release = send(key, false, false);
+        if key_release.is_ok() {
+            held.retain(|held_key| *held_key != key);
         }
-        return Err(error);
-    }
+        // Still release Shift if releasing the main key failed.
+        let shift_release = if shift {
+            let release = send(VK_SHIFT, false, false);
+            if release.is_ok() {
+                held.retain(|held_key| *held_key != VK_SHIFT);
+            }
+            release
+        } else {
+            Ok(())
+        };
+        combine_cleanup(key_release, shift_release)?;
+        pause(Duration::from_millis(release_gap_ms))
+    })();
 
-    let key_release = deliver_key_message(hwnd, key, false, strategy);
-    let shift_release = shift
-        .then(|| deliver_key_message(hwnd, VK_SHIFT, false, strategy))
-        .transpose();
-    key_release.and(shift_release)?;
-    wait(cancel, Duration::from_millis(release_gap_ms))
+    let mut cleanup = Ok(());
+    for key in held.into_iter().rev() {
+        cleanup = combine_cleanup(cleanup, send(key, false, true));
+    }
+    combine_cleanup(result, cleanup)
+}
+
+fn combine_cleanup(result: Result<(), String>, cleanup: Result<(), String>) -> Result<(), String> {
+    match (result, cleanup) {
+        (Err(error), Err(cleanup_error)) => Err(format!("{error}；释放按键失败：{cleanup_error}")),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), cleanup) => cleanup,
+    }
+}
+
+fn delivery_status(sent: bool, win32_error: u32, strategy: BackgroundTextStrategy) -> &'static str {
+    if sent {
+        if strategy.is_synchronous() {
+            "processed"
+        } else {
+            "queued"
+        }
+    } else if strategy.is_synchronous() && win32_error == ERROR_TIMEOUT.0 {
+        "timeout"
+    } else if win32_error == 0 {
+        // ERROR_SUCCESS after a failed call is an unspecified generic failure,
+        // not evidence that SMTO_ABORTIFHUNG was responsible.
+        "generic_failure"
+    } else {
+        "win32_error"
+    }
 }
 
 fn deliver_key_message(
-    hwnd: isize,
+    target: &KeyDelivery<'_>,
     key: u16,
     pressed: bool,
-    strategy: BackgroundTextStrategy,
+    step: &'static str,
+    cleanup: bool,
 ) -> Result<(), String> {
     let message = if pressed { WM_KEYDOWN } else { WM_KEYUP };
     let lparam = key_lparam(key, pressed);
-    if strategy.is_synchronous() {
+    let started = Instant::now();
+    let target_changed = cleanup
+        && (process_creation_time(target.pid) != Some(target.created)
+            || crate::infrastructure::system::find_game_hwnd(target.pid) != Some(target.hwnd));
+    let (sent, win32_error) = if target_changed {
+        (false, 0)
+    } else if target.strategy.is_synchronous() {
         let mut result = 0;
         let flags = SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT;
-        let sent = unsafe {
-            SendMessageTimeoutW(
-                hwnd,
+        unsafe {
+            SetLastError(WIN32_ERROR(0));
+            let sent = SendMessageTimeoutW(
+                target.hwnd,
                 message,
                 usize::from(key),
                 lparam,
                 flags,
-                1_000,
+                target.timeout_ms,
                 &mut result,
-            )
+            );
+            let error = if sent == 0 { GetLastError().0 } else { 0 };
+            (sent != 0, error)
+        }
+    } else {
+        unsafe {
+            SetLastError(WIN32_ERROR(0));
+            let sent = PostMessageW(target.hwnd, message, usize::from(key), lparam);
+            let error = if sent == 0 { GetLastError().0 } else { 0 };
+            (sent != 0, error)
+        }
+    };
+    let status = if target_changed {
+        "target_changed"
+    } else {
+        delivery_status(sent, win32_error, target.strategy)
+    };
+    let elapsed_ms = started.elapsed().as_millis();
+    // Keep room names, passwords, and clipboard contents out of diagnostics.
+    let details = format!(
+        "task={:?} account={:?} role={} pid={} hwnd=0x{:X} step={step} vk=0x{key:X} state={} message=0x{message:X} strategy={} timeout_ms={} elapsed_ms={elapsed_ms} result={status} win32_error={win32_error} cleanup={cleanup}",
+        target.task_id,
+        target.account_id,
+        if target.primary { "primary" } else { "follower" },
+        target.pid,
+        target.hwnd,
+        if pressed { "down" } else { "up" },
+        if target.strategy.is_synchronous() { "send_keys" } else { "post_keys" },
+        if target.strategy.is_synchronous() { target.timeout_ms } else { 0 },
+    );
+    crate::logger::log_msg(
+        if sent { "INFO" } else { "WARN" },
+        "RoomAutomation",
+        &details,
+    );
+    if sent {
+        Ok(())
+    } else {
+        let key_name = match key {
+            VK_RETURN => "Enter".to_string(),
+            VK_ESCAPE => "Esc".to_string(),
+            VK_LEFT => "左方向键".to_string(),
+            VK_RIGHT => "右方向键".to_string(),
+            VK_TAB => "Tab".to_string(),
+            VK_SHIFT => "Shift".to_string(),
+            0x11 => "Ctrl".to_string(),
+            0x41 => "A".to_string(),
+            0x56 => "V".to_string(),
+            VK_BACK => "Backspace".to_string(),
+            _ => format!("0x{key:X}"),
         };
-        if sent == 0 {
+        if target_changed {
             return Err(format!(
-                "SendMessageTimeout 发送失败或超时：消息 0x{message:X}"
+                "账号“{}”的进程或窗口已变化，未发送 {key_name} 释放消息",
+                target.account_id
             ));
         }
-    } else if unsafe { PostMessageW(hwnd, message, usize::from(key), lparam) } == 0 {
-        return Err(format!("PostMessage 发送失败：消息 0x{message:X}"));
+        let step_name = match step {
+            "form.replace" => "重开表单",
+            "form.escape" => "打开暂停菜单",
+            "form.direction.1" | "form.direction.2" => "选择房间操作",
+            "form.open" => "打开房间表单",
+            "room_name.paste" => "填写房名",
+            "password.tab" => "切换密码输入框",
+            "password.paste" => "填写密码",
+            "submit.primary" => "提交建房",
+            "submit.follower" => "提交入房",
+            _ => step,
+        };
+        let reason = match status {
+            "timeout" => "等待超时",
+            "generic_failure" => "投递失败，原因未明确",
+            _ => "投递失败",
+        };
+        Err(format!(
+            "账号“{}”在{step_name}时，{key_name} {}消息{reason}（错误码 {win32_error}，耗时 {elapsed_ms} 毫秒）",
+            target.account_id,
+            if pressed { "按下" } else { "松开" },
+        ))
     }
-    Ok(())
 }
 
 fn key_lparam(key: u16, pressed: bool) -> isize {
@@ -761,6 +934,224 @@ fn wait(cancel: &dyn CancellationCheck, duration: Duration) -> Result<(), String
 #[cfg(test)]
 mod timing_tests {
     use super::*;
+
+    #[test]
+    fn failed_down_releases_enter_and_navigation_without_replaying_them() {
+        for key in [VK_RETURN, VK_ESCAPE, VK_LEFT, VK_RIGHT] {
+            let mut events = Vec::new();
+            let result = deliver_key_sequence(
+                key,
+                false,
+                50,
+                80,
+                |key, pressed, cleanup| {
+                    events.push((key, pressed, cleanup));
+                    if pressed {
+                        Err("injected down timeout".to_string())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| panic!("a failed down must skip remaining waits"),
+            );
+            assert_eq!(result.unwrap_err(), "injected down timeout");
+            assert_eq!(events, [(key, true, false), (key, false, true)]);
+        }
+    }
+
+    #[test]
+    fn failed_up_gets_one_cleanup_attempt_and_keeps_original_error() {
+        let mut events = Vec::new();
+        let result = deliver_key_sequence(
+            VK_RETURN,
+            false,
+            50,
+            80,
+            |key, pressed, cleanup| {
+                events.push((key, pressed, cleanup));
+                if !pressed && !cleanup {
+                    Err("injected up timeout".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            |_| Ok(()),
+        );
+        assert_eq!(result.unwrap_err(), "injected up timeout");
+        assert_eq!(
+            events,
+            [
+                (VK_RETURN, true, false),
+                (VK_RETURN, false, false),
+                (VK_RETURN, false, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn cancellation_during_hold_releases_key_then_shift() {
+        let mut events = Vec::new();
+        let result = deliver_key_sequence(
+            VK_RETURN,
+            true,
+            50,
+            80,
+            |key, pressed, cleanup| {
+                events.push((key, pressed, cleanup));
+                Ok(())
+            },
+            |duration| {
+                if duration.is_zero() {
+                    Ok(())
+                } else {
+                    Err("injected cancellation".to_string())
+                }
+            },
+        );
+        assert_eq!(result.unwrap_err(), "injected cancellation");
+        assert_eq!(
+            events,
+            [
+                (VK_SHIFT, true, false),
+                (VK_RETURN, true, false),
+                (VK_RETURN, false, true),
+                (VK_SHIFT, false, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_shift_down_still_attempts_shift_release() {
+        let mut events = Vec::new();
+        let result = deliver_key_sequence(
+            VK_RETURN,
+            true,
+            50,
+            80,
+            |key, pressed, cleanup| {
+                events.push((key, pressed, cleanup));
+                if pressed {
+                    Err("injected shift failure".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            |_| panic!("a failed shift down must skip remaining waits"),
+        );
+        assert_eq!(result.unwrap_err(), "injected shift failure");
+        assert_eq!(events, [(VK_SHIFT, true, false), (VK_SHIFT, false, true)]);
+    }
+
+    #[test]
+    fn cleanup_failure_keeps_both_errors_without_another_down() {
+        let mut events = Vec::new();
+        let result = deliver_key_sequence(
+            VK_RETURN,
+            false,
+            50,
+            80,
+            |key, pressed, cleanup| {
+                events.push((key, pressed, cleanup));
+                Err(if pressed {
+                    "original failure"
+                } else {
+                    "cleanup failure"
+                }
+                .to_string())
+            },
+            |_| panic!("a failed down must skip remaining waits"),
+        );
+        let error = result.unwrap_err();
+        assert!(error.contains("original failure"));
+        assert!(error.contains("cleanup failure"));
+        assert_eq!(events, [(VK_RETURN, true, false), (VK_RETURN, false, true)]);
+    }
+
+    #[test]
+    fn successful_press_preserves_pacing_and_has_no_cleanup_replay() {
+        let mut events = Vec::new();
+        let mut waits = Vec::new();
+        deliver_key_sequence(
+            VK_RETURN,
+            false,
+            50,
+            80,
+            |key, pressed, cleanup| {
+                events.push((key, pressed, cleanup));
+                Ok(())
+            },
+            |duration| {
+                waits.push(duration);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            events,
+            [(VK_RETURN, true, false), (VK_RETURN, false, false)]
+        );
+        assert_eq!(
+            waits,
+            [Duration::from_millis(50), Duration::from_millis(80)]
+        );
+    }
+
+    #[test]
+    fn zero_last_error_is_generic_failure_and_posting_only_confirms_queuing() {
+        assert_eq!(
+            delivery_status(false, 0, BackgroundTextStrategy::SendKeys),
+            "generic_failure"
+        );
+        assert_eq!(
+            delivery_status(false, ERROR_TIMEOUT.0, BackgroundTextStrategy::SendKeys),
+            "timeout"
+        );
+        assert_eq!(
+            delivery_status(false, 1400, BackgroundTextStrategy::SendKeys),
+            "win32_error"
+        );
+        assert_eq!(
+            delivery_status(true, 0, BackgroundTextStrategy::PostKeys),
+            "queued"
+        );
+        assert_eq!(
+            delivery_status(true, 0, BackgroundTextStrategy::SendKeys),
+            "processed"
+        );
+    }
+
+    #[test]
+    fn native_invalid_window_failure_reports_actual_error_and_account_context() {
+        struct Active;
+        impl CancellationCheck for Active {
+            fn check(&self) -> Result<(), String> {
+                Ok(())
+            }
+            fn wait_cancelled(&self, _: Duration) -> bool {
+                false
+            }
+        }
+        let invalid_hwnd = -12_345;
+        let mut pid = 0;
+        // Verify that this handle is invalid before attempting a message.
+        assert_eq!(
+            unsafe { GetWindowThreadProcessId(invalid_hwnd, &mut pid) },
+            0
+        );
+        let config = RoomAutomationConfig::default();
+        let target =
+            KeyDelivery::new(&config, "test-follower", 0, invalid_hwnd, 0, &Active).unwrap();
+        unsafe {
+            SetLastError(WIN32_ERROR(1234));
+        }
+        let error = target.send(VK_RETURN, true, "submit.follower").unwrap_err();
+        assert!(error.contains("test-follower"));
+        assert!(error.contains("提交入房"));
+        assert!(error.contains("Enter 按下"));
+        assert!(error.contains("错误码 1400"));
+        assert!(!error.contains("错误码 1234"));
+    }
+
     #[test]
     fn creating_reserves_initialization_time_without_shortening_user_delays() {
         assert_eq!(room_form_settle_ms(true, 0), 300);

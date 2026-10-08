@@ -70,6 +70,7 @@ function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
       chord_hold_ms: config.flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
       form_settle_ms: config.flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
       physical_ctrl_settle_ms: config.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms,
+      sync_message_timeout_ms: config.flow.sync_message_timeout_ms ?? DEFAULT_ROOM_FLOW_TIMING.sync_message_timeout_ms,
     },
   };
 }
@@ -771,6 +772,9 @@ export function RoomAutomationPanel({
             <NumberField label={copy.characterDelay} value={draft.flow.character_delay_ms ?? DEFAULT_ROOM_FLOW_TIMING.character_delay_ms} min={0} max={250}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, character_delay_ms } }))} />
+            <NumberField label={copy.syncMessageTimeout} value={draft.flow.sync_message_timeout_ms ?? DEFAULT_ROOM_FLOW_TIMING.sync_message_timeout_ms} min={250} max={5000}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(sync_message_timeout_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, sync_message_timeout_ms } }))} />
             <ChoiceField label={copy.backgroundStrategy} value={draft.background_text_strategy}
               options={[{ value: "post_keys", label: copy.postKeys }, { value: "send_keys", label: copy.sendKeys }]}
               disabled={editorDisabled}
@@ -779,6 +783,7 @@ export function RoomAutomationPanel({
               }))} />
           </div>
           <p className="room-automation-consent-copy">{copy.inputTimingHelp}</p>
+          <p className="room-automation-consent-copy">{copy.syncMessageTimeoutHelp}</p>
           <div className="mt-3">
             <Button size="sm" variant="ghost"
               onClick={() => updateDraft((current) => ({ ...current, flow: { ...current.flow, ...DEFAULT_ROOM_FLOW_TIMING } }))}

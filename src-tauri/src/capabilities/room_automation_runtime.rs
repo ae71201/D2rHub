@@ -59,6 +59,7 @@ type PreparedWorkflow = (
 type PreparedPrimaryWorkflow = (RoomAutomationConfig, RunningInstance);
 
 struct CancellationSignal {
+    task_id: Option<WorkflowTaskId>,
     cancelled: AtomicBool,
     state: std::sync::Mutex<()>,
     changed: Condvar,
@@ -67,9 +68,17 @@ struct CancellationSignal {
 impl CancellationSignal {
     fn new() -> Self {
         Self {
+            task_id: None,
             cancelled: AtomicBool::new(false),
             state: std::sync::Mutex::new(()),
             changed: Condvar::new(),
+        }
+    }
+
+    fn for_task(task_id: WorkflowTaskId) -> Self {
+        Self {
+            task_id: Some(task_id),
+            ..Self::new()
         }
     }
 
@@ -102,6 +111,10 @@ impl CancellationSignal {
 
 #[cfg(target_os = "windows")]
 impl CancellationCheck for CancellationSignal {
+    fn task_id(&self) -> Option<u64> {
+        self.task_id.map(|task_id| task_id.0)
+    }
+
     fn check(&self) -> Result<(), String> {
         self.check_active()
     }
@@ -134,7 +147,7 @@ trait RuntimeHost: Send + Sync {
     fn run_follower(
         &self,
         config: &RoomAutomationConfig,
-        _account_id: &str,
+        account_id: &str,
         pid: u32,
         room_name: &str,
         cancel: &CancellationSignal,
@@ -293,18 +306,18 @@ impl RuntimeHost for WindowsRuntimeHost {
     fn run_follower(
         &self,
         config: &RoomAutomationConfig,
-        _account_id: &str,
+        account_id: &str,
         pid: u32,
         room_name: &str,
         cancel: &CancellationSignal,
     ) -> Result<(), String> {
         #[cfg(target_os = "windows")]
         {
-            windows::submit_prepared_follower(config, pid, room_name, cancel)
+            windows::submit_prepared_follower(config, account_id, pid, room_name, cancel)
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = (config, _account_id, pid, room_name, cancel);
+            let _ = (config, account_id, pid, room_name, cancel);
             Err("自动跟房仅支持 Windows".to_string())
         }
     }
@@ -861,7 +874,7 @@ impl RoomAutomationManager {
         let status = self.workflow.lock().snapshot();
         self.bridge.publish_status(&status);
 
-        let cancel = Arc::new(CancellationSignal::new());
+        let cancel = Arc::new(CancellationSignal::for_task(task.id));
         let manager = self.self_reference.clone();
         let task_id = task.id;
         let room = task.room.clone();
@@ -1270,7 +1283,7 @@ impl RoomAutomationManager {
         room_name: String,
         _sequence: u32,
     ) -> Result<(), String> {
-        let cancel = Arc::new(CancellationSignal::new());
+        let cancel = Arc::new(CancellationSignal::for_task(task_id));
         let worker_cancel = Arc::clone(&cancel);
         let manager = self.self_reference.clone();
         let handle = std::thread::Builder::new()

@@ -125,6 +125,7 @@ export const DEFAULT_ROOM_FLOW_TIMING: Required<RoomFlowStrategy> = {
   chord_hold_ms: 100,
   form_settle_ms: 300,
   physical_ctrl_settle_ms: 50,
+  sync_message_timeout_ms: 2000,
 };
 
 export function roomAutomationConfigsEqual(
@@ -141,6 +142,7 @@ export function roomAutomationConfigsEqual(
       chord_hold_ms: config.flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
       form_settle_ms: config.flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
       physical_ctrl_settle_ms: config.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms,
+      sync_message_timeout_ms: config.flow.sync_message_timeout_ms ?? DEFAULT_ROOM_FLOW_TIMING.sync_message_timeout_ms,
     },
   });
   return JSON.stringify(withDefaults(left)) === JSON.stringify(withDefaults(right));
@@ -229,6 +231,7 @@ export function validateRoomAutomationConfig(
         chord_hold_ms: flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
         form_settle_ms: flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
         physical_ctrl_settle_ms: flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms,
+        sync_message_timeout_ms: flow.sync_message_timeout_ms ?? DEFAULT_ROOM_FLOW_TIMING.sync_message_timeout_ms,
       };
       return !Number.isSafeInteger(timing.step_delay_ms)
         || !Number.isSafeInteger(timing.character_delay_ms)
@@ -237,6 +240,7 @@ export function validateRoomAutomationConfig(
         || timing.chord_hold_ms < 0 || timing.chord_hold_ms > 1000
         || !Number.isSafeInteger(timing.form_settle_ms) || timing.form_settle_ms < 0 || timing.form_settle_ms > 2000
         || !Number.isSafeInteger(timing.physical_ctrl_settle_ms) || timing.physical_ctrl_settle_ms < 0 || timing.physical_ctrl_settle_ms > 2000
+        || !Number.isSafeInteger(timing.sync_message_timeout_ms) || timing.sync_message_timeout_ms < 250 || timing.sync_message_timeout_ms > 5000
         || timing.key_hold_ms < 10 || timing.key_hold_ms > 250
         || timing.step_delay_ms < 0 || timing.step_delay_ms > 2000
         || timing.character_delay_ms < 0 || timing.character_delay_ms > 250;
