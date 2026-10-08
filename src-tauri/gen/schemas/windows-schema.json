@@ -447,6 +447,12 @@
           "markdownDescription": "Enables the cancel_task command without any pre-configured scope."
         },
         {
+          "description": "Enables the capture_account_window_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-capture-account-window-position",
+          "markdownDescription": "Enables the capture_account_window_position command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_browser_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check-browser-running",
@@ -655,6 +661,18 @@
           "type": "string",
           "const": "allow-get-foreground-window-title",
           "markdownDescription": "Enables the get_foreground_window_title command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_game_layout_account_order command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-game-layout-account-order",
+          "markdownDescription": "Enables the get_game_layout_account_order command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_game_layout_monitors command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-game-layout-monitors",
+          "markdownDescription": "Enables the get_game_layout_monitors command without any pre-configured scope."
         },
         {
           "description": "Enables the get_game_settings command without any pre-configured scope.",
@@ -1005,6 +1023,12 @@
           "markdownDescription": "Enables the restart_rune_audio_monitor command without any pre-configured scope."
         },
         {
+          "description": "Enables the restore_game_window_layout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restore-game-window-layout",
+          "markdownDescription": "Enables the restore_game_window_layout command without any pre-configured scope."
+        },
+        {
           "description": "Enables the restore_window_placement command without any pre-configured scope.",
           "type": "string",
           "const": "allow-restore-window-placement",
@@ -1335,6 +1359,12 @@
           "markdownDescription": "Denies the cancel_task command without any pre-configured scope."
         },
         {
+          "description": "Denies the capture_account_window_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-capture-account-window-position",
+          "markdownDescription": "Denies the capture_account_window_position command without any pre-configured scope."
+        },
+        {
           "description": "Denies the check_browser_running command without any pre-configured scope.",
           "type": "string",
           "const": "deny-check-browser-running",
@@ -1543,6 +1573,18 @@
           "type": "string",
           "const": "deny-get-foreground-window-title",
           "markdownDescription": "Denies the get_foreground_window_title command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_game_layout_account_order command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-game-layout-account-order",
+          "markdownDescription": "Denies the get_game_layout_account_order command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_game_layout_monitors command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-game-layout-monitors",
+          "markdownDescription": "Denies the get_game_layout_monitors command without any pre-configured scope."
         },
         {
           "description": "Denies the get_game_settings command without any pre-configured scope.",
@@ -1891,6 +1933,12 @@
           "type": "string",
           "const": "deny-restart-rune-audio-monitor",
           "markdownDescription": "Denies the restart_rune_audio_monitor command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restore_game_window_layout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restore-game-window-layout",
+          "markdownDescription": "Denies the restore_game_window_layout command without any pre-configured scope."
         },
         {
           "description": "Denies the restore_window_placement command without any pre-configured scope.",

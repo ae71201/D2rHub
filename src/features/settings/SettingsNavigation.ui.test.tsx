@@ -30,7 +30,7 @@ describe("SettingsNavigation", () => {
     expect(screen.getAllByRole("tablist")).toHaveLength(1);
     expect(screen.getByRole("tablist").getAttribute("aria-orientation")).toBe("vertical");
     expect(screen.getAllByRole("tab").map(tab => tab.id)).toEqual([
-      "settings-tab-accounts", "settings-tab-paths", "settings-tab-mod-processing",
+      "settings-tab-accounts", "settings-tab-paths", "settings-tab-window-layouts", "settings-tab-mod-processing",
       "settings-tab-module-management", "settings-tab-overlays", "settings-tab-automation", "settings-tab-room-automation", "settings-tab-pet",
       "settings-tab-appearance", "settings-tab-shortcuts", "settings-tab-agent", "settings-tab-tasks", "settings-tab-advanced",
     ]);

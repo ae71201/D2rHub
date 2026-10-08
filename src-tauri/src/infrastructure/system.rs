@@ -1580,6 +1580,7 @@ pub fn set_game_window_position(pid: u32, x: i32, y: i32) {
 
 #[cfg(target_os = "windows")]
 fn move_window_handle(hwnd: isize, x: i32, y: i32) -> bool {
+    let _dpi = crate::infrastructure::game_layout_windows::PhysicalDpiScope::enter();
     extern "system" {
         fn SetWindowPos(
             hWnd: isize,
@@ -1593,13 +1594,26 @@ fn move_window_handle(hwnd: isize, x: i32, y: i32) -> bool {
     }
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
 
-    unsafe { SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER) != 0 }
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            0,
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+        ) != 0
+    }
 }
 
 /// 根据窗口标题查找并移动位置（用于多选或 PID 缺失时的降级查找）
 #[cfg(target_os = "windows")]
 pub fn set_game_window_position_by_title(title: &str, x: i32, y: i32) -> bool {
+    let _dpi = crate::infrastructure::game_layout_windows::PhysicalDpiScope::enter();
     extern "system" {
         fn EnumWindows(
             lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
@@ -1619,6 +1633,8 @@ pub fn set_game_window_position_by_title(title: &str, x: i32, y: i32) -> bool {
     }
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
 
     struct FindCtx {
         title: String,
@@ -1652,7 +1668,15 @@ pub fn set_game_window_position_by_title(title: &str, x: i32, y: i32) -> bool {
 
     if let Some(hwnd) = ctx.found_hwnd {
         unsafe {
-            SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            SetWindowPos(
+                hwnd,
+                0,
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+            );
         }
         true
     } else {
@@ -1997,6 +2021,7 @@ pub fn find_game_hwnd_by_title(_title: &str) -> Option<isize> {
 /// 获取窗口位置 (left, top, right, bottom)
 #[cfg(target_os = "windows")]
 pub fn get_window_rect(hwnd: isize) -> Option<(i32, i32)> {
+    let _dpi = crate::infrastructure::game_layout_windows::PhysicalDpiScope::enter();
     extern "system" {
         fn GetWindowRect(hWnd: isize, lpRect: *mut std::ffi::c_void) -> i32;
     }

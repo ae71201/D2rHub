@@ -14,6 +14,7 @@ interface AccountsState {
   deleteAccount: (id: string) => Promise<void>;
   renameAccount: (id: string, newName: string) => Promise<boolean>;
   updateAccountPositions: (id: string, activePositionId: string | null, positionPresets: WindowPositionPreset[]) => Promise<boolean>;
+  captureWindowPosition: (id: string, activate?: boolean) => Promise<AccountMeta | null>;
   updateAccountRegion: (id: string, region: InternationalAccountRegion) => Promise<void>;
   initializeBnetAccount: (id: string) => Promise<void>;
   reinitializeAccount: (id: string) => Promise<void>;
@@ -102,6 +103,20 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
       throw e;
+    }
+  },
+
+  captureWindowPosition: async (id, activate = true) => {
+    try {
+      const captured = await invokeCommand<AccountMeta>("capture_account_window_position", { accountId: id, activate });
+      set(state => ({ accounts: state.accounts.map(account => account.id === id ? {
+        ...account, window_x: captured.window_x, window_y: captured.window_y,
+        position_presets: captured.position_presets, active_position_id: captured.active_position_id,
+      } : account) }));
+      return captured;
+    } catch (error) {
+      showToast("error", `存储当前位置失败：${error}`);
+      return null;
     }
   },
 

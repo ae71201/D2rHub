@@ -1975,7 +1975,7 @@ fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
     let Ok(height) = height.parse::<u32>() else {
         return Err("分辨率格式无效");
     };
-    if !(640..=7680).contains(&width) || !(480..=4320).contains(&height) {
+    if !(800..=7680).contains(&width) || !(600..=4320).contains(&height) {
         return Err("分辨率超出支持范围");
     }
     Ok(())
@@ -3459,6 +3459,10 @@ fn prepare_global_config_with_retired_accounts(
         AccountManager::validate_account_id(account_id)?;
     }
     cfg.validate_launch_groups()?;
+    crate::domain::window_layout::validate_layout_configuration(
+        &cfg.window_layouts,
+        cfg.active_window_layout_id.as_deref(),
+    )?;
     cfg.normalize_favorite_launch_group_ids();
 
     if should_validate_installation_paths(previous, &cfg) {

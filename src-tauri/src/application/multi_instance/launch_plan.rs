@@ -99,12 +99,16 @@ impl LaunchBatchPlan {
         &self,
         requested_account_id: &str,
         account: AccountMeta,
+        layout_active: bool,
     ) -> Result<(AccountMeta, Option<LaunchGraphicsOverride>), AppError> {
         let Some(overrides) = self.override_for(requested_account_id) else {
             return Ok((account, None));
         };
         let graphics = validate_graphics_override(overrides)?;
-        Ok((apply_account_overrides(account, overrides)?, graphics))
+        Ok((
+            apply_account_overrides(account, overrides, layout_active)?,
+            graphics,
+        ))
     }
 
     pub fn should_persist_position_changes_for(
@@ -134,7 +138,7 @@ pub fn validate_graphics_override(
             let height = height.parse::<u32>().map_err(|_| {
                 AppError::ConfigReadError("方案分辨率格式无效，应为 宽x高".to_string())
             })?;
-            if !(640..=7680).contains(&width) || !(480..=4320).contains(&height) {
+            if !(800..=7680).contains(&width) || !(600..=4320).contains(&height) {
                 return Err(AppError::ConfigReadError(
                     "方案分辨率超出支持范围".to_string(),
                 ));
@@ -158,11 +162,18 @@ pub fn validate_graphics_override(
 fn apply_account_overrides(
     mut account: AccountMeta,
     overrides: &LaunchAccountOverrides,
+    layout_active: bool,
 ) -> Result<AccountMeta, AppError> {
     let mod_args = overrides.mod_args.trim().to_string();
     // Schemes select from the shared Mod catalog, not the account's historical
     // mod_list. The launch adapter checks the effective installation on disk.
     account.mod_args = mod_args;
+
+    // Layout geometry supersedes a scheme's position capsule, including a
+    // stale/deleted reference. Keep the account default intact for later use.
+    if layout_active {
+        return Ok(account);
+    }
 
     let position_id = overrides
         .position_preset_id
@@ -259,7 +270,7 @@ mod tests {
         )
         .unwrap();
         let original = account();
-        let (effective, graphics) = plan.apply_for("acount1", original.clone()).unwrap();
+        let (effective, graphics) = plan.apply_for("acount1", original.clone(), false).unwrap();
 
         assert_eq!(original.mod_args, "-mod default");
         assert_eq!(effective.mod_args, "-mod plan");
@@ -286,7 +297,7 @@ mod tests {
         // Shared Mod catalog availability is checked by the launch adapter
         // against the effective installation; applying a plan only normalizes
         // the transient arguments.
-        assert!(plan.apply_for("acount1", account()).is_ok());
+        assert!(plan.apply_for("acount1", account(), false).is_ok());
 
         let mut partial = overrides();
         partial.fps = None;
@@ -306,5 +317,24 @@ mod tests {
         assert!(launch_queue_can_continue(true, true));
         assert!(!launch_queue_can_continue(true, false));
         assert!(!launch_queue_can_continue(false, true));
+    }
+
+    #[test]
+    fn layout_priority_bypasses_deleted_position_capsules_without_changing_defaults() {
+        let mut transient = overrides();
+        transient.position_preset_id = Some("deleted".into());
+        let plan = LaunchBatchPlan::from_request(
+            None,
+            Some(vec![LaunchAccountEntry {
+                account_id: "acount1".into(),
+                overrides: transient,
+            }]),
+        )
+        .unwrap();
+        assert!(plan.apply_for("acount1", account(), false).is_err());
+        let original = account();
+        let (effective, _) = plan.apply_for("acount1", original.clone(), true).unwrap();
+        assert_eq!(effective.active_position_id, original.active_position_id);
+        assert_eq!(effective.position_presets, original.position_presets);
     }
 }

@@ -1,3 +1,4 @@
+use super::window_layout::WindowLayout;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +249,12 @@ pub struct GlobalConfig {
     /// 固定在主界面操作栏上的常用启动方案，顺序即展示顺序。
     #[serde(default)]
     pub favorite_launch_group_ids: Vec<String>,
+    #[serde(default)]
+    pub window_layout_enabled: bool,
+    #[serde(default)]
+    pub active_window_layout_id: Option<String>,
+    #[serde(default)]
+    pub window_layouts: Vec<WindowLayout>,
     /// Same-version fields owned by a branch or optional module that this build
     /// does not understand yet. Flattening keeps unrelated saves lossless until
     /// the owning module can import them into its versioned sidecar.
@@ -519,6 +526,9 @@ impl Default for GlobalConfig {
             agent_threshold: 5,
             launch_groups: Vec::new(),
             favorite_launch_group_ids: Vec::new(),
+            window_layout_enabled: false,
+            active_window_layout_id: None,
+            window_layouts: Vec::new(),
             preserved_unknown_fields: BTreeMap::new(),
         }
     }

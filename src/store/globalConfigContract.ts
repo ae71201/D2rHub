@@ -55,7 +55,10 @@ export const GLOBAL_CONFIG_FIELDS = [
   "agent_delay_secs",
   "agent_threshold",
   "launch_groups",
-  "favorite_launch_group_ids"
+  "favorite_launch_group_ids",
+  "window_layout_enabled",
+  "active_window_layout_id",
+  "window_layouts"
 ] as const satisfies readonly (keyof GlobalConfig)[];
 
 type MissingGlobalConfigField = Exclude<keyof GlobalConfig, typeof GLOBAL_CONFIG_FIELDS[number]>;

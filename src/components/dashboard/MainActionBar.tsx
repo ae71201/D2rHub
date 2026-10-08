@@ -13,6 +13,7 @@ import type { BatchSelection } from "../../hooks/useAccountBatch";
 import { useI18n } from "../../i18n";
 import { AccountSelectionMenu } from "./AccountSelectionMenu";
 import type { BatchMode } from "../../hooks/useAccountBatch";
+import { WindowLayoutQuickControls } from "../../features/windowLayouts/WindowLayoutQuickControls";
 
 interface MainActionBarProps {
   batchSelection?: BatchSelection;
@@ -32,6 +33,7 @@ interface MainActionBarProps {
   onToggleLaunchGroupPanel: () => void;
   onOpenModManager: () => void;
   onOpenRoomAutomation: () => void;
+  onOpenWindowLayouts?: () => void;
   showOptionalFeatures?: boolean;
   modCapsulePool?: ModCapsulePool | null;
 }
@@ -50,6 +52,7 @@ export function MainActionBar({
   onToggleLaunchGroupPanel,
   onOpenModManager,
   onOpenRoomAutomation,
+  onOpenWindowLayouts,
   showOptionalFeatures = true,
   modCapsulePool,
 }: MainActionBarProps) {
@@ -109,6 +112,7 @@ export function MainActionBar({
               onOpenSettings={onOpenRoomAutomation}
             />
           )}
+          {onOpenWindowLayouts && <WindowLayoutQuickControls onOpenSettings={onOpenWindowLayouts} disabled={launching || !!batchBusy || !!draft} />}
         </div>
         <div className="flex-1" />
         <button type="button" className="control-btn" onClick={onOpenModManager}>

@@ -19,6 +19,7 @@ use crate::commands::account::{
 use crate::commands::utils::silent_cmd;
 use crate::domain::account::{AuthMode, ClientEdition};
 use crate::domain::config::GlobalConfig;
+use crate::domain::window_layout::{LayoutRect, WindowLayout};
 use crate::error::AppError;
 use crate::infrastructure::system::{LaunchProgress, SystemGameWindowPort};
 use crate::launch_context::{
@@ -62,6 +63,7 @@ struct LaunchExecutionOptions {
     persist_position_changes: bool,
     preserved_default_mod_args: Option<String>,
     graphics_override: Option<LaunchGraphicsOverride>,
+    layout_rect: Option<LayoutRect>,
 }
 
 struct TokenLaunchRequest<'a> {
@@ -70,12 +72,15 @@ struct TokenLaunchRequest<'a> {
     meta: &'a AccountMeta,
     context: &'a LaunchContext,
     graphics_override: Option<&'a LaunchGraphicsOverride>,
+    layout_rect: Option<LayoutRect>,
 }
 
 struct TemporarySettingsOverride {
     path: PathBuf,
     original: Vec<u8>,
 }
+
+type AccountPositionIdentity = (Option<i32>, Option<i32>, Option<String>);
 
 /// Read the latest nickname under the same lock as explicit account renames.
 /// A detached startup retry must never restore a title captured before a rename.
@@ -98,6 +103,65 @@ fn refresh_launch_window_title(
         });
         Ok(())
     })
+}
+
+fn selected_window_layout(config: &GlobalConfig) -> Option<&WindowLayout> {
+    config
+        .window_layout_enabled
+        .then_some(config.active_window_layout_id.as_deref())
+        .flatten()
+        .and_then(|id| config.window_layouts.iter().find(|layout| layout.id == id))
+}
+
+/// Finite startup retries must yield to a newer layout selection or account
+/// position capture instead of moving a window back to an obsolete snapshot.
+struct WindowGeometryRequest {
+    accounts_dir: String,
+    account_id: String,
+    layout: Option<WindowLayout>,
+    position: Option<AccountPositionIdentity>,
+}
+
+impl WindowGeometryRequest {
+    fn capture(config: &GlobalConfig, account_id: &str) -> Self {
+        Self {
+            accounts_dir: config.accounts_dir.clone(),
+            account_id: account_id.into(),
+            layout: selected_window_layout(config).cloned(),
+            position: AccountManager::load_meta(&config.accounts_dir, account_id)
+                .ok()
+                .map(|account| {
+                    (
+                        account.window_x,
+                        account.window_y,
+                        account.active_position_id,
+                    )
+                }),
+        }
+    }
+
+    fn matches(&self, config: &GlobalConfig, account: &AccountMeta) -> bool {
+        selected_window_layout(config) == self.layout.as_ref()
+            && self.position.as_ref().is_some_and(|position| {
+                position
+                    == &(
+                        account.window_x,
+                        account.window_y,
+                        account.active_position_id.clone(),
+                    )
+            })
+    }
+
+    fn is_current(&self, state: &SharedState) -> bool {
+        let Some(config) = state.configuration().snapshot() else {
+            return false;
+        };
+        if selected_window_layout(&config) != self.layout.as_ref() {
+            return false;
+        }
+        AccountManager::load_meta(&self.accounts_dir, &self.account_id)
+            .is_ok_and(|account| self.matches(&config, &account))
+    }
 }
 
 impl Drop for TemporarySettingsOverride {
@@ -328,8 +392,9 @@ fn preflight_launch_graphics(
     meta: &AccountMeta,
     context: &LaunchContext,
     graphics: Option<&LaunchGraphicsOverride>,
+    layout_active: bool,
 ) -> Result<(), AppError> {
-    if graphics.is_none() {
+    if graphics.is_none() && !layout_active {
         return Ok(());
     }
     let path = graphics_settings_path(config, meta, context)?;
@@ -358,19 +423,29 @@ fn preflight_launch_graphics(
 fn apply_temporary_graphics_override(
     context: &LaunchContext,
     graphics: Option<&LaunchGraphicsOverride>,
+    layout_rect: Option<LayoutRect>,
 ) -> Result<Option<TemporarySettingsOverride>, AppError> {
-    let Some(graphics) = graphics else {
+    if graphics.is_none() && layout_rect.is_none() {
         return Ok(None);
-    };
+    }
     let path = context
         .required_saved_games_directory()?
         .join("Settings.json");
-    apply_temporary_graphics_override_at_path(path, graphics).map(Some)
+    apply_temporary_window_settings_at_path(path, graphics, layout_rect).map(Some)
 }
 
+#[cfg(test)]
 fn apply_temporary_graphics_override_at_path(
     path: PathBuf,
     graphics: &LaunchGraphicsOverride,
+) -> Result<TemporarySettingsOverride, AppError> {
+    apply_temporary_window_settings_at_path(path, Some(graphics), None)
+}
+
+fn apply_temporary_window_settings_at_path(
+    path: PathBuf,
+    graphics: Option<&LaunchGraphicsOverride>,
+    layout_rect: Option<LayoutRect>,
 ) -> Result<TemporarySettingsOverride, AppError> {
     let original = std::fs::read(&path).map_err(|error| {
         AppError::FileError(format!(
@@ -391,18 +466,27 @@ fn apply_temporary_graphics_override_at_path(
             path.display()
         )));
     }
-    settings.insert(
-        "Screen Resolution (Windowed)".to_string(),
-        serde_json::Value::String(graphics.resolution.clone()),
-    );
-    settings.insert(
-        "Framerate Cap".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
-    );
-    if settings.contains_key("Framerate Target") {
+    if let Some(graphics) = graphics {
         settings.insert(
-            "Framerate Target".to_string(),
+            "Screen Resolution (Windowed)".to_string(),
+            serde_json::Value::String(graphics.resolution.clone()),
+        );
+        settings.insert(
+            "Framerate Cap".to_string(),
             serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
+        );
+        if settings.contains_key("Framerate Target") {
+            settings.insert(
+                "Framerate Target".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
+            );
+        }
+    }
+    if let Some(rect) = layout_rect {
+        settings.insert("Window Mode".into(), serde_json::json!(0));
+        settings.insert(
+            "Screen Resolution (Windowed)".into(),
+            serde_json::json!(format!("{}x{}", rect.width, rect.height)),
         );
     }
     let content = serde_json::to_vec_pretty(&settings)?;
@@ -421,6 +505,13 @@ fn persist_window_position(
     account_id: &str,
     position: (i32, i32),
 ) -> bool {
+    // A legacy position watcher may still be alive when the user enables a
+    // layout. Layout movement must never overwrite the account's saved capsule.
+    if state.configuration().snapshot().is_some_and(|config| {
+        config.window_layout_enabled && config.active_window_layout_id.is_some()
+    }) {
+        return true;
+    }
     let Ok(_lease) = AccountLifecycleLease::try_acquire(state, account_id) else {
         return false;
     };
@@ -1694,15 +1785,43 @@ async fn launch_accounts_impl(
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     // 启动方案必须在触碰共享注册表、Battle.net 或 Settings.json 前整组完成预检。
-    if plan.has_overrides() {
+    let layout_config = config.clone();
+    let layout_state = state.inner().clone();
+    let layout_ids = account_ids.to_vec();
+    let mut layout_plan = tokio::task::spawn_blocking(move || {
+        crate::commands::window_layout::prepare_launch_layout(
+            &layout_config,
+            &layout_state,
+            &layout_ids,
+        )
+    })
+    .await
+    .map_err(|error| AppError::FileError(error.to_string()))??;
+    if plan.has_overrides() || layout_plan.is_some() {
         for account_id in account_ids {
+            if !plan.has_overrides()
+                && layout_plan
+                    .as_ref()
+                    .is_some_and(|layout| layout.is_existing(account_id))
+            {
+                continue;
+            }
             let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
-            let (effective_meta, graphics) = plan.apply_for(account_id, meta)?;
+            let (effective_meta, graphics) =
+                plan.apply_for(account_id, meta, layout_plan.is_some())?;
             preflight_account_meta(&config, &effective_meta, ContextPurpose::LaunchGame)?;
             let context =
                 LaunchContext::for_account(&config, &effective_meta, ContextPurpose::LaunchGame)?;
-            preflight_scheme_mod(&effective_meta, &context)?;
-            preflight_launch_graphics(&config, &effective_meta, &context, graphics.as_ref())?;
+            if plan.has_overrides() {
+                preflight_scheme_mod(&effective_meta, &context)?;
+            }
+            preflight_launch_graphics(
+                &config,
+                &effective_meta,
+                &context,
+                graphics.as_ref(),
+                layout_plan.is_some(),
+            )?;
         }
     }
     let mut results = Vec::new();
@@ -1763,13 +1882,14 @@ async fn launch_accounts_impl(
         };
         let preserved_default_mod_args =
             plan.override_for(account_id).map(|_| meta.mod_args.clone());
-        let (meta, graphics_override) = match plan.apply_for(account_id, meta) {
-            Ok(effective) => effective,
-            Err(error) => {
-                results.push(account_path_error(account_id, error));
-                continue;
-            }
-        };
+        let (meta, graphics_override) =
+            match plan.apply_for(account_id, meta, layout_plan.is_some()) {
+                Ok(effective) => effective,
+                Err(error) => {
+                    results.push(account_path_error(account_id, error));
+                    continue;
+                }
+            };
         if let Some(result) =
             skip_existing_account_window(&app, state.inner(), &config, account_id, &meta)
         {
@@ -1806,6 +1926,7 @@ async fn launch_accounts_impl(
             &meta,
             &preflight_context,
             graphics_override.as_ref(),
+            layout_plan.is_some(),
         ) {
             results.push(account_path_error(account_id, error));
             continue;
@@ -1868,7 +1989,11 @@ async fn launch_accounts_impl(
 
         // 当前账号的生命周期租约保证本次启动期间元数据稳定。
         // 只有默认启动且明确选择了位置胶囊时，才把用户后续拖动写回该胶囊。
-        let persist_position_changes = plan.should_persist_position_changes_for(account_id, &meta);
+        let layout_rect = layout_plan
+            .as_ref()
+            .and_then(|layout| layout.target(account_id));
+        let persist_position_changes =
+            layout_rect.is_none() && plan.should_persist_position_changes_for(account_id, &meta);
         let result = launch_single(
             &app,
             &config,
@@ -1880,11 +2005,17 @@ async fn launch_accounts_impl(
                 persist_position_changes,
                 preserved_default_mod_args,
                 graphics_override,
+                layout_rect,
             },
             #[cfg(target_os = "windows")]
             &mut memory_trim,
         )
         .await;
+        if result.d2r_pid.is_some() {
+            if let Some(layout) = &mut layout_plan {
+                layout.record_started(account_id);
+            }
+        }
         let killed = result.mutex_killed;
         let success = result.success;
         let can_continue = launch_queue_can_continue(success, killed);
@@ -1940,6 +2071,23 @@ async fn launch_accounts_impl(
 
     #[cfg(target_os = "windows")]
     memory_trim.trim(&state, cancellation_ticket).await;
+
+    let restore_config = state
+        .configuration()
+        .snapshot()
+        .unwrap_or_else(|| config.clone());
+    if selected_window_layout(&restore_config).is_some()
+        && !is_cancelled(&state, cancellation_ticket)
+    {
+        let restore_state = state.inner().clone();
+        if let Ok(Err(error)) = tokio::task::spawn_blocking(move || {
+            crate::commands::window_layout::restore_layout(&restore_config, &restore_state)
+        })
+        .await
+        {
+            crate::logger::log_msg("WARN", "Layout", &error.to_string());
+        }
+    }
 
     // This runs inside the same task and host lease, after every game's cleanup,
     // the final memory trim, and window arrangement. Only reopen the client.
@@ -2023,6 +2171,7 @@ async fn launch_single(
         persist_position_changes,
         preserved_default_mod_args,
         graphics_override,
+        layout_rect,
     } = options;
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -2053,6 +2202,7 @@ async fn launch_single(
                 meta: &meta,
                 context: &preflight_context,
                 graphics_override: graphics_override.as_ref(),
+                layout_rect,
             },
             #[cfg(target_os = "windows")]
             memory_trim,
@@ -2070,7 +2220,7 @@ async fn launch_single(
         BnetPreparationOptions {
             meta_override: Some(&meta),
             preserved_default_mod_args: preserved_default_mod_args.as_deref(),
-            require_settings_copy: graphics_override.is_some(),
+            require_settings_copy: graphics_override.is_some() || layout_rect.is_some(),
         },
     )
     .await
@@ -2078,11 +2228,14 @@ async fn launch_single(
         Ok(context) => context,
         Err(result) => return result,
     };
-    let _settings_override =
-        match apply_temporary_graphics_override(&context, graphics_override.as_ref()) {
-            Ok(settings_override) => settings_override,
-            Err(error) => return account_path_error(account_id, error),
-        };
+    let _settings_override = match apply_temporary_graphics_override(
+        &context,
+        graphics_override.as_ref(),
+        layout_rect,
+    ) {
+        Ok(settings_override) => settings_override,
+        Err(error) => return account_path_error(account_id, error),
+    };
     let product_code = context.edition.battle_net_launch_product;
     let battle_net_path = match context.battle_net_executable() {
         Ok(path) => path.to_string_lossy().to_string(),
@@ -2376,7 +2529,6 @@ async fn launch_single(
             // 将游戏窗口标题改为账号昵称，并调整窗口位置（如已配置）。
             // 方案覆盖不允许反向污染账号默认位置，因此关闭位置轮询写回。
             {
-
                 let win_x = meta.window_x;
                 let win_y = meta.window_y;
                 // 延迟重试 + 位置持续轮询
@@ -2388,12 +2540,23 @@ async fn launch_single(
                 let app_user_model_id = format!("D2RHub.Account.{account_id}");
                 let app_for_window = app.clone();
                 let account_id_for_window = account_id.to_string();
+                let layout_executable = context.installation.game_executable.clone();
+                let geometry_request = WindowGeometryRequest::capture(config, account_id);
                 tokio::task::spawn_blocking(move || {
+                    let Some(process) = crate::infrastructure::system::LaunchProcessGuard::capture(
+                        pid_copy,
+                        &layout_executable,
+                    ) else {
+                        return;
+                    };
                     // Phase 1: 10 次重试重命名 + 初始定位
                     let mut taskbar_configured = !separate_taskbar_icon;
                     let mut taskbar_error = None;
                     for _ in 0..10 {
                         std::thread::sleep(std::time::Duration::from_millis(800));
+                        if !process.is_running() {
+                            return;
+                        }
                         let windows = SystemGameWindowPort;
                         let _ = refresh_launch_window_title(
                             state_for_position.multi_instance().instances(),
@@ -2408,9 +2571,29 @@ async fn launch_single(
                                 Err(error) => taskbar_error = Some(error),
                             }
                         }
-                        if let (Some(x), Some(y)) = (win_x, win_y) {
-                            windows.move_to(pid_copy, WindowPosition { x, y });
+                        if (layout_rect.is_none() && (win_x.is_none() || win_y.is_none()))
+                            || state_for_position
+                                .multi_instance()
+                                .instances()
+                                .initial_window_geometry_superseded(&account_id_owned, pid_copy)
+                            || !geometry_request.is_current(&state_for_position)
+                        {
+                            continue;
                         }
+                        state_for_position
+                            .multi_instance()
+                            .instances()
+                            .apply_initial_window_geometry(&account_id_owned, pid_copy, || {
+                                if let Some(rect) = layout_rect {
+                                    crate::infrastructure::game_layout_windows::apply_for_pid(
+                                        pid_copy,
+                                        &layout_executable,
+                                        rect,
+                                    );
+                                } else if let (Some(x), Some(y)) = (win_x, win_y) {
+                                    windows.move_to(pid_copy, WindowPosition { x, y });
+                                }
+                            });
                     }
                     if !taskbar_configured {
                         let message = taskbar_error
@@ -2434,17 +2617,20 @@ async fn launch_single(
                         return;
                     }
                     // Phase 2: 默认启动时轮询窗口位置，拖动停止后反向写入账号配置
-                    let mut sys = sysinfo::System::new();
-                    let sys_pid = sysinfo::Pid::from(pid_copy as usize);
                     let mut last_pos: Option<(i32, i32)> = None;
                     loop {
                         std::thread::sleep(std::time::Duration::from_secs(3));
-                        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]));
-                        let alive = sys
-                            .process(sys_pid)
-                            .map(|p| p.name().to_string_lossy().eq_ignore_ascii_case("D2R.exe"))
-                            .unwrap_or(false);
-                        if !alive {
+                        if !process.is_running()
+                            || state_for_position
+                                .multi_instance()
+                                .instances()
+                                .pid_for(&account_id_owned)
+                                != Some(pid_copy)
+                            || state_for_position
+                                .multi_instance()
+                                .instances()
+                                .initial_window_geometry_superseded(&account_id_owned, pid_copy)
+                        {
                             break;
                         }
                         let windows = SystemGameWindowPort;
@@ -2732,6 +2918,7 @@ async fn launch_single_token(
         meta,
         context,
         graphics_override,
+        layout_rect,
     } = request;
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -2774,7 +2961,7 @@ async fn launch_single_token(
                 if let Err(error) =
                     copy_account_settings_to_system(&account_dir, saved_games_directory)
                 {
-                    if graphics_override.is_some() {
+                    if graphics_override.is_some() || layout_rect.is_some() {
                         return account_path_error(account_id, error);
                     }
                     emit(
@@ -2801,10 +2988,11 @@ async fn launch_single_token(
         );
     }
 
-    let _settings_override = match apply_temporary_graphics_override(context, graphics_override) {
-        Ok(settings_override) => settings_override,
-        Err(error) => return account_path_error(account_id, error),
-    };
+    let _settings_override =
+        match apply_temporary_graphics_override(context, graphics_override, layout_rect) {
+            Ok(settings_override) => settings_override,
+            Err(error) => return account_path_error(account_id, error),
+        };
 
     // 2. 写入 Token 到注册表
     let protected_bytes = match &meta.token {
@@ -2998,12 +3186,23 @@ async fn launch_single_token(
             let app_user_model_id = format!("D2RHub.Account.{account_id}");
             let app_for_window = app.clone();
             let account_id_for_window = account_id.to_string();
+            let layout_executable = context.installation.game_executable.clone();
+            let geometry_request = WindowGeometryRequest::capture(config, account_id);
             let state_for_geometry = state.clone();
             tokio::task::spawn_blocking(move || {
+                let Some(process) = crate::infrastructure::system::LaunchProcessGuard::capture(
+                    pid_copy,
+                    &layout_executable,
+                ) else {
+                    return;
+                };
                 let mut taskbar_configured = !separate_taskbar_icon;
                 let mut taskbar_error = None;
                 for _ in 0..10 {
                     std::thread::sleep(std::time::Duration::from_millis(800));
+                    if !process.is_running() {
+                        return;
+                    }
                     let windows = SystemGameWindowPort;
                     let _ = refresh_launch_window_title(
                         state_for_geometry.multi_instance().instances(),
@@ -3018,9 +3217,29 @@ async fn launch_single_token(
                             Err(error) => taskbar_error = Some(error),
                         }
                     }
-                    if let (Some(x), Some(y)) = (win_x, win_y) {
-                        windows.move_to(pid_copy, WindowPosition { x, y });
+                    if (layout_rect.is_none() && (win_x.is_none() || win_y.is_none()))
+                        || state_for_geometry
+                            .multi_instance()
+                            .instances()
+                            .initial_window_geometry_superseded(&account_id_for_window, pid_copy)
+                        || !geometry_request.is_current(&state_for_geometry)
+                    {
+                        continue;
                     }
+                    state_for_geometry
+                        .multi_instance()
+                        .instances()
+                        .apply_initial_window_geometry(&account_id_for_window, pid_copy, || {
+                            if let Some(rect) = layout_rect {
+                                crate::infrastructure::game_layout_windows::apply_for_pid(
+                                    pid_copy,
+                                    &layout_executable,
+                                    rect,
+                                );
+                            } else if let (Some(x), Some(y)) = (win_x, win_y) {
+                                windows.move_to(pid_copy, WindowPosition { x, y });
+                            }
+                        });
                 }
                 if !taskbar_configured {
                     let message = taskbar_error
@@ -3391,6 +3610,87 @@ mod tests {
 
         assert_eq!(std::fs::read(&path).unwrap(), original);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn layout_window_mode_and_dimensions_are_temporary_and_preserve_fps_intent() {
+        let root = temp_dir("layout_window_settings");
+        let path = root.join("Settings.json");
+        let original = br#"{"Window Mode":1,"Screen Resolution (Windowed)":"2560x1440","Framerate Cap":75,"VSync":true}"#;
+        let graphics = LaunchGraphicsOverride {
+            resolution: "3840x2160".into(),
+            fps: 144,
+        };
+        let rect = crate::domain::window_layout::LayoutRect {
+            x: -1600,
+            y: 200,
+            width: 1280,
+            height: 720,
+        };
+        for override_graphics in [None, Some(&graphics)] {
+            std::fs::write(&path, original).unwrap();
+            {
+                let _guard = super::apply_temporary_window_settings_at_path(
+                    path.clone(),
+                    override_graphics,
+                    Some(rect),
+                )
+                .unwrap();
+                let temporary: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                assert_eq!(temporary["Window Mode"], 0);
+                assert_eq!(temporary["Screen Resolution (Windowed)"], "1280x720");
+                assert_eq!(
+                    temporary["Framerate Cap"],
+                    if override_graphics.is_some() { 144 } else { 75 }
+                );
+                assert_eq!(temporary["VSync"], true);
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_geometry_yields_to_new_account_positions_and_layout_enablement() {
+        let mut account = AccountMeta::new("acount1");
+        account.window_x = Some(120);
+        account.window_y = Some(240);
+        account.active_position_id = Some("original".into());
+        let config = GlobalConfig::default();
+        let request = super::WindowGeometryRequest {
+            accounts_dir: String::new(),
+            account_id: account.id.clone(),
+            layout: None,
+            position: Some((
+                account.window_x,
+                account.window_y,
+                account.active_position_id.clone(),
+            )),
+        };
+        assert!(request.matches(&config, &account));
+        account.active_position_id = Some("captured".into());
+        assert!(!request.matches(&config, &account));
+        account.active_position_id = Some("original".into());
+        let mut changed = config.clone();
+        changed.window_layout_enabled = true;
+        changed.active_window_layout_id = Some("layout".into());
+        changed
+            .window_layouts
+            .push(crate::domain::window_layout::WindowLayout {
+                id: "layout".into(),
+                name: "Layout".into(),
+                monitors: vec![],
+                windows: vec![],
+            });
+        assert!(!request.matches(&changed, &account));
+        let layout_request = super::WindowGeometryRequest {
+            layout: changed.window_layouts.first().cloned(),
+            ..request
+        };
+        assert!(layout_request.matches(&changed, &account));
+        changed.window_layouts[0].name = "Updated".into();
+        assert!(!layout_request.matches(&changed, &account));
     }
 
     #[test]

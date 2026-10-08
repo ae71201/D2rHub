@@ -603,6 +603,11 @@ function App() {
               setSettingsAccountId(null);
               setShowSettings(true);
             }}
+            onOpenWindowLayouts={() => {
+              setSettingsTab("window-layouts");
+              setSettingsAccountId(null);
+              setShowSettings(true);
+            }}
             showOptionalFeatures={optionalFeaturesAvailable}
             modCapsulePool={modCapsules.pool}
           />

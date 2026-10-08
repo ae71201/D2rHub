@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { version as appVersion } from "../package.json";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
+import type { AccountMeta, GlobalConfig, LayoutMonitor, ModCapsulePool } from "./store/types";
+import { presetSlots } from "./features/windowLayouts/model";
 import { recognitionSourceId } from "./utils/recognitionSource";
 import { normalizeTheme } from "./store/themeCatalog";
 import { PET_ITEMS, PET_ITEM_BY_ID } from "./features/pet/catalog";
@@ -243,6 +244,12 @@ if (params.get("batch") === "1") {
   accounts.push({ ...accounts[2], id: "batch-idle", display_name: "Idle Druid", order: 5, is_running: false });
 }
 
+const layoutDisplaySize = params.get("display") === "4k" ? [3840, 2160] : params.get("display") === "1080p" ? [1920, 1080] : [2560, 1440];
+const layoutMonitors: LayoutMonitor[] = [{ id: "DISPLAY1", name: "DISPLAY1", primary: true, scale_factor: 1.5,
+  bounds: { x: 0, y: 0, width: layoutDisplaySize[0], height: layoutDisplaySize[1] },
+  work_area: { x: 0, y: 0, width: layoutDisplaySize[0], height: layoutDisplaySize[1] - 48 } }];
+if (params.get("monitors") === "dual") layoutMonitors.push({ id: "DISPLAY2", name: "DISPLAY2", primary: false, scale_factor: 1,
+  bounds: { x: -1920, y: 200, width: 1920, height: 1080 }, work_area: { x: -1920, y: 200, width: 1920, height: 1040 } });
 const baseConfig: GlobalConfig = {
   version: 11,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
@@ -318,7 +325,10 @@ const baseConfig: GlobalConfig = {
     { id: "uber-team", name: "火炬队", account_ids: ["sorc-01", "pala-03"] },
   ],
   favorite_launch_group_ids: ["farm-core"],
-
+  window_layout_enabled: params.get("layouts") !== "empty",
+  active_window_layout_id: params.get("layouts") === "empty" ? null : "daily-layout",
+  window_layouts: params.get("layouts") === "empty" ? [] : [{ id: "daily-layout", name: "日常多开", monitors: layoutMonitors,
+    windows: presetSlots(layoutMonitors, 5, layoutDisplaySize[0] === 3840 ? "4k" : layoutDisplaySize[0] === 1920 ? "1080p" : "2k") }],
 };
 
 let persistedGlobalConfig: GlobalConfig = { ...baseConfig,
@@ -518,6 +528,26 @@ function installIpcMock() {
       }
       case "list_accounts":
         return accounts;
+      case "get_game_layout_account_order":
+        return ["barb-02", "sorc-01"].filter(id => accounts.some(account => account.id === id && account.is_running));
+      case "get_game_layout_monitors":
+        return layoutMonitors;
+      case "restore_game_window_layout":
+        return { applied: accounts.filter(account => account.is_running).map(account => account.id), failures: [] };
+      case "capture_account_window_position": {
+        const { accountId, activate } = payload as { accountId: string; activate?: boolean };
+        const account = accounts.find(account => account.id === accountId)!;
+        const preset = { id: crypto.randomUUID(), name: `当前位置 ${(account.position_presets?.length ?? 0) + 1}`, x: 320, y: 180 };
+        account.position_presets = [...(account.position_presets ?? []), preset];
+        if (activate !== false) { account.active_position_id = preset.id; account.window_x = preset.x; account.window_y = preset.y; }
+        return account;
+      }
+      case "update_account_positions": {
+        const { accountId, activePositionId, positionPresets } = payload as { accountId: string; activePositionId: string | null; positionPresets: AccountMeta["position_presets"] };
+        const account = accounts.find(account => account.id === accountId)!;
+        account.position_presets = positionPresets; account.active_position_id = activePositionId;
+        return account;
+      }
       case "refresh_account_running_state":
         return accounts.filter((account) => account.is_running).map((account) => account.id);
       case "inspect_account_launch_health":

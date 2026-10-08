@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { Input } from "../../../components/ui/Input";
+import { ResolutionInput } from "../../../components/ui/ResolutionInput";
+import { CaptureWindowPositionButton } from "../../windowLayouts/CaptureWindowPositionButton";
 import {
   AudioSection,
   AutomapSection,
@@ -271,14 +273,10 @@ export function AccountsPanel({
               <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
                 <div>
                   <label className="micro-meta mb-1.5 block">分辨率</label>
-                  <select
-                    aria-label="分辨率"
+                  <ResolutionInput
                     value={String(gameSettings["Screen Resolution (Windowed)"] ?? "1280x720")}
-                    onChange={e => updateGameSetting("Screen Resolution (Windowed)", e.target.value)}
-                    className="line-select w-full px-2.5"
-                  >
-                    {["1280x720","1600x900","1920x1080","2560x1440","3840x2160"].map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
+                    onChange={value => updateGameSetting("Screen Resolution (Windowed)", value)}
+                  />
                 </div>
                 <div>
                   <label className="micro-meta mb-1.5 block">FPS</label>
@@ -297,6 +295,12 @@ export function AccountsPanel({
                     </datalist>
                   </div>
                 </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <CaptureWindowPositionButton accountId={selectedAccountId}
+                  beforeCapture={() => accountHasChanges ? handleSaveAccount(true) : Promise.resolve(true)}
+                  onCaptured={account => { setAccountWinXDraft(account.window_x ?? null); setAccountWinYDraft(account.window_y ?? null); }} />
+                <span className="text-xs text-text-secondary">保存为新的账号位置配置</span>
               </div>
             </div>
           )}

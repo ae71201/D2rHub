@@ -56,6 +56,7 @@ const AutomationPanel = lazy(() => import("../../features/settings/panels/Automa
 const RoomAutomationPanel = lazy(() => import("../../features/settings/panels/RoomAutomationPanel").then(module => ({ default: module.RoomAutomationPanel })));
 const OverlayPanel = lazy(() => import("../../features/settings/panels/OverlayPanel").then(module => ({ default: module.OverlayPanel })));
 const PetPanel = lazy(() => import("../../features/settings/panels/PetPanel").then(module => ({ default: module.PetPanel })));
+const WindowLayoutPanel = lazy(() => import("../../features/windowLayouts/WindowLayoutPanel").then(module => ({ default: module.WindowLayoutPanel })));
 
 interface Props {
   open: boolean;
@@ -93,6 +94,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   const navigationSaveRef = useRef(false);
   const [navigationSaving, setNavigationSaving] = useState(false);
+  const [layoutDraftDirty, setLayoutDraftDirty] = useState(false);
+  const [layoutSaving, setLayoutSaving] = useState(false);
   const [profileChanging, setProfileChanging] = useState(false);
 
   // 快捷键录入、冲突校验与写回由控制器持有；shell 只负责渲染与保存编排。
@@ -247,6 +250,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Close / Rollback
   const handleClose = () => {
+    if (layoutSaving) return;
     if (config && installationPathEditsAreInvalid(committedConfig, config)) {
       setActiveTab("paths");
       showToast("error", "请至少保留一组国服或国际服的游戏安装目录；Battle.net 仅供国服兼容模式使用");
@@ -420,14 +424,16 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   const accountRegionLabel = (region?: string | null) =>
     region === "KR" ? "亚服" : region === "NA" ? "美服" : region === "EU" ? "欧服" : region === "Global" ? "国际服" : "国服";
-  const saveStatusText = gameSettingsSaving || appearanceApplying || navigationSaving
+  const saveStatusText = gameSettingsSaving || appearanceApplying || navigationSaving || layoutSaving
     ? "保存中"
-    : hasAnyUnsavedChanges
+    : layoutDraftDirty
+      ? (settingsLanguage === "en-US" ? "Layout draft unsaved" : "布局草稿未保存")
+      : hasAnyUnsavedChanges
       ? "有未保存改动"
       : "已保存";
 
   const handleTabChange = async (nextTab: SettingsTabId): Promise<boolean> => {
-    if (navigationSaveRef.current || (modWorkflow.busy && nextTab !== "tasks" && nextTab !== "mod-processing")) return false;
+    if (layoutSaving || navigationSaveRef.current || (modWorkflow.busy && nextTab !== "tasks" && nextTab !== "mod-processing")) return false;
     if (nextTab === activeTab) {
       if (nextTab === "mod-processing" && !modWorkflow.busy) modWorkflow.actions.openLibrary();
       return true;
@@ -471,7 +477,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       installedModules={installedModules}
       onClose={handleClose}
       onTabChange={handleTabChange}
-      dismissible={!pendingDisclosureModule && !profileChanging && !modWorkflow.busy}
+      dismissible={!pendingDisclosureModule && !profileChanging && !modWorkflow.busy && !layoutSaving}
     >
       <Suspense fallback={<div role="status" className="p-3 text-sm text-text-muted">{settingsLanguage === "en-US" ? "Loading settings…" : "正在加载设置…"}</div>}>
             {!minimalMode && activeTab === "module-management" && config && (
@@ -526,6 +532,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
             {activeTab === "agent" && config && (
               <LaunchStrategyPanel config={config} accounts={accounts} updateConfig={updateConfig} />
+            )}
+
+            {activeTab === "window-layouts" && config && (
+              <WindowLayoutPanel config={config} updateConfig={updateConfig} persistConfig={persistGlobalDraft} readDraft={getDraft} onDraftChange={setLayoutDraftDirty} onSavingChange={setLayoutSaving} />
             )}
 
             {activeTab === "appearance" && config && (

@@ -32,6 +32,35 @@ export interface WindowPositionPreset {
   y: number;
 }
 
+/** Desktop geometry uses physical pixels; slots are relative to a work area. */
+export interface LayoutRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface LayoutMonitor {
+  id: string;
+  name: string;
+  bounds: LayoutRect;
+  work_area: LayoutRect;
+  primary: boolean;
+  scale_factor: number;
+}
+
+export interface LayoutSlot extends LayoutRect {
+  monitor_id: string;
+}
+
+export interface WindowLayout {
+  id: string;
+  name: string;
+  monitors: LayoutMonitor[];
+  /** 1-based launch order is the array index + 1. Overlap is allowed. */
+  windows: LayoutSlot[];
+}
+
 export interface GlobalConfig {
   version: number;
   cn_battle_net_path: string;
@@ -90,6 +119,9 @@ export interface GlobalConfig {
   agent_threshold?: number;
   launch_groups: LaunchGroup[];
   favorite_launch_group_ids?: string[];
+  window_layout_enabled?: boolean;
+  active_window_layout_id?: string | null;
+  window_layouts?: WindowLayout[];
 }
 
 // ── 可选能力运行状态 ──

@@ -16,6 +16,8 @@ import {
 import { AnchoredPanel } from "../ui/AnchoredPanel";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { ResolutionInput } from "../ui/ResolutionInput";
+import { CaptureWindowPositionButton } from "../../features/windowLayouts/CaptureWindowPositionButton";
 
 import type {
   AccountMeta,
@@ -413,10 +415,6 @@ export function AccountGridItem({
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──
-  const resOptions = ["1280x720","1600x900","1920x1080","2560x1440","3840x2160"];
-  const effectiveResOptions = resOptions.includes(effectiveResolution)
-    ? resOptions
-    : [effectiveResolution, ...resOptions];
   const fpsOptions = [0, 30, 60, 120, 144, 240];
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   // “重置”按钮同时是未完成账号的补全入口：待完成 Token 账号在这里补 Token，
@@ -452,17 +450,14 @@ export function AccountGridItem({
               <div className="drawer-resolution-fps-row">
                 <div className="drawer-field">
                   <label className="micro-meta mb-1.5 block">分辨率</label>
-                  <select
-                    aria-label={`${display} ${english ? "resolution" : "分辨率"}`}
+                  <ResolutionInput
+                    label={`${display} ${english ? "resolution" : "分辨率"}`}
                     value={effectiveResolution}
-                    onChange={e => selectDrawerSetting("resolution", e.target.value)}
-                    onBlur={() => void flushDrawerSettings().catch(() => undefined)}
+                    onChange={value => selectDrawerSetting("resolution", value)}
+                    onCommit={() => void flushDrawerSettings().catch(() => undefined)}
                     onClick={stop}
                     disabled={drawerLoading}
-                    className="line-select w-full px-2.5"
-                  >
-                    {effectiveResOptions.map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
+                  />
                 </div>
 
                 <div className="drawer-field">
@@ -490,6 +485,11 @@ export function AccountGridItem({
               <div className={isSelectionMode ? "scheme-position-field" : undefined}>
                 <label className="micro-meta mb-1.5 block">位置</label>
                 <div className="position-preset-row" role="group" aria-label={`${display} 窗口位置`}>
+                  <CaptureWindowPositionButton accountId={account.id} activate={!isSelectionMode} english={english}
+                    onCaptured={captured => {
+                      const preset = captured.position_presets?.[captured.position_presets.length - 1];
+                      if (isSelectionMode && preset) onSchemeMemberChange?.(account.id, { position_preset_id: preset.id, position_configured: true });
+                    }} />
                   <button
                     type="button"
                     className={`hig-badge mod-chip position-chip ${selectedPositionId === null ? "mod-chip-active" : ""}`}

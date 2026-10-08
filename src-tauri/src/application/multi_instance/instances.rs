@@ -21,6 +21,7 @@ struct InstanceEntry {
     account_id: String,
     active_pid: Option<u32>,
     launch: Option<LaunchSnapshot>,
+    initial_geometry_superseded: bool,
 }
 
 #[derive(Default)]
@@ -120,6 +121,7 @@ impl InstanceRegistry {
                     pid,
                     mod_args: mod_args.to_string(),
                 }),
+                initial_geometry_superseded: false,
             },
         );
         state.revision = state.revision.wrapping_add(1);
@@ -139,12 +141,16 @@ impl InstanceRegistry {
             .get(&key)
             .and_then(|entry| entry.launch.clone())
             .filter(|launch| launch.pid == pid);
+        let initial_geometry_superseded = state.entries.get(&key).is_some_and(|entry| {
+            entry.active_pid == Some(pid) && entry.initial_geometry_superseded
+        });
         state.entries.insert(
             key,
             InstanceEntry {
                 account_id: account_id.to_string(),
                 active_pid: Some(pid),
                 launch,
+                initial_geometry_superseded,
             },
         );
         state.revision = state.revision.wrapping_add(1);
@@ -160,6 +166,7 @@ impl InstanceRegistry {
             account_id: account_id.to_string(),
             active_pid: None,
             launch: None,
+            initial_geometry_superseded: false,
         });
         entry.account_id = account_id.to_string();
         entry.launch = Some(LaunchSnapshot {
@@ -218,17 +225,60 @@ impl InstanceRegistry {
                 .get(&key)
                 .and_then(|entry| entry.launch.clone())
                 .filter(|launch| launch.pid == pid);
+            let initial_geometry_superseded = previous.get(&key).is_some_and(|entry| {
+                entry.active_pid == Some(pid) && entry.initial_geometry_superseded
+            });
             state.entries.insert(
                 key,
                 InstanceEntry {
                     account_id,
                     active_pid: Some(pid),
                     launch,
+                    initial_geometry_superseded,
                 },
             );
         }
         state.revision = state.revision.wrapping_add(1);
         Some(running_instances(&state.entries))
+    }
+
+    /// Serialize native position posts for one process with newer user intent.
+    /// A late startup retry cannot undo a restore that already posted its move.
+    pub fn apply_initial_window_geometry<R>(
+        &self,
+        account_id: &str,
+        pid: u32,
+        apply: impl FnOnce() -> R,
+    ) -> Option<R> {
+        let state = self.state.write();
+        let entry = state.entries.get(&account_key(account_id))?;
+        if entry.active_pid != Some(pid) || entry.initial_geometry_superseded {
+            return None;
+        }
+        Some(apply())
+    }
+
+    pub fn override_window_geometry<R>(
+        &self,
+        account_id: &str,
+        pid: u32,
+        apply: impl FnOnce() -> R,
+    ) -> Option<R> {
+        let mut state = self.state.write();
+        let entry = state.entries.get_mut(&account_key(account_id))?;
+        if entry.active_pid != Some(pid) {
+            return None;
+        }
+        entry.initial_geometry_superseded = true;
+        Some(apply())
+    }
+
+    pub fn initial_window_geometry_superseded(&self, account_id: &str, pid: u32) -> bool {
+        self.state
+            .read()
+            .entries
+            .get(&account_key(account_id))
+            .is_some_and(|entry| entry.active_pid == Some(pid) && entry.initial_geometry_superseded)
     }
 }
 
@@ -265,6 +315,39 @@ fn running_instances(entries: &HashMap<String, InstanceEntry>) -> Vec<RunningIns
 #[cfg(test)]
 mod tests {
     use super::InstanceRegistry;
+
+    #[test]
+    fn explicit_geometry_survives_scans_and_supersedes_startup_retries() {
+        let registry = InstanceRegistry::default();
+        registry.record_launched("account", 42, "");
+        assert_eq!(
+            registry.apply_initial_window_geometry("account", 42, || "initial"),
+            Some("initial")
+        );
+        assert_eq!(
+            registry.override_window_geometry("account", 42, || "restored"),
+            Some("restored")
+        );
+        registry.record_discovered("account", 42);
+        let scan = registry.snapshot();
+        registry
+            .reconcile_if_unchanged(&scan, [("account".into(), 42)])
+            .unwrap();
+        assert!(registry.initial_window_geometry_superseded("account", 42));
+        assert_eq!(
+            registry.apply_initial_window_geometry("account", 42, || "obsolete"),
+            None
+        );
+        registry.record_launched("account", 43, "");
+        assert_eq!(
+            registry.apply_initial_window_geometry("account", 43, || "next launch"),
+            Some("next launch")
+        );
+        assert_eq!(
+            registry.apply_initial_window_geometry("account", 42, || "wrong pid"),
+            None
+        );
+    }
 
     #[test]
     fn launched_instance_records_pid_and_arguments_atomically() {

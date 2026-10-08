@@ -1,8 +1,9 @@
-import React, { useMemo } from "react";
+import React from "react";
 import { Monitor, Volume2, Gamepad2, Map, Image } from "lucide-react";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import { FRAMERATE_CAP_KEY } from "../../../utils/gameSettings";
+import { ResolutionInput } from "../../../components/ui/ResolutionInput";
 type Tab = "display" | "graphics" | "audio" | "gameplay" | "automap";
 type FieldType = "toggle" | "select" | "range" | "number" | "resolution";
 type GraphicsQualityPreset = "low" | "medium" | "high";
@@ -353,28 +354,6 @@ function matchesGraphicsQualityPreset(settings: SettingsMap, preset: GraphicsQua
   );
 }
 
-const baseResolutionOptions = [
-  "1280x720",
-  "1280x768",
-  "1280x800",
-  "1360x768",
-  "1366x768",
-  "1280x960",
-  "1444x900",
-  "1600x900",
-  "1440x1080",
-  "1600x1024",
-  "1680x1050",
-  "1600x1200",
-  "1920x1080",
-  "1920x1200",
-  "1920x1440",
-  "2560x1440",
-  "2560x1600",
-  "3440x1440",
-  "3840x2160",
-];
-
 function numberValue(settings: SettingsMap, key: string, fallback: number): number {
   const value = Number(settings[key] ?? fallback);
   return Number.isFinite(value) ? value : fallback;
@@ -382,32 +361,6 @@ function numberValue(settings: SettingsMap, key: string, fallback: number): numb
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
-}
-
-function parseResolution(value: string) {
-  const match = value.trim().match(/^(\d{3,5})x(\d{3,5})$/i);
-  if (!match) return null;
-  return { width: Number(match[1]), height: Number(match[2]) };
-}
-
-function getResolutionOptions() {
-  const screenWidth = typeof window === "undefined" ? 2560 : Math.max(window.screen.width, window.screen.height);
-  const screenHeight = typeof window === "undefined" ? 1440 : Math.min(window.screen.width, window.screen.height);
-  const options = baseResolutionOptions.filter((item) => {
-    const parsed = parseResolution(item);
-    return parsed && parsed.width <= screenWidth && parsed.height <= screenHeight;
-  });
-  return options.length > 0 ? options : [baseResolutionOptions[0]];
-}
-
-function normalizeResolution(value: string, options: string[]) {
-  const parsed = parseResolution(value);
-  if (!parsed) return options[0];
-  const first = parseResolution(options[0]) ?? { width: 1280, height: 720 };
-  const last = parseResolution(options[options.length - 1]) ?? first;
-  const width = clamp(parsed.width, first.width, last.width);
-  const height = clamp(parsed.height, first.height, last.height);
-  return `${Math.round(width)}x${Math.round(height)}`;
 }
 
 export function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -523,27 +476,6 @@ function NumberInput({
       className="h-8 w-28 rounded-input bg-surface-card px-2.5 text-right text-xs text-text-primary focus:border-accent focus:outline-none"
       style={{ border: "1px solid var(--border-default)" }}
     />
-  );
-}
-
-function ResolutionInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const options = useMemo(() => getResolutionOptions(), []);
-  const listId = "settings-editor-resolution-options";
-  return (
-    <div className="combo-input w-40">
-      <input
-        value={value}
-        list={listId}
-        placeholder="1280x720"
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={(e) => onChange(normalizeResolution(e.target.value, options))}
-      />
-      <datalist id={listId}>
-        {options.map((option) => (
-          <option key={option} value={option} />
-        ))}
-      </datalist>
-    </div>
   );
 }
 

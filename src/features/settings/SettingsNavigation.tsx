@@ -25,7 +25,7 @@ interface SettingsNavigationProps {
 }
 
 const NAVIGATION_ORDER: readonly SettingsTabId[] = [
-  "accounts", "paths", "mod-processing",
+  "accounts", "paths", "window-layouts", "mod-processing",
   "module-management", "overlays", "automation", "room-automation", "pet",
   "appearance", "shortcuts", "agent", "tasks", "advanced",
 ];
