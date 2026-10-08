@@ -2978,12 +2978,10 @@ impl GlobalConfig {
 
     /// 确保必要的目录存在
     pub fn ensure_dirs(&self) -> Result<(), AppError> {
-        for dir in [&self.accounts_dir] {
-            if !dir.is_empty() {
-                std::fs::create_dir_all(dir).map_err(|e| {
-                    AppError::ConfigWriteError(format!("无法创建目录 {}: {}", dir, e))
-                })?;
-            }
+        if !self.accounts_dir.is_empty() {
+            std::fs::create_dir_all(&self.accounts_dir).map_err(|e| {
+                AppError::ConfigWriteError(format!("无法创建目录 {}: {}", self.accounts_dir, e))
+            })?;
         }
         Ok(())
     }
