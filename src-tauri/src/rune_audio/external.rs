@@ -167,7 +167,10 @@ fn read_process_output(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "无法读取游戏进程信息，请检查系统 PowerShell / WMI 服务".to_string())?;
-    let mut stdout = child.stdout.take().expect("process metadata stdout is piped");
+    let mut stdout = child
+        .stdout
+        .take()
+        .expect("process metadata stdout is piped");
     // Drain while the child runs: a full pipe must not prevent its exit.
     // The scope also joins the reader after timeout termination and reaping.
     std::thread::scope(|scope| {
