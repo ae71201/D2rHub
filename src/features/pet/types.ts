@@ -1,5 +1,5 @@
 export type PetFrame = "up" | "left" | "right";
-export type PetSlot = "head" | "face" | "neck" | "body" | "hands" | "companion";
+export type PetSlot = "head" | "face" | "neck" | "body" | "hands" | "wings" | "aura" | "companion";
 export type PetTone = "mixed" | "gentle" | "snarky";
 export interface PetItem {
   id: string; name: string; en: string; slot: PetSlot; tags: string[];

@@ -22,7 +22,7 @@ const paws = {
 } as const;
 
 export function PetHandAccessory({ id, frame }: {
-  id: "assassin-wraps" | "smith-mitts" | "alchemist-cuffs" | "winter-cuffs" | "rhythm-wraps";
+  id: "assassin-wraps" | "smith-mitts" | "alchemist-cuffs" | "winter-cuffs" | "rhythm-wraps" | "gardener-cuffs" | "sailor-cuffs" | "spark-cuffs";
   frame: PetFrame;
 }) {
   const instance = useId().replace(/:/g, "");
@@ -30,8 +30,11 @@ export function PetHandAccessory({ id, frame }: {
   const wraps = id === "assassin-wraps";
   const winter = id === "winter-cuffs";
   const rhythm = id === "rhythm-wraps";
-  const color = mitts ? "#a47d5d" : wraps ? "#817490" : winter ? "#8aadc0" : rhythm ? "#bd7b88" : "#78998f";
-  const trim = mitts ? "#dfc095" : wraps ? "#d9c8dd" : winter ? "#fff2dc" : rhythm ? "#ecd69c" : "#c3d1af";
+  const gardener = id === "gardener-cuffs";
+  const sailor = id === "sailor-cuffs";
+  const spark = id === "spark-cuffs";
+  const color = mitts ? "#a47d5d" : wraps ? "#817490" : winter ? "#8aadc0" : rhythm ? "#bd7b88" : gardener ? "#90a780" : sailor ? "#739ab4" : spark ? "#9586b2" : "#78998f";
+  const trim = mitts ? "#dfc095" : wraps ? "#d9c8dd" : winter ? "#fff2dc" : rhythm ? "#ecd69c" : gardener ? "#dfdeb4" : sailor ? "#eee0bd" : spark ? "#ecd5a0" : "#c3d1af";
   return <g>{paws[frame].map(({ shape, x, y }, index) => {
     const clip = `${instance}-paw-${index}`;
     const [cx, cy, angle, width] = shape.wrist;
@@ -46,6 +49,9 @@ export function PetHandAccessory({ id, frame }: {
             fill="none" stroke={trim} strokeWidth="1.5" />
           {winter ? <path d={`M${-width / 2} -2 Q0 1 ${width / 2} -2`} fill="none" stroke={trim} strokeWidth="5" strokeDasharray="1 2" />
             : rhythm ? <g fill={trim} stroke={trim} strokeWidth="1.5"><path d="M1 3 V-3 L5 -4" fill="none" /><ellipse cx="-1" cy="4" rx="2.5" ry="1.5" /></g>
+            : gardener ? <path d="M0 5 V-3 M0 1 Q-8 1 -6 -4 Q-1 -4 0 1 M0 0 Q6 -5 7 -1 Q5 3 0 0" fill={trim} stroke={trim} strokeWidth="1" />
+            : sailor ? <g fill="none" stroke={trim} strokeWidth="1.5"><ellipse cx="-2" cy="1" rx="4" ry="2" /><ellipse cx="3" cy="1" rx="4" ry="2" /><path d="M-6 1 H-10 M7 1 H11" /></g>
+            : spark ? <path d="M0 -5 L2 -1 L6 1 L2 3 L0 7 L-2 3 L-6 1 L-2 -1Z" fill={trim} strokeWidth="1" />
             : wraps ? <path d="M-9 -4 L-3 6 M0 -3 L6 6 M9 -4 L14 5" fill="none" stroke={trim} strokeWidth="1.5" />
             : mitts ? <rect x="-4" y="-3" width="8" height="7" rx="1.5" fill="#deb771" strokeWidth="1.5" />
               : <path d="M0 -4 L4 1 L0 6 L-4 1Z" fill="#bcd7df" strokeWidth="1.5" />}

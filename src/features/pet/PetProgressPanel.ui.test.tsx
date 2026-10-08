@@ -4,11 +4,13 @@ import { PetPanel } from "../settings/panels/PetPanel";
 import { PetProgressPanel } from "./PetProgressPanel";
 import { achievementProgress } from "./progress";
 import { PET_ITEM_BY_ID, PET_ITEMS } from "./catalog";
-import { CHATTER_LINES } from "./chatterData";
+import { CHATTER_LINES, PET_EVENT_LINES } from "./chatterData";
 import { PetAccessory } from "./PetAccessory";
+import { PetAvatar } from "./PetAvatar";
+import { PetWardrobePanel } from "./PetWardrobePanel";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { GlobalConfig } from "../../store/types";
-import type { PetWardrobe } from "./types";
+import type { PetOutfit, PetWardrobe } from "./types";
 
 const state = vi.hoisted(() => ({
   refresh: vi.fn(async () => {}),
@@ -38,12 +40,49 @@ describe("pet achievement journal", () => {
         expect(CHATTER_LINES.some(line => line.topic === topic && line.tone === tone && line.zh && line.en), `${topic}/${tone}`).toBe(true);
       }
     }
+    expect(new Set(CHATTER_LINES.map(line => line.id)).size).toBe(CHATTER_LINES.length);
+    expect(new Set(CHATTER_LINES.map(line => line.zh)).size).toBe(CHATTER_LINES.length);
+    expect(new Set(CHATTER_LINES.map(line => line.en)).size).toBe(CHATTER_LINES.length);
+    for (const lines of Object.values(PET_EVENT_LINES)) {
+      expect(lines.every(([zh, en]) => zh.trim() && en.trim())).toBe(true);
+    }
+  });
+
+  it("layers auras and wings behind capes and the cat in every pose", () => {
+    const equipped: PetOutfit = { aura: "rainbow-aura", wings: "butterfly-wings", body: "leaf-cape", head: "herbal-wreath" };
+    for (const frame of ["up", "left", "right"] as const) {
+      const { container, unmount } = render(<PetAvatar frame={frame} equipped={equipped} />);
+      const layers = container.querySelector("svg > g")!.children;
+      expect(Array.from(layers).slice(0, 3).map(layer => layer.getAttribute("data-pet-slot"))).toEqual(["aura", "wings", "body"]);
+      expect(layers[3].tagName.toLowerCase()).toBe("image");
+      expect(layers[4].querySelector("path")).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it.each([false, true])("offers independent wing and aura previews in both languages (English: %s)", english => {
+    render(<PetWardrobePanel english={english} />);
+    fireEvent.click(screen.getByRole("button", { name: english ? "Wings" : "翅膀" }));
+    const wings = PET_ITEMS.filter(item => item.slot === "wings");
+    expect(screen.getAllByRole("article")).toHaveLength(wings.length);
+    fireEvent.click(screen.getByRole("button", { name: `${english ? "Preview" : "试穿"} ${english ? wings[0].en : wings[0].name}` }));
+    expect(screen.getByText(english ? "Preview · not equipped" : "试穿预览 · 尚未装备")).toBeTruthy();
+    expect(screen.getAllByRole("img")[0].querySelector('[data-pet-slot="wings"]')).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: english ? "Left" : "左手" }));
+    expect(screen.getAllByRole("img")[0].querySelector("image")!.getAttribute("href")).toBe("/bongo-cat-left.svg");
+    fireEvent.click(screen.getByRole("button", { name: english ? "Aura" : "光环" }));
+    const auras = PET_ITEMS.filter(item => item.slot === "aura");
+    expect(screen.getAllByRole("article")).toHaveLength(auras.length);
+    expect(screen.queryByText(english ? "Preview · not equipped" : "试穿预览 · 尚未装备")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: `${english ? "Preview" : "试穿"} ${english ? auras[0].en : auras[0].name}` }));
+    expect(screen.getAllByRole("img")[0].querySelector('[data-pet-slot="aura"]')).toBeTruthy();
+    expect(state.value.snapshot.wardrobe.equipped).toEqual({});
   });
   it("shows persistent totals, non-consecutive milestones and automatic rewards", () => {
     render(<PetProgressPanel />);
     expect(screen.getByText("12,345")).toBeTruthy();
     expect(screen.getByText("1 小时 1 分钟")).toBeTruthy();
-    expect(screen.getByText("4 / 43")).toBeTruthy();
+    expect(screen.getByText(`4 / ${PET_ITEMS.length}`)).toBeTruthy();
     expect(screen.getByText("键鼠敲击 10,000 / 10,000 次")).toBeTruthy();
     expect(screen.getByText("陪伴 3 / 30 天（无需连续）")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "已达成" }));

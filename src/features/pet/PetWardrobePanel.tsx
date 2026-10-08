@@ -36,6 +36,7 @@ export function PetWardrobePanel({ english = false }: { english?: boolean }) {
         </div>
       </div>
       <div className="flex flex-wrap gap-1" aria-label={text("装扮部位", "Slots")}>{PET_SLOTS.map(s => <button key={s.id} className={`${button} ${slot === s.id ? "text-accent border-accent" : ""}`} aria-pressed={slot === s.id} onClick={() => { setSlot(s.id); setPreview(null); }}>{english ? s.en : s.name}</button>)}</div>
+      <p className="text-2xs text-text-muted">{text("翅膀和光环有独立槽位，可与披风及其他装扮一起搭配。", "Wings and auras have their own slots and can be worn with capes and other accessories.")}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{PET_ITEMS.filter(item => item.slot === slot).map(item => {
         const owned = w.owned.includes(item.id);
         const equipped = w.equipped[slot] === item.id;
@@ -55,7 +56,7 @@ export function PetWardrobePanel({ english = false }: { english?: boolean }) {
       </div>
       <div className="flex flex-wrap gap-2">{[0, 1, 2].map(index => <div className="flex items-center gap-1" key={index}><span className="text-xs">{text("搭配", "Outfit")} {index + 1}</span><button className={button} disabled={busy} onClick={() => void act({ kind: "save_preset", index })}>{text("保存", "Save")}</button><button className={button} disabled={busy} onClick={() => void act({ kind: "load_preset", index })}>{text("穿上", "Wear")}</button></div>)}</div>
       <label className="flex items-center justify-between text-xs">{text("吐槽语气", "Chatter tone")}<select className="rounded-md bg-surface-hover border border-border-default p-1" value={w.tone} disabled={busy} onChange={event => void act({ kind: "tone", tone: event.target.value as PetTone })}><option value="mixed">{text("轻松混合", "Mixed")}</option><option value="gentle">{text("温和陪伴", "Gentle")}</option><option value="snarky">{text("俏皮吐槽", "Snarky")}</option></select></label>
-      <p className="text-2xs text-text-muted">{text("话题会结合当前装扮的职业、符文和场景；语气单独选择。所有装扮仅用于桌宠，不代表游戏内掉落。", "Topics follow equipped class, rune and scene tags; tone is independent. All accessories are for the desktop pet, not in-game loot.")}</p>
+      <p className="text-2xs text-text-muted">{text("话题会结合当前装扮的职业、符文、翅膀、光环和场景；语气单独选择。所有装扮仅用于桌宠，不代表游戏内掉落。", "Topics follow equipped class, rune, wing, aura and scene tags; tone is independent. All accessories are for the desktop pet, not in-game loot.")}</p>
     </>}
   </section>;
 }

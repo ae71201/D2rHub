@@ -1,3 +1,5 @@
+import { CHATTER_EXPANSION } from "./chatterExpansion";
+
 /** Editorial data: topic × tone, independent of ownership, rarity or whole skins.
  * Lines are fictional chatter, never simulated telemetry or unlock receipts.
  * Add topics here and attach matching tags to catalog items; no renderer edits.
@@ -62,7 +64,7 @@ const topics: Record<string, Topic> = {
     ["这条围巾很暖，适合守着你发呆。", "This scarf is warm enough for a quiet day beside you."],
   ], snarky: [
     ["铃铛不是警报，是猫粮余额提醒。", "That's no alarm. It's a low-cat-food notification."],
-    ["全身六个槽位，居然没有罐头位。", "Six outfit slots and none for canned food."],
+    ["衣柜这么多槽位，居然没有罐头位。", "All these outfit slots and none for canned food."],
     ["这双爪子不加攻速，但加可爱。", "These paws grant no attack speed, just cuteness."],
     ["今日最佳队友：没有踩到键盘的我。", "Best teammate today: me, for staying off the keyboard."],
   ] },
@@ -330,8 +332,9 @@ const topics: Record<string, Topic> = {
     ["乔贝都想要，先别把中间那枚小符文给忘了。", "Dreaming of Jah and Ber? Don't forget the little rune between them."],
   ] },
 };
-export const CHATTER_LINES: readonly ChatterLine[] = Object.entries(topics).flatMap(([topic, pool]) =>
-  (["gentle", "snarky"] as const).flatMap(tone => pool[tone].map(([zh, en], index) => ({ id: `${topic}.${tone}.${index}`, topic, tone, zh, en }))));
+export const CHATTER_LINES: readonly ChatterLine[] = Array.from(new Set([...Object.keys(topics), ...Object.keys(CHATTER_EXPANSION)])).flatMap(topic =>
+  (["gentle", "snarky"] as const).flatMap(tone => [...(topics[topic]?.[tone] ?? []), ...(CHATTER_EXPANSION[topic]?.[tone] ?? [])]
+    .map(([zh, en], index) => ({ id: `${topic}.${tone}.${index}`, topic, tone, zh, en }))));
 
 /** Real lifecycle notices use their own event pool, never an item-quality roll. */
 export const PET_EVENT_LINES = {
@@ -339,10 +342,16 @@ export const PET_EVENT_LINES = {
     ["启动成功，旅途顺利！", "Launch complete. Have a good journey!"],
     ["启动完成，猫咪已经准备好陪你出发。", "Launch complete. Your companion is ready."],
     ["出发准备完成，记得带上好心情。", "Ready to set out. Bring a good mood along."],
+    ["启动完成，猫咪给这一程敲个开场拍。", "Launch complete. A little opening beat for this journey."],
+    ["已经顺利启动，桌边的小伙伴继续陪你。", "Launch complete. Your little desk companion is here."],
+    ["启动成功，慢慢享受接下来的旅途。", "Launch succeeded. Enjoy the journey at your own pace."],
   ],
   launchFailure: [
     ["启动未完成，任务状态里有具体原因。", "Launch failed. The task status has details."],
     ["这次没能顺利启动，先看看任务提示。", "This launch didn't finish. Check the task details."],
     ["启动遇到问题，猫咪陪你一起看任务状态。", "A launch issue came up. Let's check the task status."],
+    ["这次启动没有完成，具体提示在任务状态里。", "This launch didn't complete. The task status has the details."],
+    ["启动暂未成功，先根据任务提示看看原因。", "Launch hasn't succeeded. Check the task details for the reason."],
+    ["启动遇到阻碍了，任务状态能帮助找到下一步。", "The launch hit a problem. The task status can help with the next step."],
   ],
 } satisfies Record<string, Pair[]>;

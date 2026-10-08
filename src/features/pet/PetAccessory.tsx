@@ -2,6 +2,8 @@ import type { PetFrame } from "./types";
 import { PetHandAccessory } from "./PetHandAccessory";
 import { PetAdventureAccessory } from "./PetAdventureAccessory";
 import { PetCirclet } from "./PetCirclet";
+import { PetAtmosphereAccessory } from "./PetAtmosphereAccessory";
+import { PetEverydayAccessory } from "./PetEverydayAccessory";
 import { PET_FRAME_GEOMETRY } from "./petGeometry";
 
 /** Accessories share native SVG units on the normalized 208 × 135 canvas. */
@@ -11,6 +13,13 @@ export function PetAccessory({ id, frame }: { id: string; frame: PetFrame }) {
   const [eyeLeftX, eyeLeftY, eyeRightX, eyeRightY] = PET_FRAME_GEOMETRY[frame].eyes;
   if (id === "circlet") return <PetCirclet frame={frame} />;
   switch (id) {
+    case "feather-wings": case "bat-wings": case "butterfly-wings": case "frost-wings": case "clockwork-wings": case "constellation-wings":
+    case "dawn-aura": case "moon-aura": case "leaf-aura": case "arcane-aura": case "ember-aura": case "rainbow-aura":
+      return <PetAtmosphereAccessory id={id} frame={frame} />;
+    case "mushroom-cap": case "aviator-cap": case "lotus-tiara": case "cat-eye-glasses": case "snowflake-glasses": case "star-paint":
+    case "lavender-scarf": case "moon-pendant": case "gear-pendant": case "rain-cape": case "scholar-cape": case "patchwork-cape":
+    case "tiny-lantern": case "yarn-ball": case "seedling-pot":
+      return <PetEverydayAccessory id={id} frame={frame} />;
     case "moon-hat": return <g transform={head}><path d="M79 46 Q96 24 115 8 Q112 28 140 48Z" fill="#756595" /><path d="M73 47 Q107 59 146 47 L149 54 Q110 66 72 54Z" fill="#9786b1" /><path d="M108 24 Q99 35 113 36 Q101 42 98 32 Q99 25 108 24Z" fill="#f2d58a" stroke="none" /></g>;
     case "herbal-wreath": return <g transform={head}><path d="M75 49 Q108 61 143 48" fill="none" stroke="#7c9c73" strokeWidth="5" />{[82, 105, 131].map((x, i) => <g key={x} transform={`translate(${x} ${i === 1 ? 54 : 49})`}><path d="M-3 0 Q-16 -14 -17 -4 Q-13 4 -3 0 M3 0 Q14 -15 17 -5 Q14 4 3 0" fill="#9ebd85" /><path d="M0 -7 Q8 -9 7 -1 Q12 6 3 7 Q-3 12 -6 5 Q-13 0 -6 -4 Q-5 -11 0 -7Z" fill="#ead0bf" /><circle r="2.5" fill="#d4ab63" stroke="none" /></g>)}</g>;
     case "explorer-goggles": return <g><path d={`M${eyeLeftX - 13} ${eyeLeftY} l-7 -3 M${eyeLeftX + 13} ${eyeLeftY} L${eyeRightX - 13} ${eyeRightY} M${eyeRightX + 13} ${eyeRightY} l7 -2`} fill="none" stroke="#96704c" strokeWidth="4" />{[[eyeLeftX, eyeLeftY], [eyeRightX, eyeRightY]].map(([x, y]) => <g key={x}><rect x={x - 13} y={y - 10} width="26" height="20" rx="7" fill="#e9bd76" fillOpacity="0.35" stroke="#997c53" strokeWidth="3" /><path d={`M${x - 7} ${y - 5} l5 -2`} stroke="#fff0d2" /></g>)}</g>;
@@ -20,6 +29,7 @@ export function PetAccessory({ id, frame }: { id: string; frame: PetFrame }) {
     case "leaf-cape": return <g transform={head}><path d="M60 64 Q106 45 151 62 Q160 89 195 110 Q166 122 146 99 L111 90 L76 96 Q53 117 23 109 Q47 88 60 64Z" fill="#81a580" /><path d="M56 76 L32 106 M45 90 L48 104 M45 90 L33 94 M151 76 L184 108 M167 93 L181 95 M167 93 L165 107" fill="none" stroke="#c8d2a1" /></g>;
     case "aurora-cape": return <g transform={head}><path d="M60 64 Q108 44 151 62 L197 112 Q167 119 148 99 L114 90 L76 95 Q53 115 22 109 L46 76Z" fill="#536b88" /><path d="M26 105 Q45 107 64 81 M151 79 Q174 115 192 108" fill="none" stroke="#8bc4b7" strokeWidth="6" /><path d="M33 103 Q48 99 57 83 M154 91 Q173 115 184 110" fill="none" stroke="#b4a6d2" strokeWidth="3" /><path d="M177 91 l0 8 M173 95 l8 0" stroke="#efe3b9" /></g>;
     case "smith-mitts": case "alchemist-cuffs": case "assassin-wraps": case "winter-cuffs": case "rhythm-wraps":
+    case "gardener-cuffs": case "sailor-cuffs": case "spark-cuffs":
       return <PetHandAccessory id={id} frame={frame} />;
     case "potion-bottle": return <g transform={pulse}><path d="M186 61 L197 61 L197 71 Q205 76 203 88 Q192 96 180 88 Q177 77 186 71Z" fill="#d7e3dd" /><path d="M183 79 Q191 82 201 78 L200 86 Q192 91 184 86Z" fill="#80adc4" stroke="none" /><rect x="185" y="57" width="13" height="7" rx="2" fill="#ba936c" /><path d="M184 74 L182 79 M188 83 L188 85" stroke="#fff4d8" /></g>;
     case "tea-cup": return <g transform={pulse}><path d="M199 73 Q210 71 205 82 L199 85" fill="none" stroke="#b68a70" strokeWidth="3" /><path d="M179 73 L201 73 L198 90 Q190 96 182 90Z" fill="#dfb899" /><ellipse cx="190" cy="73" rx="11" ry="4" fill="#795b4b" /><path d="M185 65 Q181 61 185 57 M195 65 Q191 61 195 57" fill="none" stroke="#b7c3bb" /><path d="M187 82 Q190 78 193 82 Q193 85 190 87 Q187 85 187 82Z" fill="#f1dfbb" stroke="none" /></g>;

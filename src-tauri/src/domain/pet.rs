@@ -328,4 +328,73 @@ mod tests {
         assert!(rewards.iter().any(|r| r.id == "heart-locket"));
         assert!(rewards.iter().any(|r| r.id == "music-sprite"));
     }
+
+    #[test]
+    fn wings_and_auras_coexist_with_capes_and_survive_presets_and_reload() {
+        let mut w = Wardrobe::from_legacy("mage", &[]);
+        w.fragments = 100;
+        for id in ["feather-wings", "moon-aura", "paladin-cape"] {
+            w.apply(Action::Redeem { id: id.into() }).unwrap();
+            w.apply(Action::Equip { id: id.into() }).unwrap();
+        }
+        w.apply(Action::SavePreset { index: 0 }).unwrap();
+        let mut restored: Wardrobe =
+            serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert_eq!(restored.equipped.get("head").unwrap(), "circlet");
+        assert_eq!(restored.equipped.get("body").unwrap(), "paladin-cape");
+        assert_eq!(restored.equipped.get("wings").unwrap(), "feather-wings");
+        assert_eq!(restored.equipped.get("aura").unwrap(), "moon-aura");
+        for slot in ["wings", "aura"] {
+            restored
+                .apply(Action::Unequip { slot: slot.into() })
+                .unwrap();
+        }
+        assert_eq!(restored.equipped.len(), 2);
+        restored.apply(Action::LoadPreset { index: 0 }).unwrap();
+        assert_eq!(restored.equipped, w.equipped);
+        assert_eq!(restored.fragments, 52);
+    }
+
+    #[test]
+    fn new_random_accessories_are_in_the_weighted_pool_and_duplicates_grant_fragments() {
+        for id in ["feather-wings", "moon-aura", "mushroom-cap", "spark-cuffs"] {
+            let offset: u32 = catalog()
+                .iter()
+                .take_while(|item| item.id != id)
+                .map(|item| item.weight)
+                .sum();
+            let mut w = Wardrobe::from_legacy("default", &[]);
+            for duplicate in [false, true] {
+                let mut choices = [0, offset].into_iter();
+                let rewards = w.advance(600, "2026-10-08", |_| choices.next().unwrap());
+                assert_eq!(rewards.len(), 1);
+                assert_eq!(rewards[0].id, id);
+                assert_eq!(rewards[0].duplicate, duplicate);
+            }
+            assert_eq!(w.fragments, 4);
+        }
+    }
+
+    #[test]
+    fn new_wing_and_aura_milestones_use_existing_progress_and_only_grant_once() {
+        let mut w = Wardrobe::from_legacy("default", &[]);
+        w.seconds = 720000;
+        w.days = 60;
+        let rewards = w.unlock_achievements();
+        for id in ["constellation-wings", "rainbow-aura"] {
+            let reward = rewards.iter().find(|reward| reward.id == id).unwrap();
+            assert!(reward.achievement);
+            assert_eq!(reward.bonus_fragments, 24);
+        }
+        let before = w.fragments;
+        let mut restored: Wardrobe =
+            serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert!(restored.unlock_achievements().is_empty());
+        assert_eq!(restored.fragments, before);
+        assert!(restored
+            .apply(Action::Redeem {
+                id: "rainbow-aura".into()
+            })
+            .is_err());
+    }
 }
