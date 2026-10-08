@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HubModSettings, type HubSettings } from "./HubModSettings";
 
@@ -13,7 +13,7 @@ describe("Hub product settings", () => {
     render(<HubModSettings edition="CN" modName="MyLiteAudio" en={false} disabled={false} />);
     const input = await screen.findByRole("textbox", { name: "游戏数据版本" });
     expect(screen.getByRole("heading", { name: "第四幕快捷传送" })).toBeTruthy();
-    expect(invoke).toHaveBeenCalledWith("get_mod_waypoints", { edition: "CN", modName: "MyLiteAudio" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_mod_waypoints", { edition: "CN", modName: "MyLiteAudio" }));
     fireEvent.change(input, { target: { value: "93855" } });
     invoke.mockResolvedValueOnce({ ...config(), game_data_version: "93855", etag: "after" });
     fireEvent.click(screen.getByRole("button", { name: "保存数据版本" }));
