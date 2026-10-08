@@ -344,7 +344,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (startupServicesBlocked || !optionalFeaturesAvailable || !config?.rune_audio_enabled) {
+    if (startupServicesBlocked || !optionalFeaturesAvailable || !config?.rune_audio_enabled || config.rune_audio_external_target) {
       setAudioModUpdate(null);
       return;
     }
@@ -365,7 +365,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [startupServicesBlocked, optionalFeaturesAvailable, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
+  }, [startupServicesBlocked, optionalFeaturesAvailable, config?.rune_audio_enabled, config?.rune_audio_target_account, config?.rune_audio_external_target, accounts, showSettings]);
 
   const handleReconfigure = () => {
     setView({ type: "setup", existingConfig: config ?? undefined });
@@ -583,9 +583,11 @@ function App() {
         >
           <MainActionBar
             batchSelection={batch.selection}
+            batchSelectableIds={batch.selectableIds}
+            onSelectAllBatch={batch.selectAll}
+            onClearBatch={batch.clear}
             batchBusy={killing || dispatchingBatch}
             batchUncertain={accounts.length > 0 && batch.uncertain}
-            onClearBatch={batch.clear}
             launching={launching}
             launchableAccountIds={launchableAccountIds}
             launchGroups={launchGroups}
@@ -666,7 +668,7 @@ function App() {
             {initialLoading ? (
               <AccountGridLoading />
             ) : accounts.length === 0 ? (
-              <AccountGridEmpty onAddAccount={() => setShowInit(true)} />
+              <AccountGridEmpty onAddAccount={() => setShowInit(true)} onOpenRecognition={optionalFeaturesAvailable ? () => { setSettingsTab("automation"); setSettingsAccountId(null); setShowSettings(true); } : undefined} />
             ) : (
               <AccountGrid
                 accounts={sortedAccounts}

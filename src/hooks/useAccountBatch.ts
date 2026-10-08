@@ -4,6 +4,7 @@ import { invokeCommand } from "../platform/tauri";
 import { useAccounts } from "../store/accounts";
 import type { AccountMeta, GlobalConfig } from "../store/types";
 import { requiresTokenMigration } from "../utils/regionPaths";
+import { sortAccountsByCardOrder } from "../utils/accountOrder";
 
 export type BatchMode = "launch" | "close" | null;
 export interface BatchSelection { mode: BatchMode; ids: string[] }
@@ -47,10 +48,12 @@ export function refreshBatchRunning(): Promise<Set<string>> {
 export function useAccountBatch(active: boolean, suspended: boolean, config: GlobalConfig | null, busy: boolean) {
   const accounts = useAccounts(state => state.accounts);
   const [selection, setSelection] = useState<BatchSelection>(emptySelection);
-  const [health, setHealth] = useState<Health>({});
+  const [health, setHealth] = useState<{ key: string; rows: Health } | null>(null);
   const [uncertain, setUncertain] = useState(true);
   const [motionPaused, setMotionPaused] = useState(true);
   const healthKey = JSON.stringify([config, accounts.map(({ is_running: _r, running_pid: _p, ...meta }) => meta)]);
+  const healthCurrent = health?.key === healthKey;
+  const statusUncertain = uncertain || !healthCurrent;
   const keyRef = useRef(healthKey);
   keyRef.current = healthKey;
   const refreshRef = useRef<(() => Promise<void>) | null>(null);
@@ -59,13 +62,20 @@ export function useAccountBatch(active: boolean, suspended: boolean, config: Glo
   useEffect(() => { if (!active || suspended) clear(); }, [active, suspended, clear]);
   useEffect(() => {
     // Do not let a background refresh change the in-flight request's selection.
-    if (!busy) setSelection(current => reconcileBatchSelection(current, accounts));
-  }, [accounts, busy]);
+    if (!busy) setSelection(current => {
+      const eligible = accounts.filter(account => current.mode !== "launch"
+        || (account.initialized && !requiresTokenMigration(account.auth_mode, account.region, config)
+          && (!healthCurrent || health?.rows[account.id] === null)));
+      return reconcileBatchSelection(current, eligible);
+    });
+  }, [accounts, busy, config, health, healthCurrent]);
   useEffect(() => {
     if (!selection.mode || busy) return;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || document.querySelector('[role="dialog"]')) return;
-      if (event.target instanceof HTMLElement && event.target.closest("input,textarea,select,[contenteditable=true]")) return;
+      if (event.target instanceof HTMLElement && event.target.closest(
+        'textarea,select,[contenteditable=true],input:not([type="checkbox"]):not([type="radio"])',
+      )) return;
       clear();
     };
     document.addEventListener("keydown", escape);
@@ -83,6 +93,7 @@ export function useAccountBatch(active: boolean, suspended: boolean, config: Glo
     const refresh = (): Promise<void> => {
       if (pending) return pending;
       clearTimeout(timer);
+      let retryHealth = false;
       pending = (async () => {
         try {
           const win = getCurrentWindow();
@@ -96,9 +107,11 @@ export function useAccountBatch(active: boolean, suspended: boolean, config: Glo
           if (checkedKey !== key || Date.now() - healthAt > 30000) {
             const rows = await invokeCommand<{ account_id: string; error: string | null }[]>("inspect_account_launch_health");
             if (disposed) return;
+            // A reply for an older configuration must never enable selection.
+            if (keyRef.current !== key) { retryHealth = true; return; }
             const next = Object.fromEntries(rows.map(row => [row.account_id, row.error]));
-            setHealth(previous => Object.keys(previous).length === rows.length
-              && rows.every(row => previous[row.account_id] === row.error) ? previous : next);
+            setHealth(previous => previous?.key === key && Object.keys(previous.rows).length === rows.length
+              && rows.every(row => previous.rows[row.account_id] === row.error) ? previous : { key, rows: next });
             checkedKey = key;
             healthAt = Date.now();
           }
@@ -106,7 +119,7 @@ export function useAccountBatch(active: boolean, suspended: boolean, config: Glo
         } catch { if (!disposed) setUncertain(true); }
         finally {
           pending = null;
-          if (!disposed) timer = setTimeout(() => { void refresh(); }, 3000);
+          if (!disposed) timer = setTimeout(() => { void refresh(); }, retryHealth ? 0 : 3000);
         }
       })();
       return pending;
@@ -129,14 +142,29 @@ export function useAccountBatch(active: boolean, suspended: boolean, config: Glo
   const issue = (account: AccountMeta): string | null | undefined => {
     if (!account.initialized) return "账号尚未初始化，请补全配置";
     if (requiresTokenMigration(account.auth_mode, account.region, config)) return "请先迁移为 Token 直启";
-    return health[account.id];
+    return healthCurrent ? health?.rows[account.id] : undefined;
+  };
+  const orderedAccounts = sortAccountsByCardOrder(accounts);
+  const selectableIds = {
+    launch: orderedAccounts.filter(account => !account.is_running && issue(account) === null).map(account => account.id),
+    close: orderedAccounts.filter(account => account.is_running).map(account => account.id),
   };
   return {
-    selection, setSelection, clear, issue, uncertain, motionPaused,
+    selection, setSelection, clear, issue, uncertain: statusUncertain, motionPaused, selectableIds,
     refresh: () => refreshRef.current?.() ?? Promise.resolve(),
+    selectAll: (mode: Exclude<BatchMode, null>) => {
+      if (!active || busy || suspended || statusUncertain) return;
+      const ids = selectableIds[mode];
+      if (!ids.length) return;
+      setSelection(current => {
+        // Choosing a scope replaces it; selecting a complete scope keeps it.
+        return current.mode === mode && current.ids.length === ids.length
+          && ids.every(id => current.ids.includes(id)) ? current : { mode, ids };
+      });
+    },
     toggle: (account: AccountMeta) => {
-      if (busy || suspended) return;
-      if (!selection.ids.includes(account.id) && (uncertain || (!account.is_running && issue(account) !== null))) return;
+      if (!active || busy || suspended) return;
+      if (!selection.ids.includes(account.id) && (statusUncertain || (!account.is_running && issue(account) !== null))) return;
       setSelection(current => toggleBatchSelection(current, account.id, account.is_running));
     },
   };

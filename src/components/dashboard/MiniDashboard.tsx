@@ -233,7 +233,7 @@ export function MiniDashboard(props: MiniDashboardProps) {
         <button onClick={() => fullAction(props.onAddAccount)}>{copy("添加账号", "Add account")}</button>
         {roomInstalled && <button onClick={() => fullAction(props.onRoomAutomation)}>{copy("自动跟房", "Room automation")}</button>}
         {statsInstalled && <button onClick={() => { setMenuOpen(false); void run(() => invokeCommand("open_stats_page")); }}>{copy("查看统计", "Statistics")}</button>}
-        <button className="mini-danger" onClick={() => fullAction(props.onKillAll)}>{copy("一键关闭所有游戏…", "Close all games…")}</button>
+        <button className="mini-danger" onClick={() => fullAction(props.onKillAll)}>{copy("关闭全部…", "Close all…")}</button>
       </div>}
     </footer>
   </section>;

@@ -65,7 +65,7 @@ export function AccountGridLoading() {
   );
 }
 
-export function AccountGridEmpty({ onAddAccount }: { onAddAccount: () => void }) {
+export function AccountGridEmpty({ onAddAccount, onOpenRecognition }: { onAddAccount: () => void; onOpenRecognition?: () => void }) {
   return (
     <div className="flex-1 flex items-center justify-center px-8">
       <div className="text-center spatial-panel px-8 py-7 max-w-sm w-full">
@@ -79,6 +79,9 @@ export function AccountGridEmpty({ onAddAccount }: { onAddAccount: () => void })
           className="primary-cta">
           创建第一个账号
         </button>
+        {onOpenRecognition && <button onClick={onOpenRecognition} className="mt-3 block w-full text-xs text-accent hover:underline">
+          无需账号，使用掉落识别与统计
+        </button>}
       </div>
     </div>
   );
