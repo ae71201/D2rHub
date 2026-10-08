@@ -106,6 +106,10 @@
   height: 36px;
   border-radius: 7px;
 }
+:root[data-theme] .settings-workspace .settings-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
 :root[data-theme] .settings-workspace :is(.combo-input, .combo-field) :is(input, select) {
   min-height: 0;
   height: 100%;
@@ -245,8 +249,11 @@
 :root[data-theme] .settings-workspace .account-option { border-radius: 7px; background: transparent; border-color: transparent; padding: 12px; }
 :root[data-theme] .settings-workspace .account-option:hover { background: var(--surface-hover); }
 :root[data-theme] .settings-workspace .account-option[data-selected="true"] { background: color-mix(in srgb, var(--surface-active) 55%, var(--surface-card)); border-color: transparent; }
-:root[data-theme] .settings-workspace .account-option .hig-badge { background: transparent; border-color: transparent; color: var(--text-muted); padding-left: 0; }
+:root[data-theme] .settings-workspace .account-option .hig-badge { background: transparent; border-color: transparent; color: var(--text-secondary); padding-left: 0; height: auto; min-height: 22px; font-size: var(--text-xs); line-height: 1.5; font-weight: 600; }
 :root[data-theme] .settings-workspace .account-option .hig-badge-red { color: var(--error); }
+:root[data-theme] .settings-workspace .account-option-top { position: relative; display: block; }
+:root[data-theme] .settings-workspace .account-option-top > div:last-child { position: absolute; top: 0; right: 0; }
+:root[data-theme] .settings-workspace .account-option-name { margin-top: 14px; }
 :root[data-theme] .settings-workspace .settings-subnav { gap: 12px; border-bottom: 1px solid var(--border-default); }
 :root[data-theme] .settings-workspace .settings-subnav .control-btn { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding-inline: 2px; height: 34px; color: var(--text-muted); font-size: var(--text-xs); }
 :root[data-theme] .settings-workspace .settings-subnav .control-btn[data-active="true"] { border-bottom-color: var(--text-primary); color: var(--text-primary); }
