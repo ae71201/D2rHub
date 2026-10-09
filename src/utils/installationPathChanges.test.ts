@@ -50,87 +50,75 @@ function assert(condition: boolean, message: string) {
   console.log(`PASS: ${message}`);
 }
 
-export function runTests() {
-  const unavailableInstall = config({
-    cn_game_path: "Z:/offline/D2R-CN",
-    cn_saved_games_path: "Z:/offline/Saves-CN",
-  });
-  const appearanceEdit = config({
-    ...unavailableInstall,
-    theme: "onyx",
-    overlay_opacity: 78,
-  });
-  assert(
-    !installationPathsChanged(unavailableInstall, appearanceEdit),
-    "appearance-only edits do not request installation-path validation",
-  );
-  assert(
-    !installationPathEditsAreInvalid(unavailableInstall, appearanceEdit),
-    "appearance-only edits remain saveable when an existing install is offline",
-  );
+const unavailableInstall = config({
+  cn_game_path: "Z:/offline/D2R-CN",
+  cn_saved_games_path: "Z:/offline/Saves-CN",
+});
+const appearanceEdit = config({
+  ...unavailableInstall,
+  theme: "onyx",
+  overlay_opacity: 78,
+});
+assert(
+  !installationPathsChanged(unavailableInstall, appearanceEdit),
+  "appearance-only edits do not request installation-path validation",
+);
+assert(
+  !installationPathEditsAreInvalid(unavailableInstall, appearanceEdit),
+  "appearance-only edits remain saveable when an existing install is offline",
+);
 
-  const auxiliaryPathEdit = config({
-    ...unavailableInstall,
-    browser_path: "D:/Browser/msedge.exe",
-    program_data_agent_path: "D:/Battle.net/Agent",
-    app_data_roaming_bnet_path: "D:/Roaming/Battle.net",
-  });
-  assert(
-    !installationPathsChanged(unavailableInstall, auxiliaryPathEdit),
-    "browser and Battle.net support paths do not count as game-installation edits",
-  );
-  assert(
-    !installationPathEditsAreInvalid(unavailableInstall, auxiliaryPathEdit),
-    "support-path edits remain saveable when an existing game install is offline",
-  );
+const auxiliaryPathEdit = config({
+  ...unavailableInstall,
+  browser_path: "D:/Browser/msedge.exe",
+  program_data_agent_path: "D:/Battle.net/Agent",
+  app_data_roaming_bnet_path: "D:/Roaming/Battle.net",
+});
+assert(
+  !installationPathsChanged(unavailableInstall, auxiliaryPathEdit),
+  "browser and Battle.net support paths do not count as game-installation edits",
+);
+assert(
+  !installationPathEditsAreInvalid(unavailableInstall, auxiliaryPathEdit),
+  "support-path edits remain saveable when an existing game install is offline",
+);
 
-  const partialPathEdit = config({ cn_game_path: "D:/D2R-CN", cn_saved_games_path: "" });
-  assert(
-    installationPathsChanged(unavailableInstall, partialPathEdit),
-    "editing a game path is detected as an installation change",
-  );
-  assert(
-    !installationPathEditsAreInvalid(unavailableInstall, partialPathEdit),
-    "a valid game path remains launchable without an optional save path",
-  );
+const partialPathEdit = config({ cn_game_path: "D:/D2R-CN", cn_saved_games_path: "" });
+assert(
+  installationPathsChanged(unavailableInstall, partialPathEdit),
+  "editing a game path is detected as an installation change",
+);
+assert(
+  !installationPathEditsAreInvalid(unavailableInstall, partialPathEdit),
+  "a valid game path remains launchable without an optional save path",
+);
 
-  const noGamePath = config({ cn_game_path: "", cn_saved_games_path: "D:/Saves-CN" });
-  assert(
-    installationPathEditsAreInvalid(unavailableInstall, noGamePath),
-    "save paths alone cannot satisfy the minimum launch configuration",
-  );
+const noGamePath = config({ cn_game_path: "", cn_saved_games_path: "D:/Saves-CN" });
+assert(
+  installationPathEditsAreInvalid(unavailableInstall, noGamePath),
+  "save paths alone cannot satisfy the minimum launch configuration",
+);
 
-  const completeCnWithPartialGlobal = config({
-    global_game_path: "D:/D2R-Global",
-    global_saved_games_path: "",
-  });
-  assert(
-    hasValidEditionPathPairs(completeCnWithPartialGlobal),
-    "a configured CN game keeps global settings valid when Global has no save path",
-  );
-  assert(
-    !installationPathEditsAreInvalid(unavailableInstall, completeCnWithPartialGlobal),
-    "an optional Global save path does not block saving a configured CN edition",
-  );
+const completeCnWithPartialGlobal = config({
+  global_game_path: "D:/D2R-Global",
+  global_saved_games_path: "",
+});
+assert(
+  hasValidEditionPathPairs(completeCnWithPartialGlobal),
+  "a configured CN game keeps global settings valid when Global has no save path",
+);
+assert(
+  !installationPathEditsAreInvalid(unavailableInstall, completeCnWithPartialGlobal),
+  "an optional Global save path does not block saving a configured CN edition",
+);
 
-  const completeGlobalWithPartialCn = config({
-    cn_game_path: "D:/D2R-CN",
-    cn_saved_games_path: "",
-    global_game_path: "D:/D2R-Global",
-    global_saved_games_path: "D:/Saves-Global",
-  });
-  assert(
-    hasValidEditionPathPairs(completeGlobalWithPartialCn),
-    "a configured Global game keeps global settings valid when CN has no save path",
-  );
-}
-
-const g = globalThis as any;
-if (typeof g.process !== "undefined" && typeof g.process.argv !== "undefined") {
-  try {
-    runTests();
-  } catch (error) {
-    console.error(error);
-    g.process.exit(1);
-  }
-}
+const completeGlobalWithPartialCn = config({
+  cn_game_path: "D:/D2R-CN",
+  cn_saved_games_path: "",
+  global_game_path: "D:/D2R-Global",
+  global_saved_games_path: "D:/Saves-Global",
+});
+assert(
+  hasValidEditionPathPairs(completeGlobalWithPartialCn),
+  "a configured Global game keeps global settings valid when CN has no save path",
+);

@@ -21,36 +21,24 @@ function assert(condition: boolean, message: string) {
   console.log(`PASS: ${message}`);
 }
 
-export function runTests() {
-  const initialized = account();
-  const uninitialized = account({ id: "acount2", initialized: false });
-  const accounts = [initialized, uninitialized];
+const initialized = account();
+const uninitialized = account({ id: "acount2", initialized: false });
+const accounts = [initialized, uninitialized];
 
-  const missing = validateTrackingTarget("", accounts);
-  assert(!missing.valid && missing.reason === "missing", "tracking requires a selected account");
+const missing = validateTrackingTarget("", accounts);
+assert(!missing.valid && missing.reason === "missing", "tracking requires a selected account");
 
-  const unknown = validateTrackingTarget("missing-account", accounts);
-  assert(!unknown.valid && unknown.reason === "not_found", "tracking rejects an unknown account");
+const unknown = validateTrackingTarget("missing-account", accounts);
+assert(!unknown.valid && unknown.reason === "not_found", "tracking rejects an unknown account");
 
-  const notInitialized = validateTrackingTarget("acount2", accounts);
-  assert(
-    !notInitialized.valid && notInitialized.reason === "not_initialized",
-    "tracking rejects an uninitialized account",
-  );
+const notInitialized = validateTrackingTarget("acount2", accounts);
+assert(
+  !notInitialized.valid && notInitialized.reason === "not_initialized",
+  "tracking rejects an uninitialized account",
+);
 
-  const valid = validateTrackingTarget("acount1", accounts);
-  assert(
-    valid.valid && valid.account === initialized,
-    "tracking accepts the selected initialized account",
-  );
-}
-
-const g = globalThis as any;
-if (typeof g.process !== "undefined" && typeof g.process.argv !== "undefined") {
-  try {
-    runTests();
-  } catch (error) {
-    console.error(error);
-    g.process.exit(1);
-  }
-}
+const valid = validateTrackingTarget("acount1", accounts);
+assert(
+  valid.valid && valid.account === initialized,
+  "tracking accepts the selected initialized account",
+);

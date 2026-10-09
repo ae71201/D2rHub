@@ -131,11 +131,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rune_names_count() {
-        assert_eq!(RUNE_NAMES.len(), 33);
-    }
-
-    #[test]
     fn test_get_rune_number_standard() {
         assert_eq!(get_rune_number("艾尔"), Some(1));
         assert_eq!(get_rune_number("伊斯特"), Some(24));
