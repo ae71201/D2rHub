@@ -255,6 +255,8 @@ pub struct GlobalConfig {
     pub active_window_layout_id: Option<String>,
     #[serde(default)]
     pub window_layouts: Vec<WindowLayout>,
+    #[serde(default)]
+    pub window_frame_profiles: Vec<super::window_layout::WindowFrameProfile>,
     /// Same-version fields owned by a branch or optional module that this build
     /// does not understand yet. Flattening keeps unrelated saves lossless until
     /// the owning module can import them into its versioned sidecar.
@@ -529,6 +531,7 @@ impl Default for GlobalConfig {
             window_layout_enabled: false,
             active_window_layout_id: None,
             window_layouts: Vec::new(),
+            window_frame_profiles: Vec::new(),
             preserved_unknown_fields: BTreeMap::new(),
         }
     }

@@ -53,7 +53,7 @@ impl GameWindowPort for SystemGameWindowPort {
 
     fn position(&self, pid: u32) -> Option<WindowPosition> {
         find_game_hwnd(pid)
-            .and_then(get_window_rect)
+            .and_then(get_visible_window_position)
             .map(|(x, y)| WindowPosition { x, y })
     }
 
@@ -895,6 +895,49 @@ fn recover_running_assignments(
     assignments
 }
 
+fn running_assignments(
+    snapshot: &crate::application::multi_instance::InstanceRegistrySnapshot,
+    accounts: &[AccountGameIdentity],
+    windows: &[RunningGameWindow],
+) -> std::collections::HashMap<String, u32> {
+    // An owned original process handle is stronger evidence than its title:
+    // the main window may not exist yet, or the game may reset its caption.
+    // Discovered processes still require exact title/executable matching.
+    let previous = snapshot
+        .instances()
+        .iter()
+        .map(|instance| (instance.account_id.to_ascii_lowercase(), instance.pid))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut active = std::collections::HashMap::new();
+    let mut claimed = std::collections::HashSet::new();
+    for identity in accounts {
+        if let Some(pid) = previous.get(&identity.account_id.to_ascii_lowercase()) {
+            let identity_still_running = snapshot.owns_live_process(&identity.account_id, *pid)
+                || windows.iter().any(|window| {
+                    window.pid == *pid
+                        && window
+                            .window_title
+                            .eq_ignore_ascii_case(&identity.window_title)
+                        && executable_paths_match(
+                            &window.game_executable,
+                            &identity.game_executable,
+                        )
+                });
+            if identity_still_running && claimed.insert(*pid) {
+                active.insert(identity.account_id.clone(), *pid);
+            }
+        }
+    }
+
+    // Only recover unclaimed processes from unambiguous exact identities.
+    for (account_id, pid) in recover_running_assignments(accounts, windows, &claimed) {
+        if claimed.insert(pid) {
+            active.insert(account_id, pid);
+        }
+    }
+    active
+}
+
 /// 扫描已运行的 D2R 窗口，匹配账号列表中的昵称，更新多开实例注册表。
 /// 解决"账号已在游戏但工具不识别为活动账号"的问题
 /// 恢复匹配同时要求完整 exe 路径和精确窗口标题，且一个 PID 最多归属一个账号。
@@ -944,15 +987,6 @@ where
                 })
                 .collect()
         };
-        if d2r_processes.is_empty() {
-            let final_instances = registry
-                .reconcile_if_unchanged(&registry_snapshot, std::iter::empty::<(String, u32)>())
-                .unwrap_or_else(|| state.multi_instance().facade().running_instances());
-            return Ok(final_instances
-                .into_iter()
-                .map(|instance| instance.account_id)
-                .collect());
-        }
         let d2r_pids: std::collections::HashSet<u32> = d2r_processes.keys().copied().collect();
 
         // 2. 枚举可见窗口，仅保留属于 D2R 进程的窗口 (标题, PID)
@@ -1015,40 +1049,7 @@ where
             })
             .collect();
 
-        // 4. 保留仍匹配精确窗口标题和 Edition 可执行文件的映射，并去除 PID 重复认领。
-        let previous = registry_snapshot
-            .instances()
-            .iter()
-            .map(|instance| (instance.account_id.clone(), instance.pid))
-            .collect::<std::collections::HashMap<_, _>>();
-        let mut active = std::collections::HashMap::new();
-        let mut claimed = std::collections::HashSet::new();
-        for identity in &account_identities {
-            if let Some(pid) = previous.get(&identity.account_id) {
-                let identity_still_running = running_windows.iter().any(|window| {
-                    window.pid == *pid
-                        && window
-                            .window_title
-                            .eq_ignore_ascii_case(&identity.window_title)
-                        && executable_paths_match(
-                            &window.game_executable,
-                            &identity.game_executable,
-                        )
-                });
-                if identity_still_running && claimed.insert(*pid) {
-                    active.insert(identity.account_id.clone(), *pid);
-                }
-            }
-        }
-
-        // 5. 仅对未认领 PID 做无歧义恢复；子串、重复昵称和错误 Edition 均 fail closed。
-        for (account_id, pid) in
-            recover_running_assignments(&account_identities, &running_windows, &claimed)
-        {
-            if claimed.insert(pid) {
-                active.insert(account_id, pid);
-            }
-        }
+        let active = running_assignments(&registry_snapshot, &account_identities, &running_windows);
 
         let final_instances = registry
             .reconcile_if_unchanged(&registry_snapshot, active)
@@ -1578,36 +1579,8 @@ pub fn set_game_window_position(pid: u32, x: i32, y: i32) {
     }
 }
 
-#[cfg(target_os = "windows")]
 fn move_window_handle(hwnd: isize, x: i32, y: i32) -> bool {
-    let _dpi = crate::infrastructure::game_layout_windows::PhysicalDpiScope::enter();
-    extern "system" {
-        fn SetWindowPos(
-            hWnd: isize,
-            hWndInsertAfter: isize,
-            X: i32,
-            Y: i32,
-            cx: i32,
-            cy: i32,
-            uFlags: u32,
-        ) -> i32;
-    }
-    const SWP_NOSIZE: u32 = 0x0001;
-    const SWP_NOZORDER: u32 = 0x0004;
-    const SWP_NOACTIVATE: u32 = 0x0010;
-    const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
-
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            0,
-            x,
-            y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
-        ) != 0
-    }
+    crate::infrastructure::game_layout_windows::move_visible_window(hwnd, x, y)
 }
 
 /// 根据窗口标题查找并移动位置（用于多选或 PID 缺失时的降级查找）
@@ -1621,20 +1594,7 @@ pub fn set_game_window_position_by_title(title: &str, x: i32, y: i32) -> bool {
         ) -> i32;
         fn IsWindowVisible(hWnd: isize) -> i32;
         fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
-        fn SetWindowPos(
-            hWnd: isize,
-            hWndInsertAfter: isize,
-            X: i32,
-            Y: i32,
-            cx: i32,
-            cy: i32,
-            uFlags: u32,
-        ) -> i32;
     }
-    const SWP_NOSIZE: u32 = 0x0001;
-    const SWP_NOZORDER: u32 = 0x0004;
-    const SWP_NOACTIVATE: u32 = 0x0010;
-    const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
 
     struct FindCtx {
         title: String,
@@ -1666,22 +1626,8 @@ pub fn set_game_window_position_by_title(title: &str, x: i32, y: i32) -> bool {
         EnumWindows(callback, &mut ctx as *mut FindCtx as isize);
     }
 
-    if let Some(hwnd) = ctx.found_hwnd {
-        unsafe {
-            SetWindowPos(
-                hwnd,
-                0,
-                x,
-                y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
-            );
-        }
-        true
-    } else {
-        false
-    }
+    ctx.found_hwnd
+        .is_some_and(|hwnd| move_window_handle(hwnd, x, y))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1692,11 +1638,6 @@ pub fn set_game_window_position_by_title(_title: &str, _x: i32, _y: i32) -> bool
 #[cfg(not(target_os = "windows"))]
 #[allow(dead_code)] // compatibility delegate used by unfinished feature branches
 pub fn set_game_window_position(_pid: u32, _x: i32, _y: i32) {}
-
-#[cfg(not(target_os = "windows"))]
-fn move_window_handle(_hwnd: isize, _x: i32, _y: i32) -> bool {
-    false
-}
 
 /// 根据 PID 查找 D2R 游戏窗口句柄（公用基础设施）
 #[cfg(target_os = "windows")]
@@ -2018,41 +1959,10 @@ pub fn find_game_hwnd_by_title(_title: &str) -> Option<isize> {
     None
 }
 
-/// 获取窗口位置 (left, top, right, bottom)
-#[cfg(target_os = "windows")]
-pub fn get_window_rect(hwnd: isize) -> Option<(i32, i32)> {
-    let _dpi = crate::infrastructure::game_layout_windows::PhysicalDpiScope::enter();
-    extern "system" {
-        fn GetWindowRect(hWnd: isize, lpRect: *mut std::ffi::c_void) -> i32;
-    }
-    // Keep the native Windows spelling so the declaration matches Win32 documentation.
-    #[allow(clippy::upper_case_acronyms)]
-    #[repr(C)]
-    struct RECT {
-        left: i32,
-        top: i32,
-        right: i32,
-        bottom: i32,
-    }
-
-    let mut rect = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    unsafe {
-        if GetWindowRect(hwnd, (&mut rect as *mut RECT).cast()) != 0 {
-            Some((rect.left, rect.top))
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn get_window_rect(_hwnd: isize) -> Option<(i32, i32)> {
-    None
+/// Physical origin of the visible frame, shared with layout capture and placement.
+pub fn get_visible_window_position(hwnd: isize) -> Option<(i32, i32)> {
+    crate::infrastructure::game_layout_windows::visible_window_rect(hwnd)
+        .map(|rect| (rect.x, rect.y))
 }
 
 #[cfg(test)]
@@ -2062,6 +1972,60 @@ mod region_process_tests {
     };
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn scans_keep_owned_loading_processes_without_claiming_unknown_default_titles() {
+        use crate::application::multi_instance::InstanceRegistry;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let registry = InstanceRegistry::default();
+        let alive = Arc::new(AtomicBool::new(true));
+        let probe = alive.clone();
+        registry.record_launched_with_process(
+            "ACCOUNT",
+            10,
+            "",
+            Some(Arc::new(move || probe.load(Ordering::SeqCst))),
+        );
+        let accounts = [
+            account("account", "Main", r"C:\CN\D2R.exe"),
+            account("other", "Second", r"C:\CN\D2R.exe"),
+        ];
+        let windows = [
+            window(10, "Diablo II: Resurrected", r"C:\CN\D2R.exe"),
+            window(20, "Diablo II: Resurrected", r"C:\CN\D2R.exe"),
+        ];
+        for observed in [&[][..], &windows[..], &[][..]] {
+            let snapshot = registry.snapshot();
+            let detected = super::running_assignments(&snapshot, &accounts, observed);
+            assert_eq!(detected.len(), 1);
+            assert_eq!(detected.get("account"), Some(&10));
+            registry
+                .reconcile_if_unchanged(&snapshot, detected)
+                .unwrap();
+        }
+        // Capturing/restoring the same account must retain its process guard.
+        registry.record_discovered("account", 10);
+        assert_eq!(
+            super::running_assignments(&registry.snapshot(), &accounts, &windows).get("account"),
+            Some(&10)
+        );
+        alive.store(false, Ordering::SeqCst);
+        let snapshot = registry.snapshot();
+        assert!(super::running_assignments(&snapshot, &accounts, &windows).is_empty());
+        // A replacement PID must not inherit the original process's liveness.
+        registry.record_discovered("account", 20);
+        alive.store(true, Ordering::SeqCst);
+        assert!(super::running_assignments(&registry.snapshot(), &accounts, &windows).is_empty());
+        assert!(super::running_assignments(
+            &InstanceRegistry::default().snapshot(),
+            &accounts,
+            &windows
+        )
+        .is_empty());
+    }
 
     #[test]
     fn battle_net_processes_are_matched_to_the_selected_installation() {

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import type { LayoutRect, LayoutSlot, WindowLayout } from "../../store/types";
-import { moveSlot, resizeSlot, slotRect, type ResizeHandle } from "./model";
+import { moveSlot, resizeSlot, slotRect, visibleSlotRect, visibleInsets, type ResizeHandle } from "./model";
 
 const handles: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
@@ -107,7 +107,8 @@ export function LayoutCanvas({ layout, labels, selected, onSelect, onChange, foc
       </text>
     </g>)}
     {visibleSlots.map(({ slot, index }) => {
-      const rect = slotRect(slot, layout.monitors);
+      const rect = visibleSlotRect(slot, layout.monitors);
+      const edge = visibleInsets(layout.monitors.find(monitor => monitor.id === slot.monitor_id));
       const active = index === selected;
       const padding = 12 / scale;
       const handleSize = 9 / scale;
@@ -129,14 +130,19 @@ export function LayoutCanvas({ layout, labels, selected, onSelect, onChange, foc
           const dx = event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0;
           const dy = event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0;
           const next = event.shiftKey ? resizeSlot(layout, index, slot, dx, dy, "se")
-            : moveSlot(layout, index, { ...rect, x: rect.x + dx, y: rect.y + dy });
+            : moveSlot(layout, index, { ...slotRect(slot, layout.monitors), x: rect.x + dx, y: rect.y + dy });
           onChange(layout.windows.map((candidate, at) => at === index ? next : candidate));
         }}>
         <rect className="layout-window-body" x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx={5 / scale} vectorEffect="non-scaling-stroke" />
+        {edge.top > 0 && <g className="layout-window-caption" aria-hidden="true">
+          <rect x={rect.x} y={rect.y} width={rect.width} height={edge.top} />
+          <path d={`M ${rect.x + rect.width - edge.top * 0.8} ${rect.y + edge.top * 0.35} l ${edge.top * 0.3} ${edge.top * 0.3} m 0 ${-edge.top * 0.3} l ${-edge.top * 0.3} ${edge.top * 0.3}`} />
+        </g>}
+        <rect className="layout-window-client" x={rect.x + edge.left} y={rect.y + edge.top} width={slot.width} height={slot.height} />
         <title>{labels[index]} · {english ? "Launch position" : "启动顺序"} {index + 1}</title>
         <defs><clipPath id={`${clipId}-${index}`}><rect x={rect.x + padding} y={rect.y} width={Math.max(0, rect.width - 2 * padding)} height={rect.height} /></clipPath></defs>
-        <text className="layout-window-name" x={rect.x + padding} y={rect.y + 27 / scale} clipPath={`url(#${clipId}-${index})`}>{labels[index]}</text>
-        {rect.width * scale >= 110 && rect.height * scale >= 65 && <text className="layout-window-size" x={rect.x + padding} y={rect.y + 45 / scale}>{slot.width} × {slot.height}</text>}
+        <text className="layout-window-name" x={rect.x + padding} y={rect.y + edge.top + 27 / scale} clipPath={`url(#${clipId}-${index})`}>{labels[index]}</text>
+        {rect.width * scale >= 110 && rect.height * scale >= 65 && <text className="layout-window-size" x={rect.x + padding} y={rect.y + edge.top + 45 / scale}>{slot.width} × {slot.height}</text>}
         {active && handles.map(handle => {
           const x = handle.includes("w") ? rect.x : handle.includes("e") ? rect.x + rect.width : rect.x + rect.width / 2;
           const y = handle.includes("n") ? rect.y : handle.includes("s") ? rect.y + rect.height : rect.y + rect.height / 2;

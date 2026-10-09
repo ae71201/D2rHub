@@ -57,3 +57,18 @@ it.each(["pointerCancel", "lostPointerCapture"] as const)(
     fireEvent.pointerUp(canvas, { pointerId: 2 });
   },
 );
+
+it("draws the caption at measured physical height and excludes invisible borders", () => {
+  const rect = { x: 0, y: 0, width: 2560, height: 1440 };
+  const layout: WindowLayout = { id: "frame", name: "Frame", monitors: [{ id: "main", name: "Main",
+    primary: true, scale_factor: 1, bounds: rect, work_area: rect, frame: { dpi: 96, style: 0, ex_style: 0,
+      visible: { left: 1, top: 31, right: 1, bottom: 1 }, invisible: { left: 7, top: 0, right: 7, bottom: 7 } } }],
+    windows: [{ monitor_id: "main", x: 0, y: 0, width: 1280, height: 720 }] };
+  const { container } = render(<LayoutCanvas layout={layout} labels={["Account"]} selected={0}
+    onSelect={() => {}} onChange={() => {}} />);
+  expect(container.querySelector(".layout-window-body")?.getAttribute("width")).toBe("1282");
+  expect(container.querySelector(".layout-window-body")?.getAttribute("height")).toBe("752");
+  expect(container.querySelector(".layout-window-caption rect")?.getAttribute("height")).toBe("31");
+  expect(container.querySelector(".layout-window-client")?.getAttribute("y")).toBe("31");
+  expect(container.querySelector(".layout-window-client")?.getAttribute("height")).toBe("720");
+});

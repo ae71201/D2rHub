@@ -144,6 +144,8 @@ pub struct GameWindowIdentity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Physical desktop position of the visible frame. Reads and moves use the
+/// same coordinate space; native invisible-border compensation stays in the adapter.
 pub struct WindowPosition {
     pub x: i32,
     pub y: i32,

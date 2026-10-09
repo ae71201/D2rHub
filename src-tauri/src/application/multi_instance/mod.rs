@@ -10,6 +10,7 @@ mod account_profile;
 mod account_query;
 mod account_settings;
 mod facade;
+mod frame_calibration;
 mod instances;
 mod launch;
 mod launch_plan;
@@ -31,7 +32,10 @@ pub use account_profile::{
 pub use account_query::AccountQueryService;
 pub use account_settings::AccountSettingsPreferenceService;
 pub use facade::{MultiInstanceFacade, WindowMatch};
-pub use instances::{InstanceRegistry, RunningInstance};
+pub use frame_calibration::{
+    FrameCalibrationClaim, FrameCalibrationKey, FrameCalibrationLease, FrameCalibrations,
+};
+pub use instances::{InstanceRegistry, InstanceRegistrySnapshot, RunningInstance};
 pub use launch::{CancellationTicket, LaunchOrchestrator};
 pub use launch_plan::{
     launch_queue_can_continue, LaunchAccountEntry, LaunchBatchPlan, LaunchGraphicsOverride,
@@ -53,9 +57,13 @@ pub struct MultiInstanceRuntime {
     launches: LaunchOrchestrator,
     account_leases: AccountLeaseManager,
     catalog_leases: AccountCatalogLeaseManager,
+    frame_calibrations: std::sync::Arc<FrameCalibrations>,
 }
 
 impl MultiInstanceRuntime {
+    pub fn frame_calibrations(&self) -> &std::sync::Arc<FrameCalibrations> {
+        &self.frame_calibrations
+    }
     pub fn instances(&self) -> &InstanceRegistry {
         &self.instances
     }

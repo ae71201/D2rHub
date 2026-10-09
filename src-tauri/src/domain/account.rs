@@ -7,6 +7,7 @@ use thiserror::Error;
 pub struct WindowPositionPreset {
     pub id: String,
     pub name: String,
+    /// Physical visible-frame origin; native resize margins are applied only at placement.
     pub x: i32,
     pub y: i32,
 }

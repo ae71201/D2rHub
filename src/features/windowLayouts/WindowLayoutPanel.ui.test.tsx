@@ -120,6 +120,21 @@ describe("window layout library and editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存布局" }));
     await waitFor(() => expect(latest.window_layouts?.[0].windows[0]).toMatchObject({ monitor_id: "left", x: 121, width: 800, height: 610 }));
   });
+  it("saves and reopens negative border offsets on the primary monitor", async () => {
+    render(<Harness />);
+    await create();
+    for (const [axis, value] of [["X", "-8"], ["Y", "-12"]]) {
+      const field = screen.getByRole("spinbutton", { name: axis });
+      fireEvent.change(field, { target: { value } });
+      fireEvent.blur(field);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "保存布局" }));
+    const edit = await screen.findByRole("button", { name: "编辑布局：新布局" });
+    expect(latest.window_layouts?.[0].windows[0]).toMatchObject({ x: -8, y: -12 });
+    fireEvent.click(edit);
+    expect((screen.getByRole("spinbutton", { name: "X" }) as HTMLInputElement).value).toBe("-8");
+    expect((screen.getByRole("spinbutton", { name: "Y" }) as HTMLInputElement).value).toBe("-12");
+  });
   it("preserves full display resolution despite the taskbar and a smaller monitor", async () => {
     render(<Harness />);
     await create();

@@ -16,12 +16,13 @@ pub struct RunningInstance {
     pub launch: Option<LaunchSnapshot>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct InstanceEntry {
     account_id: String,
     active_pid: Option<u32>,
     launch: Option<LaunchSnapshot>,
     initial_geometry_superseded: bool,
+    process_alive: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 #[derive(Default)]
@@ -36,9 +37,13 @@ struct RegistryState {
 pub struct InstanceRegistrySnapshot {
     revision: u64,
     instances: Vec<RunningInstance>,
+    owned_live: HashSet<(String, u32)>,
 }
 
 impl InstanceRegistrySnapshot {
+    pub fn owns_live_process(&self, account_id: &str, pid: u32) -> bool {
+        self.owned_live.contains(&(account_key(account_id), pid))
+    }
     pub fn instances(&self) -> &[RunningInstance] {
         &self.instances
     }
@@ -75,6 +80,18 @@ impl InstanceRegistry {
         InstanceRegistrySnapshot {
             revision: state.revision,
             instances: running_instances(&state.entries),
+            owned_live: state
+                .entries
+                .iter()
+                .filter_map(|(key, entry)| {
+                    let pid = entry.active_pid?;
+                    entry
+                        .process_alive
+                        .as_ref()
+                        .filter(|alive| alive())
+                        .map(|_| (key.clone(), pid))
+                })
+                .collect(),
         }
     }
 
@@ -104,6 +121,16 @@ impl InstanceRegistry {
     }
 
     pub fn record_launched(&self, account_id: &str, pid: u32, mod_args: &str) {
+        self.record_launched_with_process(account_id, pid, mod_args, None);
+    }
+
+    pub fn record_launched_with_process(
+        &self,
+        account_id: &str,
+        pid: u32,
+        mod_args: &str,
+        process_alive: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+    ) {
         if pid == 0 {
             return;
         }
@@ -122,6 +149,7 @@ impl InstanceRegistry {
                     mod_args: mod_args.to_string(),
                 }),
                 initial_geometry_superseded: false,
+                process_alive,
             },
         );
         state.revision = state.revision.wrapping_add(1);
@@ -144,6 +172,11 @@ impl InstanceRegistry {
         let initial_geometry_superseded = state.entries.get(&key).is_some_and(|entry| {
             entry.active_pid == Some(pid) && entry.initial_geometry_superseded
         });
+        let process_alive = state
+            .entries
+            .get(&key)
+            .filter(|entry| entry.active_pid == Some(pid))
+            .and_then(|entry| entry.process_alive.clone());
         state.entries.insert(
             key,
             InstanceEntry {
@@ -151,6 +184,7 @@ impl InstanceRegistry {
                 active_pid: Some(pid),
                 launch,
                 initial_geometry_superseded,
+                process_alive,
             },
         );
         state.revision = state.revision.wrapping_add(1);
@@ -167,6 +201,7 @@ impl InstanceRegistry {
             active_pid: None,
             launch: None,
             initial_geometry_superseded: false,
+            process_alive: None,
         });
         entry.account_id = account_id.to_string();
         entry.launch = Some(LaunchSnapshot {
@@ -228,6 +263,10 @@ impl InstanceRegistry {
             let initial_geometry_superseded = previous.get(&key).is_some_and(|entry| {
                 entry.active_pid == Some(pid) && entry.initial_geometry_superseded
             });
+            let process_alive = previous
+                .get(&key)
+                .filter(|entry| entry.active_pid == Some(pid))
+                .and_then(|entry| entry.process_alive.clone());
             state.entries.insert(
                 key,
                 InstanceEntry {
@@ -235,6 +274,7 @@ impl InstanceRegistry {
                     active_pid: Some(pid),
                     launch,
                     initial_geometry_superseded,
+                    process_alive,
                 },
             );
         }

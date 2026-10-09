@@ -40,6 +40,16 @@ export interface LayoutRect {
   height: number;
 }
 
+export interface FrameInsets { left: number; top: number; right: number; bottom: number }
+export interface WindowFrameMetrics {
+  dpi: number;
+  style: number;
+  ex_style: number;
+  visible: FrameInsets;
+  invisible: FrameInsets;
+}
+export interface WindowFrameProfile { monitor_id: string; scale_factor: number; metrics: WindowFrameMetrics }
+
 export interface LayoutMonitor {
   id: string;
   name: string;
@@ -47,6 +57,7 @@ export interface LayoutMonitor {
   work_area: LayoutRect;
   primary: boolean;
   scale_factor: number;
+  frame?: WindowFrameMetrics | null;
 }
 
 export interface LayoutSlot extends LayoutRect {
@@ -123,6 +134,7 @@ export interface GlobalConfig {
   window_layout_enabled?: boolean;
   active_window_layout_id?: string | null;
   window_layouts?: WindowLayout[];
+  window_frame_profiles?: WindowFrameProfile[];
 }
 
 // ── 可选能力运行状态 ──

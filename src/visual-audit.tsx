@@ -250,6 +250,13 @@ const layoutMonitors: LayoutMonitor[] = [{ id: "DISPLAY1", name: "DISPLAY1", pri
   work_area: { x: 0, y: 0, width: layoutDisplaySize[0], height: layoutDisplaySize[1] - 48 } }];
 if (params.get("monitors") === "dual") layoutMonitors.push({ id: "DISPLAY2", name: "DISPLAY2", primary: false, scale_factor: 1,
   bounds: { x: -1920, y: 200, width: 1920, height: 1080 }, work_area: { x: -1920, y: 200, width: 1920, height: 1040 } });
+// Browser fixture mirrors physical, visible-only frame geometry at each DPI.
+for (const monitor of layoutMonitors) {
+  const scale = monitor.scale_factor;
+  monitor.frame = { dpi: Math.round(96 * scale), style: 0, ex_style: 0,
+    visible: { left: Math.round(scale), top: Math.round(31 * scale), right: Math.round(scale), bottom: Math.round(scale) },
+    invisible: { left: Math.round(7 * scale), top: 0, right: Math.round(7 * scale), bottom: Math.round(7 * scale) } };
+}
 const baseConfig: GlobalConfig = {
   version: 11,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",

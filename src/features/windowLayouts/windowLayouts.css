@@ -137,3 +137,11 @@
   .layout-capsule, .layout-quick-trigger-group, .layout-quick-power > span, .layout-preset-disclosure > svg { transition: none; }
   .layout-preset-shelf { animation: none; }
 }
+
+.layout-window-caption { pointer-events: none; }
+.layout-window-caption rect { fill: color-mix(in srgb, var(--text-primary) 26%, rgb(var(--surface-card-rgb))); }
+.layout-window-caption path { fill: none; stroke: var(--text-secondary); stroke-width: 1.5; }
+.layout-window-client { fill: none; stroke: var(--border-default); stroke-width: 1; pointer-events: none; }
+.layout-visible-size { color: var(--text-secondary); font-size: var(--text-xs); grid-column: 1 / -1; }
+
+.preset-caption { fill: var(--text-muted); opacity: .3; }

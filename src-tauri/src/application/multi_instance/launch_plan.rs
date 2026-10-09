@@ -317,6 +317,7 @@ mod tests {
         assert!(launch_queue_can_continue(true, true));
         assert!(!launch_queue_can_continue(true, false));
         assert!(!launch_queue_can_continue(false, true));
+        assert!(!launch_queue_can_continue(false, false));
     }
 
     #[test]

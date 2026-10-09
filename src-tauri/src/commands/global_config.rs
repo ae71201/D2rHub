@@ -3457,6 +3457,16 @@ fn prepare_global_config_with_retired_accounts(
         AccountManager::validate_account_id(account_id)?;
     }
     cfg.validate_launch_groups()?;
+    if cfg.window_frame_profiles.len() > 64
+        || cfg.window_frame_profiles.iter().any(|profile| {
+            profile.monitor_id.is_empty()
+                || !profile.scale_factor.is_finite()
+                || !(0.5..=8.0).contains(&profile.scale_factor)
+                || !profile.metrics.valid()
+        })
+    {
+        return Err(AppError::ConfigWriteError("窗口边框校准参数无效".into()));
+    }
     crate::domain::window_layout::validate_layout_configuration(
         &cfg.window_layouts,
         cfg.active_window_layout_id.as_deref(),

@@ -7,9 +7,47 @@ use crate::error::AppError;
 pub const MIN_WINDOW_WIDTH: u32 = 800;
 pub const MIN_WINDOW_HEIGHT: u32 = 600;
 pub const MAX_LAYOUT_WINDOWS: usize = 32;
+pub const MIN_VISIBLE_PIXELS: i32 = 64;
 
-/// Physical desktop coordinates. For launch targets, width/height are game
-/// resolution values for Settings.json, not native window-frame dimensions.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameInsets {
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowFrameMetrics {
+    pub dpi: u32,
+    pub style: u32,
+    pub ex_style: u32,
+    /// Client area to DWM visible frame; includes the caption, never shadows.
+    pub visible: FrameInsets,
+    /// DWM visible frame to native window rect; used only for Win32 placement.
+    pub invisible: FrameInsets,
+}
+
+impl WindowFrameMetrics {
+    pub fn valid(&self) -> bool {
+        (48..=768).contains(&self.dpi)
+            && [self.visible, self.invisible].iter().all(|edge| {
+                [edge.left, edge.top, edge.right, edge.bottom]
+                    .iter()
+                    .all(|value| *value <= 256)
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowFrameProfile {
+    pub monitor_id: String,
+    pub scale_factor: f64,
+    pub metrics: WindowFrameMetrics,
+}
+
+/// Physical desktop coordinates. Launch targets use the visible frame origin;
+/// width/height are client/game resolution values, not window-frame dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutRect {
     pub x: i32,
@@ -26,12 +64,24 @@ pub struct LayoutMonitor {
     pub work_area: LayoutRect,
     pub primary: bool,
     pub scale_factor: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<WindowFrameMetrics>,
+}
+
+impl LayoutMonitor {
+    pub fn visible_size(&self, width: u32, height: u32) -> (u32, u32) {
+        let edge = self.frame.map(|frame| frame.visible).unwrap_or_default();
+        (
+            width + edge.left + edge.right,
+            height + edge.top + edge.bottom,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutSlot {
     pub monitor_id: String,
-    /// Relative to this monitor's work-area origin, in physical pixels.
+    /// Visible frame origin relative to this monitor's work area, in physical pixels.
     pub x: i32,
     pub y: i32,
     /// Game resolution, with the same meaning and limits as account settings.
@@ -81,6 +131,7 @@ impl WindowLayout {
                     > i64::from(bounds.y) + i64::from(bounds.height)
                 || !monitor.scale_factor.is_finite()
                 || !(0.5..=8.0).contains(&monitor.scale_factor)
+                || monitor.frame.is_some_and(|frame| !frame.valid())
             {
                 return Err(invalid("显示器尺寸、工作区或缩放比例无效"));
             }
@@ -108,12 +159,15 @@ impl WindowLayout {
             {
                 return Err(invalid("游戏分辨率须在 800 × 600 到 7680 × 4320 之间"));
             }
-            if slot.x < 0
-                || slot.y < 0
-                || slot.x as u32 > monitor.work_area.width.saturating_sub(slot.width)
-                || slot.y as u32 > monitor.work_area.height.saturating_sub(slot.height)
+            let (visible_width, visible_height) = monitor.visible_size(slot.width, slot.height);
+            if slot.x < MIN_VISIBLE_PIXELS - visible_width as i32
+                || slot.y < MIN_VISIBLE_PIXELS - visible_height as i32
+                || i64::from(slot.x)
+                    > i64::from(monitor.work_area.width.saturating_sub(visible_width))
+                || i64::from(slot.y)
+                    > i64::from(monitor.work_area.height.saturating_sub(visible_height))
             {
-                return Err(invalid("窗口必须完整位于显示器工作区内"));
+                return Err(invalid("窗口坐标超出可用范围，须保留至少 64 像素可见区域"));
             }
         }
         Ok(())
@@ -151,19 +205,21 @@ impl WindowLayout {
                 // replace the user's game resolution with a work-area size.
                 let width = slot.width;
                 let height = slot.height;
+                let (saved_width, saved_height) = saved.visible_size(width, height);
+                let (current_width, current_height) = current.visible_size(width, height);
                 Ok(LayoutRect {
                     x: work.x.saturating_add(adapt_axis(
                         slot.x,
-                        slot.width,
+                        saved_width,
                         saved.work_area.width,
-                        width,
+                        current_width,
                         work.width,
                     )),
                     y: work.y.saturating_add(adapt_axis(
                         slot.y,
-                        slot.height,
+                        saved_height,
                         saved.work_area.height,
-                        height,
+                        current_height,
                         work.height,
                     )),
                     width,
@@ -175,6 +231,12 @@ impl WindowLayout {
 }
 
 fn adapt_axis(offset: i32, size: u32, previous: u32, next_size: u32, next: u32) -> i32 {
+    if offset < 0 {
+        return offset.max(MIN_VISIBLE_PIXELS - next_size as i32);
+    }
+    if previous == next && size == next_size {
+        return offset;
+    }
     let old_span = previous.saturating_sub(size);
     let anchor = if old_span == 0 {
         0.5
@@ -231,6 +293,7 @@ mod tests {
             },
             primary,
             scale_factor: 1.0,
+            frame: None,
         }
     }
 
@@ -275,6 +338,65 @@ mod tests {
                 height: 720
             }
         );
+    }
+
+    #[test]
+    fn negative_border_offsets_survive_resolve_and_monitor_changes() {
+        let mut value = layout();
+        value.windows[0].x = -8;
+        value.windows[0].y = -12;
+        let rect = value.resolve(&value.monitors).unwrap()[0];
+        assert_eq!((rect.x, rect.y), (-2568, -12));
+        let rect = value
+            .resolve(&[monitor("main", 0, 1920, 1040, true)])
+            .unwrap()[0];
+        assert_eq!((rect.x, rect.y), (-8, -12));
+        value.windows[0].x = -(value.windows[0].width as i32);
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn calibration_preserves_visible_edge_anchors_and_content_resolution() {
+        let mut value = layout();
+        let frame = WindowFrameMetrics {
+            dpi: 96,
+            style: 0,
+            ex_style: 0,
+            visible: FrameInsets {
+                left: 1,
+                top: 31,
+                right: 1,
+                bottom: 1,
+            },
+            invisible: FrameInsets {
+                left: 7,
+                top: 0,
+                right: 7,
+                bottom: 7,
+            },
+        };
+        value.monitors[1].frame = Some(frame);
+        value.windows[0].x = 2560 - 1282;
+        value.windows[0].y = 1400 - 752;
+        let mut current = value.monitors.clone();
+        current[1].frame = Some(WindowFrameMetrics {
+            visible: FrameInsets {
+                left: 2,
+                top: 46,
+                right: 2,
+                bottom: 2,
+            },
+            ..frame
+        });
+        let resolved = value.resolve(&current).unwrap()[0];
+        assert_eq!(
+            (resolved.x, resolved.y, resolved.width, resolved.height),
+            (-1284, 632, 1280, 720)
+        );
+        value.windows[0].x = 0;
+        value.windows[0].y = 0;
+        let resolved = value.resolve(&current).unwrap()[0];
+        assert_eq!((resolved.x, resolved.y), (-2560, 0));
     }
 
     #[test]

@@ -38,3 +38,31 @@ assert(recovered.windows[0].width === 1280 && recovered.windows[0].height === 72
 const fullResolution = adaptLayout({ ...layout, windows: [{ monitor_id: "main", x: 0, y: 0, width: 2560, height: 1440 }] }, [monitor(1920, 1040)]);
 assert(fullResolution.windows[0].width === 2560 && fullResolution.windows[0].height === 1440, "Game resolution is independent of the taskbar and monitor size");
 assert(validateLayout(fullResolution) === null, "A resolution larger than the work area is valid");
+
+const borderOffset = { ...layout, windows: [{ ...layout.windows[0], x: -8, y: -12 }] };
+assert(validateLayout(borderOffset) === null, "Negative border offsets on the primary monitor are valid");
+for (const displays of [monitors, [monitor(1920, 1040)]]) {
+  const restored = adaptLayout(borderOffset, displays);
+  assert(restored.windows[0].x === -8 && restored.windows[0].y === -12, "Reopening or adapting preserves negative offsets");
+}
+const negativeMove = moveSlot({ ...borderOffset, monitors: [monitors[0]] }, 0,
+  { x: -8, y: -12, width: 1280, height: 720 });
+assert(negativeMove.x === -8 && negativeMove.y === -12, "Dragging accepts negative offsets without snapping");
+assert(validateLayout({ ...borderOffset, windows: [{ ...borderOffset.windows[0], x: -1280 }] }) !== null,
+  "A completely hidden window is rejected");
+
+const framedMonitor: LayoutMonitor = { ...monitor(2560, 1440), frame: { dpi: 96, style: 0, ex_style: 0,
+  visible: { left: 1, top: 31, right: 1, bottom: 1 }, invisible: { left: 7, top: 0, right: 7, bottom: 7 } } };
+const framed: WindowLayout = { ...layout, monitors: [framedMonitor], windows: [
+  { monitor_id: "main", x: 0, y: 0, width: 1280, height: 720 },
+  { monitor_id: "main", x: 0, y: 688, width: 1280, height: 720 }] };
+const largerFrame: LayoutMonitor = { ...framedMonitor, frame: { ...framedMonitor.frame!, visible: { left: 2, top: 46, right: 2, bottom: 2 } } };
+const edgeLayout = { ...framed, windows: [{ ...framed.windows[0], x: 1278, y: 688 }] };
+const calibrated = adaptLayout(edgeLayout, [largerFrame]);
+assert(calibrated.windows[0].x === 1276 && calibrated.windows[0].y === 672, "Calibration keeps right and bottom visible edges anchored");
+assert(calibrated.windows[0].width === 1280 && calibrated.windows[0].height === 720, "Calibration never edits game resolution");
+const frameResize = resizeSlot(framed, 0, framed.windows[0], 100, 50, "se");
+assert(frameResize.width === 1380 && frameResize.height === 770, "Resizing operates on client dimensions without double-counting caption");
+const tall = { ...framed, monitors: [{ ...framedMonitor, work_area: { ...framedMonitor.work_area, height: 2160 } }] };
+const stacked = moveSlot(tall, 1, { x: 0, y: 748, width: 1280, height: 720 }, 8);
+assert(stacked.y === 752 && stacked.height === 720, "Snapping stacks visible frames without caption overlap");

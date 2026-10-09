@@ -82,6 +82,154 @@ struct TemporarySettingsOverride {
 
 type AccountPositionIdentity = (Option<i32>, Option<i32>, Option<String>);
 
+/// Record ownership before a status scan can discard a still-loading window.
+/// The retained OS handle also prevents PID reuse from authorizing title writes.
+fn track_launched_process(
+    app: &tauri::AppHandle,
+    state: &SharedState,
+    config: &GlobalConfig,
+    account_id: &str,
+    pid: u32,
+    mod_args: &str,
+    executable: &Path,
+) {
+    let process = crate::infrastructure::system::LaunchProcessGuard::capture(pid, executable)
+        .map(std::sync::Arc::new);
+    let alive = process.clone().map(|process| {
+        std::sync::Arc::new(move || process.is_running())
+            as std::sync::Arc<dyn Fn() -> bool + Send + Sync>
+    });
+    state
+        .multi_instance()
+        .instances()
+        .record_launched_with_process(account_id, pid, mod_args, alive);
+    let Some(process) = process else {
+        return;
+    };
+    let state = state.clone();
+    let accounts_dir = config.accounts_dir.clone();
+    let account_id = account_id.to_string();
+    let app = app.clone();
+    let executable = executable.to_path_buf();
+    let expected_layout = selected_window_layout(config).cloned();
+    tauri::async_runtime::spawn(async move {
+        let mut frame_probe =
+            crate::infrastructure::game_layout_windows::StartupFrameProbe::default();
+        let mut frame_lease: Option<crate::application::multi_instance::FrameCalibrationLease> =
+            None;
+        let started = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            if !process.is_running()
+                || state.multi_instance().instances().pid_for(&account_id) != Some(pid)
+            {
+                break;
+            }
+            // Only the elected representative measures borders. Other windows
+            // wait for or reuse its result; title repair has an independent life.
+            if frame_probe.exhausted(started.elapsed()) {
+                frame_lease.take();
+            }
+            if frame_probe.due(started.elapsed()) {
+                use crate::application::multi_instance::FrameCalibrationClaim;
+                let executable = executable.clone();
+                let target = tokio::task::spawn_blocking(move || {
+                    crate::infrastructure::game_layout_windows::frame_target(pid, &executable)
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(target) = target {
+                    if frame_lease
+                        .as_ref()
+                        .is_some_and(|lease| lease.key() != &target.key)
+                    {
+                        frame_lease.take();
+                        frame_probe.reset_sample();
+                    }
+                    if frame_lease.is_none() {
+                        match state
+                            .multi_instance()
+                            .frame_calibrations()
+                            .claim(target.key.clone())
+                        {
+                            FrameCalibrationClaim::Ready => frame_probe.finish(),
+                            FrameCalibrationClaim::Busy => {}
+                            FrameCalibrationClaim::Representative(lease) => {
+                                frame_lease = Some(lease)
+                            }
+                        }
+                    }
+                    if let Some(lease) = frame_lease.take() {
+                        // Keep the lease inside blocking work, including if this
+                        // async supervisor is cancelled while the OS call runs.
+                        let measured = tokio::task::spawn_blocking(move || {
+                            (
+                                crate::infrastructure::game_layout_windows::sample_target(&target),
+                                lease,
+                            )
+                        })
+                        .await;
+                        if let Ok((sample, lease)) = measured {
+                            let stable = frame_probe.observe(started.elapsed(), sample.clone());
+                            if let Some(sample) = stable {
+                                let state = state.clone();
+                                let app = app.clone();
+                                let layout = expected_layout.clone();
+                                let calibrated = tokio::task::spawn_blocking(move || {
+                                    let result =
+                                        crate::commands::window_layout::calibrate_game_frame(
+                                            &state,
+                                            &app,
+                                            sample,
+                                            layout.as_ref(),
+                                        );
+                                    if result.is_ok() {
+                                        lease.complete();
+                                    }
+                                    result
+                                })
+                                .await
+                                .is_ok_and(|result| result.is_ok());
+                                if calibrated {
+                                    frame_probe.finish();
+                                } else {
+                                    frame_probe.reset_sample();
+                                }
+                            } else if sample.is_some() {
+                                frame_lease = Some(lease);
+                            }
+                            // None drops the lease so another ready window can
+                            // take over rather than waiting for this one's retries.
+                        } else {
+                            frame_probe.observe(started.elapsed(), None);
+                        }
+                    }
+                } else {
+                    frame_lease.take();
+                    frame_probe.observe(started.elapsed(), None);
+                }
+            }
+            let state = state.clone();
+            let accounts_dir = accounts_dir.clone();
+            let account_id = account_id.clone();
+            let process = process.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if process.is_running() {
+                    let _ = refresh_launch_window_title(
+                        state.multi_instance().instances(),
+                        &accounts_dir,
+                        &account_id,
+                        pid,
+                        |title| SystemGameWindowPort.rename(pid, title),
+                    );
+                }
+            })
+            .await;
+        }
+    });
+}
+
 /// Read the latest nickname under the same lock as explicit account renames.
 /// A detached startup retry must never restore a title captured before a rename.
 fn refresh_launch_window_title(
@@ -120,6 +268,7 @@ struct WindowGeometryRequest {
     account_id: String,
     layout: Option<WindowLayout>,
     position: Option<AccountPositionIdentity>,
+    monitors: Vec<crate::domain::window_layout::LayoutMonitor>,
 }
 
 impl WindowGeometryRequest {
@@ -127,6 +276,8 @@ impl WindowGeometryRequest {
         Self {
             accounts_dir: config.accounts_dir.clone(),
             account_id: account_id.into(),
+            monitors: crate::commands::window_layout::configured_monitors(Some(config))
+                .unwrap_or_default(),
             layout: selected_window_layout(config).cloned(),
             position: AccountManager::load_meta(&config.accounts_dir, account_id)
                 .ok()
@@ -138,6 +289,25 @@ impl WindowGeometryRequest {
                     )
                 }),
         }
+    }
+
+    fn calibrated_target(&self, state: &SharedState, original: LayoutRect) -> LayoutRect {
+        let Some(layout) = &self.layout else {
+            return original;
+        };
+        let Some(config) = state.configuration().snapshot() else {
+            return original;
+        };
+        let resolved = (|| {
+            let before = layout.resolve(&self.monitors).ok()?;
+            let index = before.iter().position(|rect| *rect == original)?;
+            let monitors = crate::infrastructure::game_layout_windows::with_frame_profiles(
+                self.monitors.clone(),
+                &config.window_frame_profiles,
+            );
+            layout.resolve(&monitors).ok()?.get(index).copied()
+        })();
+        resolved.unwrap_or(original)
     }
 
     fn matches(&self, config: &GlobalConfig, account: &AccountMeta) -> bool {
@@ -2516,10 +2686,15 @@ async fn launch_single(
     let d2r_pid = match d2r_pid_opt {
         Some(pid) => {
             emit("game", "ok", &format!("游戏进程已启动 (PID: {})", pid));
-            state
-                .multi_instance()
-                .instances()
-                .record_launched(account_id, pid, &meta.mod_args);
+            track_launched_process(
+                app,
+                state,
+                config,
+                account_id,
+                pid,
+                &meta.mod_args,
+                &context.installation.game_executable,
+            );
             crate::audio_mod::emit_runtime_compatibility_warning(
                 app,
                 state,
@@ -2582,11 +2757,14 @@ async fn launch_single(
                         {
                             continue;
                         }
+                        let calibrated_rect = layout_rect.map(|rect| {
+                            geometry_request.calibrated_target(&state_for_position, rect)
+                        });
                         state_for_position
                             .multi_instance()
                             .instances()
                             .apply_initial_window_geometry(&account_id_owned, pid_copy, || {
-                                if let Some(rect) = layout_rect {
+                                if let Some(rect) = calibrated_rect {
                                     crate::infrastructure::game_layout_windows::apply_for_pid(
                                         pid_copy,
                                         &layout_executable,
@@ -3167,10 +3345,15 @@ async fn launch_single_token(
     let d2r_pid = match d2r_pid_opt {
         Some(pid) => {
             emit("game", "ok", &format!("游戏进程已启动 (PID: {})", pid));
-            state
-                .multi_instance()
-                .instances()
-                .record_launched(account_id, pid, &meta.mod_args);
+            track_launched_process(
+                app,
+                state,
+                config,
+                account_id,
+                pid,
+                &meta.mod_args,
+                &context.installation.game_executable,
+            );
             crate::audio_mod::emit_runtime_compatibility_warning(
                 app,
                 state,
@@ -3228,11 +3411,13 @@ async fn launch_single_token(
                     {
                         continue;
                     }
+                    let calibrated_rect = layout_rect
+                        .map(|rect| geometry_request.calibrated_target(&state_for_geometry, rect));
                     state_for_geometry
                         .multi_instance()
                         .instances()
                         .apply_initial_window_geometry(&account_id_for_window, pid_copy, || {
-                            if let Some(rect) = layout_rect {
+                            if let Some(rect) = calibrated_rect {
                                 crate::infrastructure::game_layout_windows::apply_for_pid(
                                     pid_copy,
                                     &layout_executable,
@@ -3462,10 +3647,9 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 mod tests {
     use super::{
         apply_temporary_graphics_override_at_path, battle_net_account_to_keep,
-        battle_net_launch_argument, launch_login_is_ready, launch_queue_can_continue,
-        parse_windows_command_line, persist_window_position, preflight_accounts,
-        replace_bnet_roaming_snapshot, unique_account_window_executable,
-        validate_legacy_reg_sections, LaunchGraphicsOverride,
+        battle_net_launch_argument, launch_login_is_ready, parse_windows_command_line,
+        persist_window_position, preflight_accounts, replace_bnet_roaming_snapshot,
+        unique_account_window_executable, validate_legacy_reg_sections, LaunchGraphicsOverride,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::domain::config::GlobalConfig;
@@ -3569,14 +3753,6 @@ mod tests {
     }
 
     #[test]
-    fn failed_or_incomplete_launch_stops_the_account_queue() {
-        assert!(!launch_queue_can_continue(false, false));
-        assert!(!launch_queue_can_continue(false, true));
-        assert!(!launch_queue_can_continue(true, false));
-        assert!(launch_queue_can_continue(true, true));
-    }
-
-    #[test]
     fn temporary_scheme_graphics_restore_the_exact_system_settings() {
         let root = std::env::temp_dir().join(format!(
             "d2rhub_scheme_settings_{}_{}",
@@ -3661,6 +3837,7 @@ mod tests {
         account.active_position_id = Some("original".into());
         let config = GlobalConfig::default();
         let request = super::WindowGeometryRequest {
+            monitors: Vec::new(),
             accounts_dir: String::new(),
             account_id: account.id.clone(),
             layout: None,

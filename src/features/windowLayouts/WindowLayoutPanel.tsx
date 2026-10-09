@@ -10,7 +10,7 @@ import { useLaunch } from "../../store/launch";
 import { showToast } from "../../components/ui/Toast";
 import { LayoutCanvas } from "./LayoutCanvas";
 import { getLayoutAccountOrder, getLayoutMonitors, restoreGameLayout } from "./gateway";
-import { adaptLayout, changeSlotCount, constrainSlot, defaultPresetResolution, MAX_LAYOUT_WINDOWS, MIN_LAYOUT_HEIGHT, MIN_LAYOUT_WIDTH, moveSlot, presetSlots, primaryMonitor, resizeSlot, slotRect, validateLayout, type PresetResolution } from "./model";
+import { adaptLayout, changeSlotCount, constrainSlot, defaultPresetResolution, MAX_LAYOUT_WINDOWS, MIN_VISIBLE_PIXELS, MIN_LAYOUT_HEIGHT, MIN_LAYOUT_WIDTH, moveSlot, presetSlots, primaryMonitor, resizeSlot, slotRect, visibleSize, visibleInsets, validateLayout, type PresetResolution } from "./model";
 import "./windowLayouts.css";
 
 function GeometryField({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
@@ -37,8 +37,14 @@ function PresetThumbnail({ monitors, count, resolution }: { monitors: LayoutMoni
   const monitor = primaryMonitor(monitors)!;
   const windows = presetSlots(monitors, count, resolution).slice().reverse();
   return <svg viewBox={`-30 -30 ${monitor.work_area.width + 60} ${monitor.work_area.height + 60}`} aria-hidden="true">
-    {windows.map((slot, index) => <rect key={index} x={slot.x} y={slot.y} width={slot.width} height={slot.height} rx={24}
-      className={index === windows.length - 1 ? "preset-primary" : "preset-secondary"} vectorEffect="non-scaling-stroke" />)}
+    {windows.map((slot, index) => {
+      const size = visibleSize(slot, monitor), edge = visibleInsets(monitor);
+      return <g key={index}>
+        <rect x={slot.x} y={slot.y} width={size.width} height={size.height} rx={4}
+          className={index === windows.length - 1 ? "preset-primary" : "preset-secondary"} vectorEffect="non-scaling-stroke" />
+        {edge.top > 0 && <rect className="preset-caption" x={slot.x} y={slot.y} width={size.width} height={edge.top} />}
+      </g>;
+    })}
   </svg>;
 }
 
@@ -116,6 +122,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
   const slot = layout?.windows[selectedIndex];
   const monitor = slot ? monitors.find(monitor => monitor.id === slot.monitor_id) : undefined;
   const rect = slot && layout ? slotRect(slot, layout.monitors) : undefined;
+  const visible = slot ? visibleSize(slot, monitor) : undefined;
   const capable = !!primary && primary.work_area.width >= MIN_LAYOUT_WIDTH && primary.work_area.height >= MIN_LAYOUT_HEIGHT;
   const changedDisplays = editor?.baseline && monitors.length && JSON.stringify(editor.baseline.monitors) !== JSON.stringify(monitors);
   const dirty = !!editor && (!editor.baseline || JSON.stringify(layout ?? editor.draft) !== JSON.stringify(editor.baseline));
@@ -332,20 +339,21 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
             {monitors.map(monitor => <option key={monitor.id} value={monitor.id} disabled={monitor.work_area.width < MIN_LAYOUT_WIDTH || monitor.work_area.height < MIN_LAYOUT_HEIGHT}>
               {monitor.name}{monitor.primary ? (english ? " · Primary" : " · 主屏") : ""}</option>)}
           </select></label>
-          <GeometryField label="X" value={rect.x} min={monitor.work_area.x} max={monitor.work_area.x + Math.max(0, monitor.work_area.width - slot.width)} onChange={value => changeSlot({ x: value - monitor.work_area.x })} />
-          <GeometryField label="Y" value={rect.y} min={monitor.work_area.y} max={monitor.work_area.y + Math.max(0, monitor.work_area.height - slot.height)} onChange={value => changeSlot({ y: value - monitor.work_area.y })} />
+          <GeometryField label="X" value={rect.x} min={monitor.work_area.x + MIN_VISIBLE_PIXELS - visible!.width} max={monitor.work_area.x + Math.max(0, monitor.work_area.width - visible!.width)} onChange={value => changeSlot({ x: value - monitor.work_area.x })} />
+          <GeometryField label="Y" value={rect.y} min={monitor.work_area.y + MIN_VISIBLE_PIXELS - visible!.height} max={monitor.work_area.y + Math.max(0, monitor.work_area.height - visible!.height)} onChange={value => changeSlot({ y: value - monitor.work_area.y })} />
           <div className="layout-resolution-field"><span>{english ? "Game resolution" : "游戏分辨率"}</span>
             <ResolutionInput label={english ? "Game resolution" : "游戏分辨率"} value={`${slot.width}x${slot.height}`}
               onChange={value => { const [width, height] = value.split("x").map(Number); changeSlot({ width, height }); }} />
           </div>
+          <p className="layout-visible-size">{english ? `Visible window: ${visible!.width} × ${visible!.height} · includes title bar` : `窗口实际占位：${visible!.width} × ${visible!.height} · 含标题栏`}</p>
           <div className="layout-inspector-actions">
-            <Button type="button" size="sm" onClick={() => changeSlot({ x: Math.round((monitor.work_area.width - slot.width) / 2), y: Math.round((monitor.work_area.height - slot.height) / 2) })}
+            <Button type="button" size="sm" onClick={() => changeSlot({ x: Math.round((monitor.work_area.width - visible!.width) / 2), y: Math.round((monitor.work_area.height - visible!.height) / 2) })}
               title={english ? "Center on this display" : "在此显示器居中"}><AlignCenter size={14} /><span>{english ? "Center" : "居中"}</span></Button>
             <Button type="button" size="sm" onClick={() => changeSlot({ x: 0, y: 0, width: monitor.bounds.width, height: monitor.bounds.height })}
               title={english ? "Use display resolution" : "使用显示器分辨率"}><Maximize size={14} /><span>{english ? "Match display" : "匹配显示器"}</span></Button>
           </div>
         </div>}
-        <div className="layout-panel-footer"><p>{english ? "Resolution has the same meaning as account resolution and takes effect on the next launch. Restoring a layout moves existing windows without resizing them. The canvas previews placement; it excludes window borders." : "分辨率与账号分辨率含义相同，下次启动时生效。恢复布局仅移动运行中的窗口，不改变其大小。画布用于预览排列，不包含窗口边框。"}</p>
+        <div className="layout-panel-footer"><p>{english ? "Resolution has the same meaning as account resolution and takes effect on the next launch. Restoring a layout moves existing windows without resizing them. Coordinates align the visible window edge. The preview includes the title bar and visible borders; measurements are calibrated after launch." : "分辨率与账号分辨率含义相同，下次启动时生效。恢复布局仅移动运行中的窗口，不改变其大小。坐标对齐窗口可见边缘，画布包含标题栏和可见边框，启动后自动校准。"}</p>
           <div>{editor.baseline && <Button type="button" size="sm" variant="danger" onClick={remove}><Trash2 size={13} />{confirmDelete ? (english ? "Confirm delete" : "确认删除") : (english ? "Delete layout" : "删除布局")}</Button>}
             <Button type="button" size="sm" onClick={() => save(true)}><Check size={14} />{english ? "Save & use layout" : "保存并使用布局"}</Button></div>
         </div>

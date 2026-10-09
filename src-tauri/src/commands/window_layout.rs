@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::commands::account::{AccountManager, AccountMeta};
 use crate::domain::account::WindowPositionPreset;
 use crate::domain::config::GlobalConfig;
-use crate::domain::window_layout::{LayoutMonitor, LayoutRect};
+use crate::domain::window_layout::{LayoutMonitor, LayoutRect, WindowFrameProfile, WindowLayout};
 use crate::error::AppError;
 use crate::infrastructure::game_layout_windows::{self as windows, GameLayoutWindow};
 use crate::launch_context::account_game_executable_identity;
@@ -91,10 +91,122 @@ fn match_accounts<'a>(
 }
 
 #[tauri::command]
-pub async fn get_game_layout_monitors() -> Result<Vec<LayoutMonitor>, AppError> {
-    tokio::task::spawn_blocking(windows::monitors)
+pub async fn get_game_layout_monitors(
+    state: tauri::State<'_, SharedState>,
+) -> Result<Vec<LayoutMonitor>, AppError> {
+    let config = state.configuration().snapshot();
+    tokio::task::spawn_blocking(move || configured_monitors(config.as_ref()))
         .await
         .map_err(|error| AppError::FileError(error.to_string()))?
+}
+
+pub(crate) fn configured_monitors(
+    config: Option<&GlobalConfig>,
+) -> Result<Vec<LayoutMonitor>, AppError> {
+    Ok(windows::with_frame_profiles(
+        windows::monitors()?,
+        config
+            .map(|value| value.window_frame_profiles.as_slice())
+            .unwrap_or_default(),
+    ))
+}
+
+fn update_frame_profile(
+    config: &mut GlobalConfig,
+    profile: WindowFrameProfile,
+    monitors: &[LayoutMonitor],
+) -> bool {
+    if !monitors.iter().any(|monitor| {
+        monitor.id == profile.monitor_id
+            && (monitor.scale_factor - profile.scale_factor).abs() < 0.001
+    }) {
+        return false;
+    }
+    if !profile.metrics.valid() || config.window_frame_profiles.contains(&profile) {
+        return false;
+    }
+    config.window_frame_profiles.retain(|previous| {
+        previous.monitor_id != profile.monitor_id
+            || (previous.scale_factor - profile.scale_factor).abs() >= 0.001
+            || previous.metrics.dpi != profile.metrics.dpi
+            || previous.metrics.style != profile.metrics.style
+            || previous.metrics.ex_style != profile.metrics.ex_style
+    });
+    if config.window_frame_profiles.len() >= 64 {
+        config.window_frame_profiles.remove(0);
+    }
+    config.window_frame_profiles.push(profile);
+    true
+}
+
+/// Called only after two equal normal-window samples. Same parameters are a
+/// no-op; profile persistence uses the normal atomic configuration transaction.
+pub(crate) fn calibrate_game_frame(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    sample: windows::GameFrameSample,
+    expected_layout: Option<&WindowLayout>,
+) -> Result<(), AppError> {
+    // The hot no-change path is an in-memory comparison only: no monitor/window
+    // enumeration, repository access, write transaction or event publication.
+    if state
+        .configuration()
+        .snapshot()
+        .is_some_and(|config| config.window_frame_profiles.contains(&sample.profile))
+    {
+        return Ok(());
+    }
+    let mut old_monitors = Vec::new();
+    let mut updated = false;
+    crate::commands::global_config::mutate_loaded_global_config(state, app, |config| {
+        old_monitors = configured_monitors(Some(config))?;
+        updated = update_frame_profile(config, sample.profile, &old_monitors);
+        Ok(updated)
+    })?;
+    if !updated {
+        return Ok(());
+    }
+    let Some(config) = state.configuration().snapshot() else {
+        return Ok(());
+    };
+    let Some(layout) = config.window_layouts.iter().find(|layout| {
+        config.window_layout_enabled
+            && Some(layout.id.as_str()) == config.active_window_layout_id.as_deref()
+            && Some(*layout) == expected_layout
+    }) else {
+        return Ok(());
+    };
+    let before = layout.resolve(&old_monitors)?;
+    let after = layout.resolve(&configured_monitors(Some(&config))?)?;
+    if before == after {
+        return Ok(());
+    }
+    let observed = windows::snapshot()?;
+    for (index, (id, window)) in match_accounts(&identities(&config, state), &observed)
+        .into_iter()
+        .enumerate()
+    {
+        let (Some(old), Some(new)) = (before.get(index), after.get(index)) else {
+            continue;
+        };
+        if old == new || window.minimized {
+            continue;
+        }
+        let Some(current) = windows::visible_window_rect(window.handle) else {
+            continue;
+        };
+        // Respect a user's drag/capture/restore instead of pulling their window back.
+        if (i64::from(current.x) - i64::from(old.x)).abs() > 2
+            || (i64::from(current.y) - i64::from(old.y)).abs() > 2
+        {
+            continue;
+        }
+        state
+            .multi_instance()
+            .instances()
+            .apply_initial_window_geometry(&id, window.pid, || windows::apply(window, *new, false));
+    }
+    Ok(())
 }
 
 /// The editor and restore operation share the same PID/title matching and
@@ -241,7 +353,7 @@ pub(crate) fn prepare_launch_layout(
         .iter()
         .find(|layout| layout.id == id)
         .ok_or_else(|| AppError::ConfigReadError("所选窗口布局不存在，请重新选择".into()))?;
-    let rectangles = layout.resolve(&windows::monitors()?)?;
+    let rectangles = layout.resolve(&configured_monitors(Some(config))?)?;
     let observed = windows::snapshot()?;
     let existing: Vec<_> = match_accounts(&identities(config, state), &observed)
         .into_iter()
@@ -288,7 +400,7 @@ pub(crate) fn restore_layout(
         .as_ref()
         .and_then(|id| config.window_layouts.iter().find(|layout| &layout.id == id))
         .ok_or_else(|| AppError::FileError("请先选择一个已保存的窗口布局".into()))?;
-    let rectangles = layout.resolve(&windows::monitors()?)?;
+    let rectangles = layout.resolve(&configured_monitors(Some(config))?)?;
     let observed = windows::snapshot()?;
     let matched = match_accounts(&identities(config, state), &observed);
     if matched.len() > rectangles.len() {
@@ -341,6 +453,110 @@ pub async fn restore_game_window_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identical_frame_calibration_does_not_write_and_dpi_profiles_stay_separate() {
+        use crate::domain::window_layout::{FrameInsets, WindowFrameMetrics};
+        let rect = LayoutRect {
+            x: 0,
+            y: 0,
+            width: 2560,
+            height: 1440,
+        };
+        let metrics = WindowFrameMetrics {
+            dpi: 96,
+            style: 0,
+            ex_style: 0,
+            visible: FrameInsets {
+                left: 1,
+                top: 31,
+                right: 1,
+                bottom: 1,
+            },
+            invisible: FrameInsets::default(),
+        };
+        let monitor = LayoutMonitor {
+            id: "main".into(),
+            name: "main".into(),
+            bounds: rect,
+            work_area: rect,
+            primary: true,
+            scale_factor: 1.0,
+            frame: Some(metrics),
+        };
+        let mut config = GlobalConfig::default();
+        // Older config files have neither persisted profiles nor monitor frames.
+        let mut legacy = serde_json::to_value(&config).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("window_frame_profiles");
+        let migrated: GlobalConfig = serde_json::from_value(legacy).unwrap();
+        assert!(migrated.window_frame_profiles.is_empty());
+        let roundtrip: GlobalConfig =
+            serde_json::from_value(serde_json::to_value(&migrated).unwrap()).unwrap();
+        assert!(roundtrip.window_frame_profiles.is_empty());
+        let mut profile = WindowFrameProfile {
+            monitor_id: "main".into(),
+            scale_factor: 1.0,
+            metrics,
+        };
+        // Even a measurement equal to the preset is persisted once, so startup
+        // can use the measured profile without re-deriving it after a restart.
+        assert!(update_frame_profile(
+            &mut config,
+            profile.clone(),
+            std::slice::from_ref(&monitor)
+        ));
+        assert_eq!(config.window_frame_profiles, vec![profile.clone()]);
+        let directory =
+            std::env::temp_dir().join(format!("d2r-frame-profile-{}", uuid::Uuid::new_v4()));
+        config.save(directory.to_str().unwrap()).unwrap();
+        let config_file = directory.join("global_config.json");
+        let mut config: GlobalConfig =
+            serde_json::from_slice(&std::fs::read(&config_file).unwrap()).unwrap();
+        std::fs::remove_file(config_file).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+        assert_eq!(config.window_frame_profiles, vec![profile.clone()]);
+        assert!(!update_frame_profile(
+            &mut config,
+            profile.clone(),
+            std::slice::from_ref(&monitor)
+        ));
+        profile.metrics.visible.top = 33;
+        assert!(update_frame_profile(
+            &mut config,
+            profile.clone(),
+            std::slice::from_ref(&monitor)
+        ));
+        let monitors =
+            windows::with_frame_profiles(vec![monitor.clone()], &config.window_frame_profiles);
+        assert!(!update_frame_profile(
+            &mut config,
+            profile.clone(),
+            &monitors
+        ));
+        assert_eq!(config.window_frame_profiles.len(), 1);
+        let mut other_style = profile.clone();
+        other_style.metrics.style = 2;
+        assert!(update_frame_profile(
+            &mut config,
+            other_style.clone(),
+            &monitors
+        ));
+        assert_eq!(config.window_frame_profiles.len(), 2);
+        assert!(config.window_frame_profiles.contains(&profile));
+        assert!(config.window_frame_profiles.contains(&other_style));
+        assert!(!update_frame_profile(&mut config, other_style, &monitors));
+        let changed_dpi = LayoutMonitor {
+            scale_factor: 1.5,
+            ..monitor
+        };
+        let monitors =
+            windows::with_frame_profiles(vec![changed_dpi], &config.window_frame_profiles);
+        assert_eq!(monitors[0].frame, Some(metrics));
+        assert!(!update_frame_profile(&mut config, profile, &monitors));
+    }
     fn account(id: &str, title: &str, pid: Option<u32>) -> AccountWindowIdentity {
         AccountWindowIdentity {
             id: id.into(),
