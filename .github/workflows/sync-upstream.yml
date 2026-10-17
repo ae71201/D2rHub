@@ -1,0 +1,87 @@
+name: Sync Upstream + Latest Release
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 每天 UTC 8:00
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync source code
+        run: |
+          git remote add upstream https://github.com/gjy991229/D2rHub.git || true
+          git fetch upstream
+          git checkout main
+          git reset --hard upstream/main
+
+      - name: Keep our workflow file
+        run: |
+          # 确保我们的 workflow 文件存在（不会包含真实 secret）
+          mkdir -p .github/workflows
+          # 这里只做保护，实际内容已经在仓库里，不在这里重写完整内容
+
+      - name: Commit and push
+        run: |
+          # 把被 reset 删掉的 workflow 文件加回来
+          git checkout HEAD@{1} -- .github/workflows/sync-upstream.yml 2>/dev/null || true
+          git add .github/workflows/sync-upstream.yml || true
+          git commit -m "chore: sync from upstream and keep workflow" || echo "No changes"
+          git push origin main --force
+
+      - name: Sync Tags
+        run: |
+          git fetch upstream --tags
+          git push origin --tags --force || true
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: Sync latest Release
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          LATEST_TAG=$(gh release list --repo gjy991229/D2rHub --limit 1 --json tagName -q '.[0].tagName')
+          echo "最新 Release Tag: $LATEST_TAG"
+
+          if gh release view "$LATEST_TAG" --repo ae71201/D2rHub > /dev/null 2>&1; then
+            echo "Release 已存在，跳过"
+            exit 0
+          fi
+
+          mkdir -p ./release-assets
+          gh release download "$LATEST_TAG" --repo gjy991229/D2rHub --dir ./release-assets --clobber
+
+          TITLE=$(gh release view "$LATEST_TAG" --repo gjy991229/D2rHub --json name -q .name)
+          BODY=$(gh release view "$LATEST_TAG" --repo gjy991229/D2rHub --json body -q .body)
+          IS_PRERELEASE=$(gh release view "$LATEST_TAG" --repo gjy991229/D2rHub --json isPrerelease -q .isPrerelease)
+
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            gh release create "$LATEST_TAG" ./release-assets/* \
+              --repo ae71201/D2rHub \
+              --title "$TITLE" \
+              --notes "$BODY" \
+              --prerelease
+          else
+            gh release create "$LATEST_TAG" ./release-assets/* \
+              --repo ae71201/D2rHub \
+              --title "$TITLE" \
+              --notes "$BODY"
+          fi
