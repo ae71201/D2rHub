@@ -97,7 +97,7 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
       <ScanLine size={17} aria-hidden="true" />
       <span><strong>{mode === "chat" ? (en ? "Cross-PC room signals" : "跨电脑聊天信号") : (en ? "Visual recognition" : "视觉辅助识别")}</strong>
         <small>{mode === "chat" ? (en ? "Follow another player's next room" : "通过聊天信号，跟随另一台电脑进入下一局") : (en ? "Supplement area names and verify uncertain drops" : "补充地区名称，核验低分掉落")}</small></span>
-      <em>{en ? "Experimental" : "试验"}</em><ChevronDown className="feature-chevron" size={15} aria-hidden="true" />
+      <ChevronDown className="feature-chevron" size={15} aria-hidden="true" />
     </summary>
     <div className="feature-settings-body">
       {!draft && !error && <p className="feature-help" role="status">{en ? "Loading settings…" : "正在读取设置…"}</p>}

@@ -19,7 +19,7 @@ const FEATURE_LABELS: Record<string, readonly [string, string]> = {
   [ROOM_TOOLS_CAPSULE_FEATURE]: ["局内房间工具", "In-game room tools"],
   [HOSTILE_RESTART_CAPSULE_FEATURE]: ["敌对自动重开", "Hostile auto-restart"],
   [PARTY_LOOT_CAPSULE_FEATURE]: ["左侧玩家尸体拾取按钮", "Player loot buttons"],
-  [SCENE_SHORTCUTS_CAPSULE_FEATURE]: ["场景重开（实验）", "Scene restart (experimental)"],
+  [SCENE_SHORTCUTS_CAPSULE_FEATURE]: ["场景重开", "Scene restart"],
   [ESC_NEXT_GAME_CAPSULE_FEATURE]: ["双击 Esc 下一局地狱", "Double Esc: next Hell game"],
   [AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE]: ["死亡自动退房", "Auto-exit on death"],
 };

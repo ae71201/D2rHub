@@ -289,7 +289,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               />
               <FeatureChoice
                 title={isEnglish ? "Player loot buttons" : "左侧玩家尸体拾取按钮"}
-                detail={isEnglish ? "Native per-player loot permission buttons beside the left roster. HD keyboard/mouse interface." : "在左侧玩家头像旁逐人切换拾取权限。适用于高清键鼠界面，权限由游戏控制。"}
+                detail={isEnglish ? "Click native per-player corpse-loot buttons beside the left roster. No image recognition; HD keyboard/mouse interface." : "点击左侧玩家头像旁的原生按钮切换尸体拾取权限。无需图像识别，适用于高清键鼠界面。"}
                 checked={!!analysis.selection.includePartyLoot}
                 locked={inheritedFeatureGroups.includes("party_loot")}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
@@ -297,8 +297,8 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                 onChange={value => actions.changeFeatures({ includePartyLoot: value })}
               />
               <FeatureChoice
-                title={isEnglish ? "Scene restart (experimental)" : "场景重开（实验）"}
-                detail={isEnglish ? "Use the game's Help key to restart Hell. Attempts Travincal travel on every game entry. Replaces HD Help with a backup; in-game testing required." : "帮助键触发下一局地狱，每次进房尝试传送崔凡克。替换高清帮助页并备份，需游戏内验证。"}
+                title={isEnglish ? "Scene restart" : "场景重开"}
+                detail={isEnglish ? "Restart or create a game at an A3, Travincal, or A4 waypoint. Uses native game logic; no image recognition. Backs up the replaced HD Help page." : "需在 A3、崔凡克或 A4 小站处重开或创房；使用游戏原生流程，无需图像识别。替换高清帮助页并备份。"}
                 checked={!!analysis.selection.includeSceneShortcuts}
                 locked={inheritedFeatureGroups.includes("scene_shortcuts")}
                 lockLabel={isEnglish ? "Installed" : "已安装"}

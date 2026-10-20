@@ -15,8 +15,8 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
   const featureLabels: [keyof AudioModFeatureSelection, string, string][] = [
     ["includeRoomTools", en ? "In-game room tools" : "局内房间工具", en ? "Create, join, and follow games" : "创建、加入与自动跟房"],
     ["includeHostileAutoRestart", en ? "Hostile auto-restart" : "敌对自动重开", en ? "Requires sound; includes Double Esc" : "需开启声音，自动包含双击 Esc 下一局"],
-    ["includePartyLoot", en ? "Player loot buttons" : "左侧玩家尸体拾取按钮", en ? "Native per-player permission controls" : "在左侧玩家头像旁逐人点击切换尸体拾取权限"],
-    ["includeSceneShortcuts", en ? "Scene restart (experimental)" : "场景重开（实验）", en ? "MYMOD waypoint restart; replaces the HD Help page" : "MYMOD 小站重开链；替换高清帮助页，按游戏帮助键触发"],
+    ["includePartyLoot", en ? "Player loot buttons" : "左侧玩家尸体拾取按钮", en ? "Native per-player permission controls; no image recognition" : "点击左侧玩家头像旁的原生按钮切换尸体拾取权限，无需图像识别"],
+    ["includeSceneShortcuts", en ? "Scene restart" : "场景重开", en ? "Restart or create at an A3, Travincal, or A4 waypoint; no image recognition" : "需在 A3、崔凡克或 A4 小站处重开或创房，无需图像识别"],
     ["includeEscNextGame", en ? "Double Esc: next Hell game" : "双 Esc 下一局地狱", en ? "Press Esc twice to start the next game" : "快速双击 Esc，进入下一局地狱"],
     ["includeAudioTelemetry", en ? "Audio recognition" : "声纹识别", en ? "Drop audio and an OCR scene catalog" : "掉落声纹与 OCR 地区目录"],
     ["includeAutoExitOnDeath", en ? "Exit on death" : "死亡自动退出", en ? "Leave after death; the corpse cannot be recovered in that game" : "死亡后离开房间，本局无法捡回尸体"],
