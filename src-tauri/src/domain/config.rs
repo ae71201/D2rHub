@@ -198,7 +198,7 @@ pub struct GlobalConfig {
     pub rune_audio_enabled: bool,
     #[serde(default)]
     pub hostile_auto_restart_enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_hostile_restart_all_windows")]
     pub hostile_auto_restart_all_windows: bool,
     /// 被监控的账号 ID（对应 account.json 中的 id）。
     #[serde(default)]
@@ -338,6 +338,10 @@ pub(crate) fn default_enable_overlay() -> bool {
     // This function is a serde fallback for configurations written before
     // the overlay switches were persisted. Fresh installations use the
     // explicit values in `GlobalConfig::default()` below.
+    true
+}
+
+fn default_hostile_restart_all_windows() -> bool {
     true
 }
 
@@ -526,7 +530,7 @@ impl Default for GlobalConfig {
             first_launch: true,
             rune_audio_enabled: false,
             hostile_auto_restart_enabled: false,
-            hostile_auto_restart_all_windows: false,
+            hostile_auto_restart_all_windows: true,
             rune_audio_target_account: String::new(),
             rune_audio_external_target: None,
             rune_audio_detection_threshold: default_rune_audio_detection_threshold(),
@@ -581,6 +585,8 @@ mod tests {
         assert!(config.enable_tz_overlay);
         assert!(config.enable_stats_overlay);
         assert_eq!(config.theme, "light");
+        assert!(config.hostile_auto_restart_all_windows);
+        assert!(GlobalConfig::default().hostile_auto_restart_all_windows);
         assert_eq!(
             config.rune_audio_tracked_categories,
             ["runes", "gems", "charms", "jewels", "keys", "organs", "essences"]
@@ -601,10 +607,12 @@ mod tests {
             "accounts_dir": "accounts",
             "first_run_complete": false,
             "enable_overlay": false,
+            "hostile_auto_restart_all_windows": false,
             "unknown_legacy_marker": "ignored"
         });
 
         let first: GlobalConfig = serde_json::from_value(legacy).unwrap();
+        assert!(!first.hostile_auto_restart_all_windows);
         let first_serialized = serde_json::to_value(&first).unwrap();
         let second: GlobalConfig = serde_json::from_value(first_serialized.clone()).unwrap();
         let second_serialized = serde_json::to_value(&second).unwrap();

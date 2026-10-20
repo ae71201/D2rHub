@@ -35,7 +35,7 @@ const params = new URLSearchParams(window.location.search);
 // Isolated browser-only fixture: start at the dashboard when reviewing batch controls.
 let acceptedDisclosureRevision: number | null = params.get("batch") === "1"
   ? APPLICATION_DISCLOSURE_REVISION : null;
-let auditVisionSnapshot = { generation: 0, config: { diagnostic_enabled: false, chat_send: false, chat_follow: false, chat_account_id: "", poll_ms: 2000, chat_roi: { x: 0, y: 0.4, width: 0.31, height: 0.4 }, area_enabled: false, area_roi: { x: 0.25, y: 0.13, width: 0.5, height: 0.2 }, drops_enabled: false, drops_enforce: false, labels_visible: false, drop_threshold: 0.7 } };
+let auditVisionSnapshot = { generation: 0, config: { diagnostic_enabled: false, chat_send: false, chat_follow: false, chat_account_id: "", poll_ms: 2000, chat_roi: { x: 0, y: 0.4, width: 0.31, height: 0.4 }, area_enabled: true, area_roi: { x: 0.4, y: 0.2, width: 0.2, height: 0.09 }, drops_enabled: true, drops_enforce: true, labels_visible: true, drop_threshold: 0.7 } };
 const surface = ((params.get("surface") as Surface | null) || "main") as Surface;
 const requestedTheme = normalizeTheme(params.get("theme") === "dark" ? "onyx" : params.get("theme"));
 const requestedFont = ["small", "large"].includes(params.get("font") || "") ? params.get("font")! : "default";

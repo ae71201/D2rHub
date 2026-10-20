@@ -127,6 +127,7 @@ export function AutomationPanel({
   };
   return (
 <div className="recognition-settings settings-guided-page">
+    <HostileRestartSettings config={config} persist={persistGlobalDraft} error={audioStatus?.last_error} />
   <header className="recognition-overview">
     <div className="flex items-center justify-between py-1">
       <div className="min-w-0 pr-4">
@@ -439,7 +440,6 @@ export function AutomationPanel({
         </div>
       </details>
     )}
-    <HostileRestartSettings config={config} persist={persistGlobalDraft} error={audioStatus?.last_error} />
     <details className="settings-help-disclosure"><summary>{isEnglish ? "How recognition works" : "识别说明"}<ChevronDown size={14} aria-hidden="true" /></summary><div className="recognition-notes">
       <p>{isEnglish ? "Only the selected game process is captured. No game memory is read and no code is injected." : "只捕获所选游戏进程的声音，不读取游戏内存，也不会向游戏注入代码。"}</p>
       <p>{isEnglish ? "Audio identifies base item codes; unique, set and affixes sharing a code cannot be distinguished by audio alone." : "声纹按基础物品代码识别；同一代码的暗金、套装或词缀无法仅凭音频区分。"}</p>

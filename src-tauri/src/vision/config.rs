@@ -35,7 +35,7 @@ pub struct VisionConfig {
     pub area_enabled: bool,
     pub area_roi: Roi,
     pub drops_enabled: bool,
-    /// Observe-only until the user has checked label visibility on their setup.
+    /// Require visual confirmation for low-score drops while labels remain visible.
     pub drops_enforce: bool,
     pub labels_visible: bool,
     pub drop_threshold: f32,
@@ -54,16 +54,16 @@ impl Default for VisionConfig {
                 height: 0.4,
             },
             poll_ms: 2000,
-            area_enabled: false,
+            area_enabled: true,
             area_roi: Roi {
                 x: 0.4,
                 y: 0.2,
                 width: 0.2,
                 height: 0.09,
             },
-            drops_enabled: false,
-            drops_enforce: false,
-            labels_visible: false,
+            drops_enabled: true,
+            drops_enforce: true,
+            labels_visible: true,
             drop_threshold: 0.7,
         }
     }
@@ -153,6 +153,8 @@ mod tests {
             }
         );
         assert!(!c.diagnostic_enabled);
+        assert!(c.area_enabled && c.drops_enabled && c.drops_enforce && c.labels_visible);
+        c.validate().unwrap();
         let enabled = VisionConfig {
             chat_follow: true,
             ..c.clone()
@@ -161,7 +163,7 @@ mod tests {
         let mut logging = c.clone();
         logging.diagnostic_enabled = true;
         assert!(c.only_diagnostics_changed(&logging));
-        logging.area_enabled = true;
+        logging.area_enabled = false;
         assert!(!c.only_diagnostics_changed(&logging));
         assert!(!c.only_diagnostics_changed(&c)); // Explicit retry still restarts resources.
         let customized: VisionConfig =
@@ -200,6 +202,9 @@ mod tests {
         let mut config = VisionConfig {
             chat_send: true,
             chat_follow: true,
+            area_enabled: false,
+            drops_enabled: false,
+            drops_enforce: false,
             chat_account_id: "follower".into(),
             ..Default::default()
         };
@@ -211,12 +216,29 @@ mod tests {
         assert!(config.needs_ocr());
     }
     #[test]
-    fn legacy_empty_payload_disables_all_visual_side_effects() {
+    fn missing_preferences_enable_statistics_but_keep_chat_and_diagnostics_off() {
         let c: VisionConfig = serde_json::from_str("{}").unwrap();
         assert!(!c.diagnostic_enabled);
-        assert!(!c.needs_ocr());
+        assert!(c.needs_ocr());
+        assert!(c.area_enabled && c.drops_enabled && c.drops_enforce && c.labels_visible);
         assert!(!c.chat_send);
         assert!(c.validate().is_ok());
+    }
+    #[test]
+    fn explicitly_disabled_preferences_survive_defaults_and_store_reopen() {
+        let config: VisionConfig = serde_json::from_str(
+            r#"{"area_enabled":false,"drops_enabled":false,"drops_enforce":false,"labels_visible":false}"#,
+        ).unwrap();
+        assert!(!config.needs_ocr());
+        assert!(!config.drops_enforce && !config.labels_visible);
+        let root = std::env::temp_dir().join(format!("vision-disabled-{}", uuid::Uuid::new_v4()));
+        let first = store(root.to_str().unwrap()).unwrap();
+        first.save_if_generation(0, config.clone()).unwrap();
+        drop(first);
+        let reopened = store(root.to_str().unwrap()).unwrap();
+        assert_eq!(load(&reopened).unwrap().config, config);
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rejects_invalid_capture_and_unsafe_enforcement() {
@@ -224,7 +246,7 @@ mod tests {
         c.area_roi.x = f32::NAN;
         assert!(c.validate().is_err());
         c = VisionConfig::default();
-        c.drops_enforce = true;
+        c.labels_visible = false;
         assert!(c.validate().is_err());
         c.drops_enabled = true;
         c.labels_visible = true;

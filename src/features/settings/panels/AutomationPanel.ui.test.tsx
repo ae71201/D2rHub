@@ -147,3 +147,16 @@ it("keeps daily settings concise and lets filters apply without opening diagnost
   await userEvent.click(screen.getByRole("button", { name: "监听设置" }));
   expect(screen.getByRole("combobox", { name: "监听目标" })).toBeTruthy();
 });
+
+it("keeps hostile controls above the recognition overview and outside all pages", async () => {
+  const { container } = render(<AutomationPanel {...panelProps()} />);
+  const hostile = screen.getByRole("region", { name: "敌对自动重开" });
+  expect(hostile.closest(".settings-section-body")).toBeNull();
+  const overview = container.querySelector(".recognition-overview")!;
+  expect(hostile.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  for (const name of ["记录内容", "诊断与高级", "监听设置"]) {
+    await userEvent.click(screen.getByRole("button", { name }));
+    expect(screen.getByRole("switch", { name: "启用敌对自动重开" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "触发范围" })).toBeTruthy();
+  }
+});

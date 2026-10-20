@@ -457,7 +457,7 @@ export function DropdownInput({
         const num = Number(v);
         onChange(Number.isNaN(num) ? v : num);
       }}
-      className="h-8 px-2.5 rounded-input bg-surface-card text-text-primary text-xs focus:border-accent focus:outline-none cursor-pointer min-w-[100px]"
+      className="game-setting-select h-8 px-2.5 rounded-input bg-surface-card text-text-primary text-xs focus:border-accent focus:outline-none cursor-pointer min-w-[100px]"
       style={{ border: "1px solid var(--border-default)" }}
     >
       {options.map((opt) => (
