@@ -7,6 +7,7 @@ mod generator;
 mod modification;
 mod rebuild;
 mod replacement;
+mod source_replace;
 mod validation;
 
 use crate::application::task_runtime::{TaskHandle, TaskRequest};
@@ -150,6 +151,7 @@ pub(crate) fn set_auto_exit_on_death_enabled(
 }
 
 pub(crate) fn recover_audio_mod_replacements(mods_directory: &Path) -> Result<(), String> {
+    source_replace::recover(mods_directory)?;
     replacement::recover_audio_mod_replacements(mods_directory)
 }
 
@@ -528,9 +530,13 @@ pub async fn prepare_audio_mod(
     edition: Option<String>,
     mod_name: String,
     source_mod_name: Option<String>,
+    replace_source: Option<bool>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
     include_esc_next_game: Option<bool>,
+    include_scene_shortcuts: Option<bool>,
+    include_party_loot: Option<bool>,
+    include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
 ) -> Result<AudioModPrepareResult, String> {
     prepare_audio_mod_task(
@@ -541,9 +547,13 @@ pub async fn prepare_audio_mod(
             edition,
             mod_name,
             source_mod_name,
+            replace_source,
             include_audio_telemetry,
             include_room_tools,
             include_esc_next_game,
+            include_scene_shortcuts,
+            include_party_loot,
+            include_hostile_auto_restart,
             include_auto_exit_on_death,
         },
         None,
@@ -562,9 +572,13 @@ async fn prepare_audio_mod_task(
         edition,
         mod_name,
         source_mod_name,
+        replace_source,
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
     } = payload
     else {
@@ -575,9 +589,13 @@ async fn prepare_audio_mod_task(
         edition: edition.clone(),
         mod_name: mod_name.clone(),
         source_mod_name: source_mod_name.clone(),
+        replace_source,
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
@@ -601,9 +619,13 @@ async fn prepare_audio_mod_task(
             edition,
             mod_name,
             source_mod_name,
+            replace_source,
             include_audio_telemetry,
             include_room_tools,
             include_esc_next_game,
+            include_scene_shortcuts,
+            include_party_loot,
+            include_hostile_auto_restart,
             include_auto_exit_on_death,
         },
         &task,
@@ -628,9 +650,13 @@ struct PrepareAudioModRequest {
     edition: Option<String>,
     mod_name: String,
     source_mod_name: Option<String>,
+    replace_source: Option<bool>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
     include_esc_next_game: Option<bool>,
+    include_scene_shortcuts: Option<bool>,
+    include_party_loot: Option<bool>,
+    include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
 }
 
@@ -645,14 +671,18 @@ async fn prepare_audio_mod_impl(
         edition,
         mod_name,
         source_mod_name,
+        replace_source,
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
     } = request;
     let shared_state = state.inner().clone();
     let _lease = shared_state.mod_mutations().try_acquire()?;
-    let (_config, game_directory, _) =
+    let (config, game_directory, _) =
         mod_directory_for_subject(&shared_state, &account_id, edition.as_deref())?;
     let progress_id = mod_task_subject(&account_id, edition.as_deref());
     let mods_directory = game_directory.join("mods");
@@ -662,16 +692,46 @@ async fn prepare_audio_mod_impl(
     recover_audio_mod_replacements(&mods_directory)?;
 
     let mod_name = generated_audio_mod_name(&mod_name)?.to_string();
-    if let Some(existing_name) = find_existing_mod_name(&mods_directory, &mod_name)? {
+    let replace_source = replace_source.unwrap_or(false);
+    let transaction = uuid::Uuid::new_v4().simple().to_string();
+    let backup_name = source_replace::backup_name(&mod_name, &transaction);
+    if replace_source {
+        if source_mod_name.as_deref() != Some(mod_name.as_str()) {
+            return Err("同名加工必须选择与输出名称相同的源 Mod".into());
+        }
+        ensure_audio_mod_not_in_use(&shared_state, &config, &game_directory, &mod_name)?;
+    } else if let Some(existing_name) = find_existing_mod_name(&mods_directory, &mod_name)? {
         return Err(format!("Mod 名称“{existing_name}”已存在，请换一个名称"));
     }
-
-    let (source_mod_name, source_directory) =
-        resolve_source_directory(&mods_directory, &mod_name, source_mod_name)?;
+    let (mut source_mod_name, source_directory) = resolve_source_directory(
+        &mods_directory,
+        if replace_source {
+            &backup_name
+        } else {
+            &mod_name
+        },
+        source_mod_name,
+    )?;
+    if let Some(source) = &source_directory {
+        filesystem::validate_safe_directory_tree(&mods_directory, source)?;
+    }
+    let stage = if replace_source {
+        Some(TemporaryDirectory::create(
+            mods_directory.join(format!(".d2rhub-source-stage-{transaction}")),
+        )?)
+    } else {
+        None
+    };
+    let output_directory = stage
+        .as_ref()
+        .map_or(mods_directory.as_path(), |stage| stage.path());
     let requested_features = RequestedFeatureGroups::from_options(
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
     )?;
 
@@ -690,7 +750,7 @@ async fn prepare_audio_mod_impl(
             processor: &processor,
             account_id: &progress_id,
             game_directory: &game_directory,
-            output_directory: &mods_directory,
+            output_directory,
             mod_name: &mod_name,
             source_directory: source_directory.as_deref(),
             requested_features,
@@ -699,9 +759,50 @@ async fn prepare_audio_mod_impl(
         },
     )
     .await?;
-    let generated =
-        validate_generator_output(&mods_directory, &mod_name, &report, requested_features, &[])?;
+    let mut generated = validate_generator_output(
+        output_directory,
+        &mod_name,
+        &report,
+        requested_features,
+        &[],
+    )?;
     crate::hub_mod_settings::inherit(source_directory.as_deref(), &generated.directory, &mod_name)?;
+    if replace_source {
+        // Retain the original source lineage for processed sources. Raw sources now live in the backup.
+        if source_directory.as_ref().is_some_and(|dir| {
+            !["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"]
+                .iter()
+                .any(|name| dir.join(name).is_file())
+        }) {
+            for filename in ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"] {
+                let path = generated.directory.join(filename);
+                if path.is_file() {
+                    let mut manifest: serde_json::Value =
+                        serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?)
+                            .map_err(|e| e.to_string())?;
+                    manifest["source_mod_name"] = serde_json::json!(backup_name);
+                    std::fs::write(
+                        &path,
+                        serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+            source_mod_name = Some(backup_name.clone());
+        }
+        // Re-check immediately before swapping; cancellation never leaves half a directory move.
+        if task.cancellation_requested() {
+            return Err("Mod 加工已取消，源目录未修改".into());
+        }
+        ensure_audio_mod_not_in_use(&shared_state, &config, &game_directory, &mod_name)?;
+        source_replace::commit(
+            &mods_directory,
+            &mod_name,
+            &generated.directory,
+            &transaction,
+        )?;
+        generated.directory = mods_directory.join(&mod_name);
+    }
     emit_prepare_progress(
         &app,
         None,
@@ -732,6 +833,9 @@ pub async fn upgrade_audio_mod(
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
     include_esc_next_game: Option<bool>,
+    include_scene_shortcuts: Option<bool>,
+    include_party_loot: Option<bool>,
+    include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
     force_rebuild: Option<bool>,
 ) -> Result<AudioModSetupState, String> {
@@ -747,6 +851,9 @@ pub async fn upgrade_audio_mod(
             include_audio_telemetry,
             include_room_tools,
             include_esc_next_game,
+            include_scene_shortcuts,
+            include_party_loot,
+            include_hostile_auto_restart,
             include_auto_exit_on_death,
             force_rebuild,
         },
@@ -769,6 +876,9 @@ async fn upgrade_audio_mod_task(
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
         force_rebuild,
     } = payload
@@ -783,6 +893,9 @@ async fn upgrade_audio_mod_task(
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
         force_rebuild,
     })
@@ -810,6 +923,9 @@ async fn upgrade_audio_mod_task(
             include_audio_telemetry,
             include_room_tools,
             include_esc_next_game,
+            include_scene_shortcuts,
+            include_party_loot,
+            include_hostile_auto_restart,
             include_auto_exit_on_death,
             force_rebuild,
         },
@@ -839,9 +955,14 @@ pub(crate) enum AudioModTaskRetryPayload {
         edition: Option<String>,
         mod_name: String,
         source_mod_name: Option<String>,
+        #[serde(default)]
+        replace_source: Option<bool>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
         include_esc_next_game: Option<bool>,
+        include_scene_shortcuts: Option<bool>,
+        include_party_loot: Option<bool>,
+        include_hostile_auto_restart: Option<bool>,
         include_auto_exit_on_death: Option<bool>,
     },
     Upgrade {
@@ -853,6 +974,9 @@ pub(crate) enum AudioModTaskRetryPayload {
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
         include_esc_next_game: Option<bool>,
+        include_scene_shortcuts: Option<bool>,
+        include_party_loot: Option<bool>,
+        include_hostile_auto_restart: Option<bool>,
         include_auto_exit_on_death: Option<bool>,
         #[serde(default)]
         force_rebuild: bool,
@@ -887,6 +1011,9 @@ struct UpgradeAudioModRequest {
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
     include_esc_next_game: Option<bool>,
+    include_scene_shortcuts: Option<bool>,
+    include_party_loot: Option<bool>,
+    include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
     force_rebuild: bool,
 }
@@ -905,6 +1032,9 @@ async fn upgrade_audio_mod_impl(
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
         force_rebuild,
     } = request;
@@ -932,6 +1062,9 @@ async fn upgrade_audio_mod_impl(
         include_audio_telemetry,
         include_room_tools,
         include_esc_next_game,
+        include_scene_shortcuts,
+        include_party_loot,
+        include_hostile_auto_restart,
         include_auto_exit_on_death,
     )?;
     let current_validated = validate_audio_mod(&mods_directory, mod_name).ok();
@@ -1165,6 +1298,42 @@ pub(crate) fn validate_runtime_audio_mod_directory(
         result.mod_name.as_deref().unwrap_or_default(),
     )
     .map(|validated| validated.directory)
+}
+
+pub(crate) fn validate_runtime_feature_directory(
+    game: &Path,
+    arguments: &str,
+    feature: &str,
+) -> Result<PathBuf, String> {
+    use crate::domain::mod_arguments::{active_mod_name, has_txt_argument};
+    if !has_txt_argument(arguments)? {
+        return Err("目标游戏需要 -txt 启动参数".into());
+    }
+    let name = active_mod_name(arguments)?.ok_or("目标游戏未加载 Mod")?;
+    let validated = validate_audio_mod(&game.join("mods"), &name)?;
+    if !validated.feature_groups.iter().any(|g| g.id == feature) {
+        return Err(format!("目标 Mod 未安装 {feature}"));
+    }
+    if feature == "hostile_auto_restart"
+        && !validated
+            .feature_groups
+            .iter()
+            .any(|g| g.id == "esc_next_game")
+    {
+        return Err("敌对自动重开需要双击 Esc 下一局".into());
+    }
+    Ok(validated.directory)
+}
+
+pub(crate) fn validate_runtime_feature(
+    config: &GlobalConfig,
+    account: &AccountMeta,
+    arguments: &str,
+    feature: &str,
+) -> Result<PathBuf, String> {
+    let context = LaunchContext::for_account(config, account, ContextPurpose::Settings)
+        .map_err(|e| e.to_string())?;
+    validate_runtime_feature_directory(&context.installation.game_directory, arguments, feature)
 }
 
 pub(crate) fn emit_runtime_compatibility_warning(

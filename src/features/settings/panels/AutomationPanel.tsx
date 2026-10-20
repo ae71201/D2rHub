@@ -32,6 +32,8 @@ import {
 
 import { defaultExternalAudioTarget, type ExternalAudioTarget } from "../../../utils/recognitionSource";
 import { ExternalRecognitionTarget } from "./ExternalRecognitionTarget";
+import { HostileRestartSettings } from "./HostileRestartSettings";
+import { VisualRecognitionSettings } from "./VisualRecognitionSettings";
 
 type TrackingTarget = ReturnType<typeof validateTrackingTarget>;
 
@@ -125,6 +127,7 @@ export function AutomationPanel({
   };
   return (
 <div className="settings-content-grid recognition-layout">
+  <HostileRestartSettings config={config} persist={persistGlobalDraft} error={audioStatus?.last_error} />
   <div className="spatial-panel recognition-control-panel">
     <div className="flex items-center justify-between py-1">
       <div className="min-w-0 pr-4">
@@ -349,7 +352,7 @@ export function AutomationPanel({
         </div>
         <div className="rounded bg-surface-hover px-2 py-1.5">
           <span className="block text-text-muted">地点信号</span>
-          <span className="font-mono text-text-primary">{audioStatus?.scene_heartbeats ?? 0}</span>
+          <span className="font-mono text-text-primary">{audioStatus?.scene_ocr_events ?? 0}</span>
         </div>
       </div>
       {audioStatus?.last_marker && (
@@ -584,6 +587,7 @@ export function AutomationPanel({
     </details>
 
     <div className="spatial-panel recognition-notes">
+      <VisualRecognitionSettings mode="audio" language={config.app_language} />
       <div>
         <span className="text-xs font-bold text-text-primary block mb-1">识别说明</span>
         <p className="text-2xs text-text-muted">

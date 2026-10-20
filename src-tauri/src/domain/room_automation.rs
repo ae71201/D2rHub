@@ -175,6 +175,15 @@ fn default_standard_flow() -> FlowStrategy {
     FlowStrategy::standard()
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollaborationMode {
+    #[default]
+    Default,
+    Host,
+    Follower,
+}
+
 /// Persisted configuration for room automation.
 ///
 /// Legacy field aliases import the `room_rotation` object used through
@@ -194,6 +203,9 @@ pub struct RoomAutomationConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
+    pub collaboration_mode: CollaborationMode,
+    /// Transient workflow mode; never a user setting. Legacy saved values are ignored.
+    #[serde(skip)]
     pub join_only: bool,
     #[serde(default)]
     pub primary_account_id: String,
@@ -219,6 +231,9 @@ pub struct RoomAutomationConfig {
     pub next_sequence: u32,
     #[serde(default = "default_sequence_width")]
     pub sequence_width: u8,
+    /// Backend-owned revision of the chat deduplication session.
+    #[serde(default)]
+    pub chat_signal_epoch: u64,
     #[serde(default = "default_background_text_strategy")]
     pub background_text_strategy: String,
     /// Zero means the original unversioned representation.
@@ -235,6 +250,7 @@ impl Default for RoomAutomationConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            collaboration_mode: CollaborationMode::Default,
             join_only: false,
             primary_account_id: String::new(),
             follower_account_ids: Vec::new(),
@@ -248,6 +264,7 @@ impl Default for RoomAutomationConfig {
             password: String::new(),
             next_sequence: default_next_sequence(),
             sequence_width: default_sequence_width(),
+            chat_signal_epoch: 0,
             background_text_strategy: default_background_text_strategy(),
             strategy_version: CURRENT_STRATEGY_VERSION,
             flow: default_standard_flow(),
@@ -321,10 +338,10 @@ pub enum RoomAutomationConfigError {
         physical_ctrl_settle_ms: u64,
         sync_message_timeout_ms: u64,
     },
-    #[error("primary account is not configured")]
-    MissingPrimaryAccount,
     #[error("at least one follower account is required")]
     MissingFollowerAccount,
+    #[error("拼房跟随需要配置主号，主号负责聊天识别并一起加入房间")]
+    MissingCollaborationPrimary,
     #[error("account id {0:?} is empty or is not normalized")]
     InvalidAccountId(String),
     #[error("account {0:?} is selected more than once")]
@@ -358,6 +375,9 @@ impl RoomAutomationConfig {
 
         let original = self.clone();
         self.primary_account_id = self.primary_account_id.trim().to_string();
+        if self.join_only {
+            self.primary_account_id.clear();
+        }
         self.name_prefix = self.name_prefix.trim().to_string();
         self.password = self.password.trim().to_string();
         self.sequence_width = self
@@ -461,11 +481,18 @@ impl RoomAutomationConfig {
         self.flow.validate("unified")?;
 
         let primary = self.primary_account_id.as_str();
-        if primary.is_empty() && !self.join_only {
-            return Err(RoomAutomationConfigError::MissingPrimaryAccount);
+        if !primary.is_empty() {
+            validate_normalized_account_id(primary)?;
         }
-        if !primary.is_empty() { validate_normalized_account_id(primary)?; }
-        if self.follower_account_ids.is_empty() {
+        if self.collaboration_mode == CollaborationMode::Follower
+            && !self.join_only
+            && primary.is_empty()
+        {
+            return Err(RoomAutomationConfigError::MissingCollaborationPrimary);
+        }
+        if self.follower_account_ids.is_empty()
+            && self.collaboration_mode != CollaborationMode::Follower
+        {
             return Err(RoomAutomationConfigError::MissingFollowerAccount);
         }
 
@@ -739,6 +766,20 @@ fn parse_decimal(value: &str) -> Option<u8> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_join_only_setting_is_ignored_and_not_saved() {
+        let mut value = serde_json::to_value(super::RoomAutomationConfig::default()).unwrap();
+        value["join_only"] = serde_json::json!(true);
+        value["auto_followers_enabled"] = serde_json::json!(true);
+        let config: super::RoomAutomationConfig = serde_json::from_value(value).unwrap();
+        assert!(!config.join_only);
+        assert!(config.auto_followers_enabled);
+        assert!(serde_json::to_value(config)
+            .unwrap()
+            .get("join_only")
+            .is_none());
+    }
+
     use super::*;
     use serde_json::json;
 

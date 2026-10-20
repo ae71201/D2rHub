@@ -2,6 +2,10 @@
 mod generated_permissions;
 
 const APP_COMMANDS: &[&str] = &[
+    "vision_get_config",
+    "vision_save_config",
+    "vision_get_status",
+    "vision_preview",
     "get_global_config",
     "get_capability_statuses",
     "get_capability_descriptors",

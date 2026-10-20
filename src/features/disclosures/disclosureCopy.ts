@@ -115,7 +115,7 @@ const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, Omit<Dis
       sections: [
         {
           title: "功能与原理",
-          body: "本模块可识别游戏场景、掉落和邪恶区域事件，并在本机记录场次与统计。它会为指定账号生成或加工 D2R Mod，由 Mod 播放极短的事件声纹，再通过 Windows 应用音频捕获识别目标 D2R 进程的声音；不会使用麦克风、注入游戏或读取游戏内存。",
+          body: "本模块通过本机截图与 OCR 识别场景及恐怖区域，驱动场景分段与计时；掉落仍由加工 Mod 播放极短声纹，通过 Windows 应用音频捕获识别。模型资源按需下载，截图只在本机处理；不会使用麦克风、注入游戏或读取游戏内存。",
         },
         {
           title: "风险与免责",
@@ -189,7 +189,7 @@ const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, Omit<Dis
       sections: [
         {
           title: "What it does",
-          body: "This module recognizes scenes, drops, and Terror Zone events and stores run history locally. It creates or processes a D2R Mod that plays very short event audio markers, then uses Windows application audio capture to recognize sound from the selected D2R process. It does not use the microphone, inject into the game, or read game memory.",
+          body: "This module uses local screenshots and OCR to recognize scenes and Terror Zones and drive run timing. Drops are recognized through short audio markers in a processed Mod and Windows application audio capture. OCR resources download on demand, and screenshots stay on this computer. It does not use the microphone, inject into the game, or read game memory.",
         },
         {
           title: "Risks and disclaimer",

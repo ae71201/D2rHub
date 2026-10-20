@@ -1,3 +1,4 @@
+export type CollaborationMode = "default" | "host" | "follower";
 export interface RoomFlowStrategy {
   step_delay_ms: number;
   character_delay_ms: number;
@@ -16,8 +17,8 @@ export interface RoomFlowStrategy {
 export type FollowerJoinMode = "simultaneous" | "interval";
 
 export interface RoomAutomationConfig {
+  collaboration_mode?: CollaborationMode;
   enabled: boolean;
-  join_only?: boolean;
   primary_account_id: string;
   follower_account_ids: string[];
   auto_followers_enabled: boolean;
@@ -32,6 +33,8 @@ export interface RoomAutomationConfig {
   password: string;
   next_sequence: number;
   sequence_width: number;
+  /** Backend-owned revision; preserved across ordinary edits. */
+  chat_signal_epoch?: number;
   background_text_strategy: "post_keys" | "send_keys";
   strategy_version: number;
   flow: RoomFlowStrategy;

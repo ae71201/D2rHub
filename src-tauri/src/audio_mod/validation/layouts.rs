@@ -5,6 +5,434 @@ use crate::domain::mod_processing::IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION;
 use std::path::Path;
 
 pub(in crate::audio_mod) const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
+
+pub(in crate::audio_mod) fn validate_party_loot(
+    mod_directory: &Path,
+    mod_name: &str,
+    recipe: u32,
+) -> Result<(), String> {
+    let layouts = mod_directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let (file, name) = if layouts.join("mymodsShowListLayouthd.json").is_file() {
+        ("mymodsShowListLayouthd.json", "mymodsShowListLayout")
+    } else if recipe >= 2 && layouts.join("jcypartyextrahd.json").is_file() {
+        ("jcypartyextrahd.json", "JcyPartyExtra")
+    } else {
+        ("D2RHubPartyLoothd.json", "D2RHubPartyLoot")
+    };
+    let document = read_room_tool_layout(&layouts, file)?;
+    let invalid = || "左侧玩家拾取按钮布局无效，请重新加工".to_string();
+    if document["type"] != "PartyPanel" || document["name"] != name {
+        return Err(invalid());
+    }
+    let list = find_layout_node(&document, "ListContainer").ok_or_else(invalid)?;
+    let row = find_layout_node(list, "FriendsListTemplate").ok_or_else(invalid)?;
+    let button = find_layout_node(row, "LootBodyButton").ok_or_else(invalid)?;
+    let fields = &button["fields"];
+    if button["type"] != "ToggleButtonWidget"
+        || fields["onClickMessage"] != "PartyPanelMessage:ToggleLootBody"
+        || fields["filename"] != "PANEL\\Party\\LootBody"
+        || fields["untoggledFrame"] != 0
+        || fields["toggledFrame"] != 4
+        || fields["visible"] == false
+    {
+        return Err(invalid());
+    }
+    let x = fields["rect"]["x"].as_f64().ok_or_else(invalid)?;
+    let y = fields["rect"]["y"].as_f64().ok_or_else(invalid)?;
+    if name == "JcyPartyExtra" {
+        let row_x = row["fields"]["rect"]["x"].as_f64().ok_or_else(invalid)?;
+        let row_y = row["fields"]["rect"]["y"].as_f64().ok_or_else(invalid)?;
+        if (x + row_x - 161.0).abs() > 0.01
+            || (y + row_y - 280.0).abs() > 0.01
+            || row["fields"]["rect"]["width"].as_f64().unwrap_or(0.0) < 300.0
+            || document["fields"]["priority"] != -5
+        {
+            return Err(invalid());
+        }
+    } else if x != 80.0 || y != 20.0 {
+        return Err(invalid());
+    }
+    let hud = read_room_tool_layout(&layouts, "HudWarningshd.json")?;
+    if !layout_has_child_message(&hud, "message", &format!("PanelManager:OpenPanel:{name}")) {
+        return Err(invalid());
+    }
+    if recipe >= 2 && !has_immediate_launcher(&hud, &format!("PanelManager:OpenPanel:{name}")) {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+// Multiple modules may share the immediate startup prefix; none owns index 0.
+fn has_immediate_launcher(hud: &serde_json::Value, message: &str) -> bool {
+    let Some(children) = hud["children"].as_array() else {
+        return false;
+    };
+    for child in children {
+        if child["type"] != "TimerWidget" {
+            continue;
+        }
+        let fields = &child["fields"];
+        if fields["time"].as_f64() != Some(-1.0) {
+            return false;
+        }
+        if fields["message"] == message {
+            return true;
+        }
+        if fields["message"].as_str().is_some_and(|m| {
+            m.eq_ignore_ascii_case("PanelManager:ClosePanel:HUDWarnings")
+                || m.eq_ignore_ascii_case("PanelManager:UnloadPanel:HUDWarnings")
+        }) {
+            return false;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+pub(in crate::audio_mod) fn validate_scene_shortcuts(
+    mod_directory: &Path,
+    mod_name: &str,
+) -> Result<(), String> {
+    validate_scene_shortcuts_version(mod_directory, mod_name, 7)
+}
+
+pub(in crate::audio_mod) fn validate_scene_shortcuts_version(
+    mod_directory: &Path,
+    mod_name: &str,
+    version: u32,
+) -> Result<(), String> {
+    if !(1..=7).contains(&version) {
+        return Err(format!("不支持的场景重开配方 r{version}"));
+    }
+    let root = mod_directory.join(format!("{mod_name}.mpq"));
+    let layouts = root.join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let invalid = || format!("场景重开 r{version} 布局缺失、时序变化或帮助页冲突，请重新加工");
+    if version >= 6 {
+        validate_exact_scene(&root, &layouts)?;
+        if version >= 7 {
+            validate_scene_actinfo(&root)?;
+        }
+        return Ok(());
+    }
+    for (file, name) in [
+        ("D2RHubSceneRestarthd.json", "D2RHubSceneRestart"),
+        ("helppanelhd.json", "helppanel"),
+    ] {
+        let value = read_room_tool_layout(&layouts, file)?;
+        if value["type"] != "PausePanel" || value["name"] != name {
+            return Err(invalid());
+        }
+        let expected = [
+            (
+                -1.0,
+                "PanelManager:OpenPanel:WaypointsPanelExpansion".to_string(),
+            ),
+            (0.1, "PanelManager:OpenPanel:D2RHubSceneWaypoint".into()),
+            (0.2, "PanelManager:OpenPanel:D2RHubSceneRecreate".into()),
+            (0.3, format!("PanelManager:UnloadPanel:{name}")),
+        ];
+        let children = value["children"].as_array().ok_or_else(invalid)?;
+        if children.len() != expected.len() {
+            return Err(invalid());
+        }
+        for (child, (time, message)) in children.iter().zip(expected) {
+            if child["type"] != "TimerWidget"
+                || child["fields"]["time"].as_f64() != Some(time)
+                || child["fields"]["message"] != message
+            {
+                return Err(invalid());
+            }
+        }
+    }
+    let wp = read_room_tool_layout(&layouts, "D2RHubSceneWaypointhd.json")?;
+    let tabs = find_layout_node(&wp, "Tabs").ok_or_else(invalid)?;
+    if wp["type"] != "WaypointsPanel"
+        || tabs["fields"]["defaultTab"] != 2
+        || tabs["fields"]["tabCount"] != if version == 2 { 3 } else { 4 }
+        || tabs["fields"]["onSwitchTabMessage"] != "Waypoints:SelectWaypoint"
+    {
+        return Err(invalid());
+    }
+    for panel in [
+        "D2RHubSceneWaypoint",
+        "WaypointsPanelExpansion",
+        if version <= 2 {
+            "D2RHubSceneRestart"
+        } else {
+            "D2RHubSceneArrival"
+        },
+    ] {
+        if !layout_has_timed_child_message(&wp, &format!("PanelManager:UnloadPanel:{panel}"), 0.0) {
+            return Err(invalid());
+        }
+    }
+    if version >= 3 {
+        let arrival_wp = read_room_tool_layout(&layouts, "D2RHubSceneArrivalWaypointhd.json")?;
+        let arrival_tabs = find_layout_node(&arrival_wp, "Tabs").ok_or_else(invalid)?;
+        if arrival_wp["type"] != "WaypointsPanel"
+            || arrival_tabs["fields"]["tabCount"] != 3
+            || arrival_tabs["fields"]["defaultTab"] != 2
+            || arrival_tabs["fields"]["onSwitchTabMessage"] != "Waypoints:SelectWaypoint"
+        {
+            return Err(invalid());
+        }
+        for panel in [
+            "D2RHubSceneArrivalWaypoint",
+            "WaypointsPanelExpansion",
+            "D2RHubSceneArrival",
+        ] {
+            if !layout_has_timed_child_message(
+                &arrival_wp,
+                &format!("PanelManager:UnloadPanel:{panel}"),
+                0.0,
+            ) {
+                return Err(invalid());
+            }
+        }
+        for (file, kind, expected) in [
+            (
+                "D2RHubSceneEntryhd.json",
+                "Panel",
+                vec![
+                    (1.0, "PanelManager:OpenPanel:D2RHubSceneArrival"),
+                    (1.4, "PanelManager:UnloadPanel:D2RHubSceneEntry"),
+                ],
+            ),
+            (
+                "D2RHubSceneArrivalhd.json",
+                "PausePanel",
+                vec![
+                    (-1.0, "PanelManager:OpenPanel:WaypointsPanelExpansion"),
+                    (0.1, "PanelManager:OpenPanel:D2RHubSceneArrivalWaypoint"),
+                    (0.3, "PanelManager:UnloadPanel:D2RHubSceneArrival"),
+                ],
+            ),
+        ] {
+            if version >= 5 && file == "D2RHubSceneEntryhd.json" {
+                continue;
+            }
+            let doc = read_room_tool_layout(&layouts, file)?;
+            let nodes = doc["children"].as_array().ok_or_else(invalid)?;
+            if doc["type"] != kind || nodes.len() != expected.len() {
+                return Err(invalid());
+            }
+            for (node, (time, message)) in nodes.iter().zip(expected) {
+                if node["type"] != "TimerWidget"
+                    || node["fields"]["time"].as_f64() != Some(time)
+                    || node["fields"]["message"] != message
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+    }
+    let restart = read_room_tool_layout(&layouts, "D2RHubSceneRecreatehd.json")?;
+    let children = restart["children"].as_array().ok_or_else(invalid)?;
+    if restart["type"] != "PausePanel" || children.len() != 4 {
+        return Err(invalid());
+    }
+    for (child, message) in children.iter().zip([
+        "PanelManager:OpenPanel:D2RHubSceneExit",
+        "PanelManager:OpenPanel:D2RHubSceneLoadHell",
+        "PanelManager:UnloadPanel:D2RHubSceneRecreate",
+        "PanelManager:UnloadPanel:helppanel",
+    ]) {
+        if child["fields"]["time"].as_f64() != Some(-1.0) || child["fields"]["message"] != message {
+            return Err(invalid());
+        }
+    }
+    let exit = read_room_tool_layout(&layouts, "D2RHubSceneExithd.json")?;
+    let row = find_layout_node(&exit, "Row Save and Exit Game").ok_or_else(invalid)?;
+    if exit["type"] != "PausePanel"
+        || !layout_has_timed_child_message(row, "PausePanelMessage:ExitGame", -1.0)
+    {
+        return Err(invalid());
+    }
+    let load = read_room_tool_layout(&layouts, "D2RHubSceneLoadHellhd.json")?;
+    if load["type"] != "MainMenuHDPanel"
+        || !layout_has_timed_child_message(&load, "CharacterSelect:LoadCharacter:2", -1.0)
+    {
+        return Err(invalid());
+    }
+    let hud = read_room_tool_layout(&layouts, "HudWarningshd.json")?;
+    if version == 5 {
+        let nodes = hud["children"].as_array().ok_or_else(invalid)?;
+        let index = nodes
+            .iter()
+            .position(|n| n["name"] == "D2RHubSceneArrivalLauncher")
+            .ok_or_else(invalid)?;
+        if nodes[index]["type"] != "TimerWidget"
+            || nodes[index]["fields"]["time"].as_f64() != Some(1.0)
+            || nodes[index]["fields"]["message"] != "PanelManager:OpenPanel:D2RHubSceneArrival"
+            || find_layout_node(&hud, "D2RHubSceneEntryLauncher").is_some()
+            || find_layout_node(&hud, "D2RHubSceneToolbarLauncher").is_some()
+            || layouts.join("D2RHubSceneEntryhd.json").exists()
+            || layouts.join("D2RHubSceneToolbarhd.json").exists()
+        {
+            return Err(invalid());
+        }
+        for (i, node) in nodes.iter().enumerate() {
+            if node["fields"]["message"].as_str().is_some_and(|m| {
+                m.eq_ignore_ascii_case("PanelManager:ClosePanel:HUDWarnings")
+                    || m.eq_ignore_ascii_case("PanelManager:UnloadPanel:HUDWarnings")
+            }) {
+                let time = node["fields"]["time"].as_f64().ok_or_else(invalid)?;
+                if time < 1.0 || (time == 1.0 && i < index) {
+                    return Err(invalid());
+                }
+            }
+        }
+    } else if version == 4 {
+        if !has_immediate_launcher(&hud, "PanelManager:OpenPanel:D2RHubSceneEntry")
+            || !layout_has_timed_child_message(
+                &hud,
+                "PanelManager:OpenPanel:D2RHubSceneEntry",
+                -1.0,
+            )
+            || find_layout_node(&hud, "D2RHubSceneToolbarLauncher").is_some()
+            || layouts.join("D2RHubSceneToolbarhd.json").exists()
+        {
+            return Err(invalid());
+        }
+    } else {
+        let toolbar = read_room_tool_layout(&layouts, "D2RHubSceneToolbarhd.json")?;
+        let button = find_layout_node(&toolbar, "D2RHubSceneRestartButton").ok_or_else(invalid)?;
+        if !layout_has_timed_child_message(
+            &hud,
+            "PanelManager:OpenPanel:D2RHubSceneToolbar",
+            if version == 1 { 0.01 } else { -1.0 },
+        ) || button["fields"]["onClickMessage"] != "PanelManager:OpenPanel:D2RHubSceneRestart"
+            || (version >= 2
+                && !has_immediate_launcher(&hud, "PanelManager:OpenPanel:D2RHubSceneToolbar"))
+            || (version == 3
+                && (!has_immediate_launcher(&hud, "PanelManager:OpenPanel:D2RHubSceneEntry")
+                    || !layout_has_timed_child_message(
+                        &hud,
+                        "PanelManager:OpenPanel:D2RHubSceneEntry",
+                        -1.0,
+                    )))
+        {
+            return Err(invalid());
+        }
+    }
+    let backup = read_room_tool_layout(&root, "d2rhub-scene-shortcuts-original-help.json")?;
+    if !backup.is_object() {
+        return Err(invalid());
+    }
+    Ok(())
+}
+fn validate_scene_actinfo(root: &Path) -> Result<(), String> {
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../resources/scene-shortcuts-v7-actinfo.json"
+    ))
+    .map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(root.join("data/global/excel/actinfo.txt"))
+        .map_err(|e| format!("场景重开缺少传送点映射 actinfo.txt：{e}"))?;
+    let rows: Vec<Vec<&str>> = text
+        .lines()
+        .map(|l| l.trim_end_matches('\r').split('\t').collect())
+        .collect();
+    let header = rows.first().ok_or("actinfo.txt 为空")?;
+    let column = |name: &str| -> Result<usize, String> {
+        let indices: Vec<_> = header
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.trim_start_matches('\u{feff}') == name)
+            .map(|(i, _)| i)
+            .collect();
+        if indices.len() != 1 {
+            return Err(format!("actinfo.txt 列缺失或重复：{name}"));
+        }
+        Ok(indices[0])
+    };
+    let act_index = column("act")?;
+    for item in expected.as_array().ok_or("小站参考映射无效")? {
+        let act = item["act"].as_str().ok_or("小站参考幕编号无效")?;
+        let matches: Vec<_> = rows
+            .iter()
+            .skip(1)
+            .filter(|r| r.get(act_index) == Some(&act))
+            .collect();
+        if matches.len() != 1 {
+            return Err(format!("actinfo.txt 幕编号缺失或重复：{act}"));
+        }
+        for (field, value) in item["waypoints"].as_object().ok_or("小站映射无效")? {
+            if matches[0].get(column(field)?).copied() != value.as_str() {
+                return Err(format!(
+                    "场景重开传送点映射缺失：act={act}, {field}，需按MYMOD同步actinfo.txt"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_exact_scene(root: &Path, layouts: &Path) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let manifest: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../resources/scene-shortcuts-v6.json"
+    ))
+    .map_err(|e| e.to_string())?;
+    for entry in manifest.as_array().ok_or("场景模板清单无效")? {
+        let file = entry["path"].as_str().ok_or("场景模板路径缺失")?;
+        let bytes = std::fs::read(layouts.join(file))
+            .map_err(|e| format!("场景重开 r6 文件缺失：{file}：{e}"))?;
+        if format!("{:x}", Sha256::digest(bytes)) != entry["sha256"].as_str().unwrap_or("") {
+            return Err(format!("场景重开 r6 文件与参考不一致：{file}"));
+        }
+    }
+    let hud = read_room_tool_layout(layouts, "HudWarningshd.json")?;
+    let children = hud["children"].as_array().ok_or("场景重开 HUD 缺少子项")?;
+    if children.len() < 2 {
+        return Err("场景重开 HUD 缺少启动项".into());
+    }
+    for (node, message) in children[children.len() - 2..].iter().zip([
+        "PanelManager:UnloadPanel:HUDWarnings",
+        "PanelManager:OpenPanel:CALL/OnekeyTravincal",
+    ]) {
+        if node["type"] != "TimerWidget"
+            || node["fields"]["time"].as_f64() != Some(1.0)
+            || node["fields"]["message"] != message
+        {
+            return Err("场景重开 r6 HUD 收尾时序不一致".into());
+        }
+    }
+    for node in &children[..children.len() - 2] {
+        let message = node["fields"]["message"].as_str().unwrap_or("");
+        if message.contains("D2RHubScene")
+            || message == "PanelManager:OpenPanel:CALL/OnekeyTravincal"
+            || message.eq_ignore_ascii_case("PanelManager:ClosePanel:HUDWarnings")
+            || message.eq_ignore_ascii_case("PanelManager:UnloadPanel:HUDWarnings")
+            || (message == "PanelManager:OpenPanel:JcyHudWarnings"
+                && node["fields"]["time"].as_f64() != Some(1.0))
+        {
+            return Err("场景重开 r6 存在冲突的 HUD 启动项".into());
+        }
+    }
+    for name in [
+        "Restart",
+        "Waypoint",
+        "Recreate",
+        "Exit",
+        "LoadHell",
+        "Toolbar",
+        "Arrival",
+        "ArrivalWaypoint",
+        "Entry",
+    ] {
+        if layouts.join(format!("D2RHubScene{name}hd.json")).exists() {
+            return Err(format!("场景重开遗留旧控制器：{name}"));
+        }
+    }
+    let backup = read_room_tool_layout(root, "d2rhub-scene-shortcuts-original-help.json")?;
+    if !backup.is_object() {
+        return Err("场景重开帮助页备份无效".into());
+    }
+    Ok(())
+}
+
 const ROOM_TOOLBAR_OPEN_MESSAGE: &str = "PanelManager:OpenPanel:D2RHubRoomToolbar";
 const ROOM_TOOLBAR_CLOSE_MESSAGE: &str = "PanelManager:ClosePanel:D2RHubRoomToolbar";
 const ROOM_TOOL_GATEWAY_HUB: &str = "D2RHubKeyboardGatewayHub";
@@ -1021,4 +1449,29 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts(
     mod_name: &str,
 ) -> Result<(), String> {
     validate_in_game_room_tool_layouts_for_recipe(mod_directory, mod_name, true)
+}
+
+#[cfg(test)]
+mod startup_prefix_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn independent_modules_share_startup_prefix_but_delayed_or_closed_launchers_fail() {
+        let scene = "PanelManager:OpenPanel:D2RHubSceneEntry";
+        let party = "PanelManager:OpenPanel:JcyPartyExtra";
+        let timer = |message: &str, time: f64| json!({"type":"TimerWidget","fields":{"message":message,"time":time}});
+        for messages in [[scene, party], [party, scene]] {
+            let hud = json!({"children":[timer(messages[0],-1.0),timer(messages[1],-1.0),timer("PanelManager:ClosePanel:HUDWarnings",0.008)]});
+            assert!(has_immediate_launcher(&hud, scene));
+            assert!(has_immediate_launcher(&hud, party));
+        }
+        assert!(!has_immediate_launcher(
+            &json!({"children":[timer(scene,0.01)]}),
+            scene
+        ));
+        assert!(!has_immediate_launcher(
+            &json!({"children":[timer("PanelManager:ClosePanel:HUDWarnings",-1.0),timer(scene,-1.0)]}),
+            scene
+        ));
+    }
 }

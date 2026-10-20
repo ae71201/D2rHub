@@ -65,8 +65,8 @@ export function useBatchProcessing(accounts: AccountMeta[], catalog: ModCapsuleC
         try {
           if (!latest.current.accounts.some(account => account.id === accountId && eligible(account, edition))) throw new Error(en ? "Account configuration changed" : "目标账号配置已改变，请重新生成计划");
           const options = audioModFeatureInvokeOptions(row.features);
-          if (row.mode === "create") {
-            await invokeCommand("prepare_audio_mod", { accountId, modName: row.name, sourceModName: row.sourceModName, ...options });
+          if (row.mode === "create" || row.mode === "replace-source") {
+            await invokeCommand("prepare_audio_mod", { accountId, modName: row.name, sourceModName: row.sourceModName, replaceSource: row.mode === "replace-source", ...options });
           } else {
             await invokeCommand("upgrade_audio_mod", { accountId, modName: row.name, sourceModName: row.sourceModName, forceRebuild: row.mode === "rebuild", ...options });
           }

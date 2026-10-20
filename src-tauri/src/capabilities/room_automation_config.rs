@@ -221,7 +221,11 @@ impl RoomAutomationConfigController {
                 .retain(|follower| !follower.eq_ignore_ascii_case(account_id));
             if config.follower_account_ids.len() != follower_count {
                 changed = true;
-                if config.follower_account_ids.is_empty() {
+                if config.follower_account_ids.is_empty()
+                    && (config.collaboration_mode
+                        != crate::domain::room_automation::CollaborationMode::Follower
+                        || config.primary_account_id.is_empty())
+                {
                     config.enabled = false;
                 }
             }
@@ -643,7 +647,7 @@ mod tests {
         assert!(matches!(
             controller.save(initial.generation, incomplete, &[]),
             Err(RoomAutomationConfigControllerError::InvalidConfig(
-                RoomAutomationConfigError::MissingPrimaryAccount
+                RoomAutomationConfigError::MissingFollowerAccount
             ))
         ));
 

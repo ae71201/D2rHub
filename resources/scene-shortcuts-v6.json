@@ -1,0 +1,42 @@
+[
+  {
+    "path": "helppanelhd.json",
+    "sha256": "93b0c3964384de573e091f7d8d70f8501ba45fcd6cbd8d4a3af0d8d242b37b59"
+  },
+  {
+    "path": "helppanel.json",
+    "sha256": "93b0c3964384de573e091f7d8d70f8501ba45fcd6cbd8d4a3af0d8d242b37b59"
+  },
+  {
+    "path": "waypointspaneloriginalhd.json",
+    "sha256": "34de892d348226d830afb97ee54a66e44305754d1bd1fe6496d0f979a6ce665b"
+  },
+  {
+    "path": "CALL/OnekeyTravincalhd.json",
+    "sha256": "1fa425abb25a47df2c4251c22e6d1c8b00d94c633458196ab42dcafde4b30d7c"
+  },
+  {
+    "path": "CALL/WP-t-autuexitonekeyhd.json",
+    "sha256": "4bf75741502fa4ff45d5ccf92592ca3e8b85ad02fc0a4ac2ae8863ab0cb0a87c"
+  },
+  {
+    "path": "CALL/WPautuexitonekeyhd.json",
+    "sha256": "2046138f54327197f87fa8f07e9cb4f90bc16b91de0d26ad5c71eeb199280894"
+  },
+  {
+    "path": "CALL/HJWPautuexitonekeyhd.json",
+    "sha256": "ecf26b12042df89549fc421ee8db26e05d1ced31a50d2ef4a72732c173756093"
+  },
+  {
+    "path": "CALL/helppanelexithd.json",
+    "sha256": "4b3f05dde9f443a884887922e45bfa77eac133776b9205cd2fa8bf5a52a4a8d3"
+  },
+  {
+    "path": "CALL/helppanelonekeyhd.json",
+    "sha256": "ac1b98d7882b84ba058f3190f0eaaac961a6548031d38e27403fe541dea5c421"
+  },
+  {
+    "path": "QuickHellGamePanelhd.json",
+    "sha256": "0f74cd3270eb7d864ab8e897e6e684c3f9086a2bb5fac049dda619eeec185629"
+  }
+]

@@ -486,8 +486,21 @@ impl WorkflowTaskState {
         Ok(self.snapshot())
     }
 
-    /// Marks the active task as failed. A committed pending room is retained so
-    /// follower delivery or primary retry remains possible.
+    /// Input delivery finished, but the durable next-room update failed.
+    pub fn completion_commit_failed(
+        &mut self,
+        task_id: WorkflowTaskId,
+        error: String,
+    ) -> Result<WorkflowStatus, WorkflowStateError> {
+        self.require_task_phase(task_id, WorkflowPhase::Complete, "commit completion")?;
+        self.status.revision = self.next_revision()?;
+        self.status.phase = WorkflowPhase::Error;
+        self.status.last_error = Some(error);
+        self.status.recovery_action = None;
+        Ok(self.snapshot())
+    }
+
+    /// Marks the active task as failed while retaining its pending room.
     pub fn fail(
         &mut self,
         task_id: WorkflowTaskId,

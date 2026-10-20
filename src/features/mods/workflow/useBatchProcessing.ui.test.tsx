@@ -12,6 +12,18 @@ const features = { includeAudioTelemetry: false, includeRoomTools: true, include
 beforeEach(() => { vi.mocked(invokeCommand).mockReset(); vi.mocked(listenEvent).mockReset().mockResolvedValue(() => {}); });
 
 describe("batch processing", () => {
+  it("processes raw sources under their own names with explicit backups", async () => {
+    vi.mocked(invokeCommand).mockResolvedValue(state as never);
+    const { result } = renderHook(() => useBatchProcessing([testAccount], testCatalog(), { current: false }, false));
+    act(() => result.current.open("CN"));
+    await waitFor(() => expect(result.current.inspection).toBeTruthy());
+    act(() => result.current.changeMode("replace-source"));
+    act(() => result.current.select(["One"]));
+    act(() => result.current.preview());
+    expect(result.current.rows?.[0]).toMatchObject({ name: "One", sourceModName: "One", state: "pending" });
+    await act(() => result.current.run());
+    expect(invokeCommand).toHaveBeenCalledWith("prepare_audio_mod", expect.objectContaining({ modName: "One", sourceModName: "One", replaceSource: true }));
+  });
   it("refreshes installed outputs before editing another processing plan", async () => {
     let installed = state;
     vi.mocked(invokeCommand).mockImplementation(async command => {

@@ -35,6 +35,7 @@ const params = new URLSearchParams(window.location.search);
 // Isolated browser-only fixture: start at the dashboard when reviewing batch controls.
 let acceptedDisclosureRevision: number | null = params.get("batch") === "1"
   ? APPLICATION_DISCLOSURE_REVISION : null;
+let auditVisionSnapshot = { generation: 0, config: { diagnostic_enabled: false, chat_send: false, chat_follow: false, chat_account_id: "", poll_ms: 2000, chat_roi: { x: 0, y: 0.4, width: 0.31, height: 0.4 }, area_enabled: false, area_roi: { x: 0.25, y: 0.13, width: 0.5, height: 0.2 }, drops_enabled: false, drops_enforce: false, labels_visible: false, drop_threshold: 0.7 } };
 const surface = ((params.get("surface") as Surface | null) || "main") as Surface;
 const requestedTheme = normalizeTheme(params.get("theme") === "dark" ? "onyx" : params.get("theme"));
 const requestedFont = ["small", "large"].includes(params.get("font") || "") ? params.get("font")! : "default";
@@ -530,6 +531,13 @@ function installIpcMock() {
         petPreview.snapshot.generation += 1;
         return structuredClone(petPreview);
       }
+      case "vision_get_config":
+        return structuredClone(auditVisionSnapshot);
+      case "vision_save_config":
+        auditVisionSnapshot = { generation: auditVisionSnapshot.generation + 1, config: (payload as { config: typeof auditVisionSnapshot.config }).config };
+        return structuredClone(auditVisionSnapshot);
+      case "vision_get_status":
+        return { running: false, ready: false, message: "尚未启用视觉辅助", checked: 0, matched: 0, rejected: 0, unavailable: 0 };
       case "get_global_config":
         return { ...persistedGlobalConfig, first_run_complete: surface !== "setup" };
       case "get_capability_statuses":
@@ -646,7 +654,7 @@ function installIpcMock() {
         return null;
       case "get_rune_audio_status":
         return { running: !!externalSelection && persistedGlobalConfig.rune_audio_enabled, account_id: null, source_id: externalSelection ? recognitionSourceId(persistedGlobalConfig) : null,
-          target_pid: externalSelection?.pid ?? null, last_error: null, captured_frames: 0, audio_peak: 0, decoded_packets: 0, rune_events: 0, item_events: 0, scene_heartbeats: 0, last_marker: null, last_confidence: null, last_detected_at: null, diagnostic_recording: false, diagnostic_recording_path: null };
+          target_pid: externalSelection?.pid ?? null, last_error: null, captured_frames: 0, audio_peak: 0, decoded_packets: 0, rune_events: 0, item_events: 0, scene_ocr_events: 0, last_marker: null, last_confidence: null, last_detected_at: null, diagnostic_recording: false, diagnostic_recording_path: null };
       case "get_audio_mod_setup_state":
         if ((payload as { edition?: string })?.edition) return {
           account_id: "", account_name: "本机游戏 · 国际服", current_mod_name: "jcy-tz", launch_arguments: "-mod jcy-tz -txt", has_txt: true, ready: true, update_required: false, recipe_version: 33, required_recipe_version: 33, build_mode: "augment", source_mod_name: "jcy", feature_groups: ["audio_telemetry"], auto_exit_on_death_enabled: false, reason_code: "ready", message: "准备完成", installed_mods: [{ name: "jcy", audio_ready: false, update_required: false, source_eligible: true, feature_groups: [], audio_reusable: false }], running_pid: null, session_verified: false, active_session_ready: null, active_session_update_required: null, restart_required: false,

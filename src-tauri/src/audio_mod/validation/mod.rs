@@ -330,6 +330,49 @@ fn validate_compatible_audio_mod_directory_with_policy(
             validate_lobby_return_hint(&mod_directory, mod_name)?;
         }
     }
+    if feature_groups
+        .iter()
+        .any(|group| group.id == "hostile_auto_restart")
+    {
+        if !feature_groups
+            .iter()
+            .any(|g| g.id == ESC_NEXT_GAME_FEATURE_ID)
+        {
+            return Err("敌对自动重开缺少双击 Esc 模块".into());
+        }
+        let root = mod_directory.join(format!("{mod_name}.mpq"));
+        let table = std::fs::read_to_string(root.join("data/global/excel/sounds.txt"))
+            .map_err(|e| format!("敌对提示声音表不可读：{e}"))?;
+        for name in [
+            "cursor_hostile",
+            "cursor_hostile_hd_1",
+            "cursor_hostile_hd_2",
+            "cursor_hostile_hd_3",
+        ] {
+            let file = format!("d2rhub_hostile\\{name}.flac");
+            if !table.lines().any(|line| {
+                line.split('\t').next() == Some(name) && line.split('\t').any(|value| value == file)
+            }) || !root
+                .join("data/hd/global/sfx/d2rhub_hostile")
+                .join(format!("{name}.flac"))
+                .is_file()
+            {
+                return Err(format!("敌对提示资源不完整：{name}"));
+            }
+        }
+    }
+    if let Some(group) = feature_groups
+        .iter()
+        .find(|group| current_feature_protocol && group.id == "party_loot")
+    {
+        layouts::validate_party_loot(&mod_directory, mod_name, group.recipe_version)?;
+    }
+    if let Some(group) = feature_groups
+        .iter()
+        .find(|group| current_feature_protocol && group.id == "scene_shortcuts")
+    {
+        layouts::validate_scene_shortcuts_version(&mod_directory, mod_name, group.recipe_version)?;
+    }
     if let Some(group) = feature_groups
         .iter()
         .find(|group| current_feature_protocol && group.id == ESC_NEXT_GAME_FEATURE_ID)
@@ -639,6 +682,28 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
             }
             let name = entry.file_name().to_string_lossy().into_owned();
             let mpq = entry.path().join(format!("{name}.mpq"));
+            if !mpq.exists() && processing_manifest_path(&entry.path()).is_none() {
+                if let Some((original, suffix)) = name.rsplit_once("_backup_") {
+                    if suffix.len() == 32
+                        && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+                        && plain_mod_name(original).is_ok()
+                        && entry.path().join(format!("{original}.mpq")).is_dir()
+                    {
+                        return Some(InstalledMod {
+                            name,
+                            source_mod_name: None,
+                            audio_ready: false,
+                            update_required: false,
+                            source_eligible: true,
+                            requires_unpack: false,
+                            unpack_recovery_required: false,
+                            feature_groups: Vec::new(),
+                            audio_reusable: false,
+                            auto_exit_on_death_enabled: false,
+                        });
+                    }
+                }
+            }
             let pending = crate::mpq_mod::has_pending_conversion(&entry.path());
             if mpq.is_file() || pending {
                 return Some(InstalledMod {
@@ -832,4 +897,33 @@ pub(super) fn validate_generator_output(
         directory: validated_directory,
         feature_groups: validated.feature_groups,
     })
+}
+
+#[cfg(test)]
+mod scene_upgrade_regression {
+    use super::*;
+    #[test]
+    #[ignore = "requires local scene recipe fixtures; read-only, including installed legacy Mod"]
+    fn old_scene_sources_validate_by_their_own_recipe() {
+        let cases: Vec<(String, String, u32)> =
+            serde_json::from_str(&std::env::var("D2RHUB_SCENE_UPGRADE_CASES").unwrap()).unwrap();
+        for (directory, name, version) in cases {
+            let root = PathBuf::from(directory);
+            let result = validate_compatible_audio_mod_directory_with_policy(
+                &root,
+                &name,
+                root.join(&name),
+                true,
+            );
+            assert!(result.is_ok(), "{name} r{version}: {:?}", result.err());
+            if version < 7 {
+                assert!(
+                    layouts::validate_scene_shortcuts(&root.join(&name), &name).is_err(),
+                    "legacy source must not pass current output validation"
+                );
+            } else {
+                layouts::validate_scene_shortcuts(&root.join(&name), &name).unwrap();
+            }
+        }
+    }
 }

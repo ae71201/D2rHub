@@ -103,3 +103,16 @@ describe("room automation configuration validation", () => {
     }
   });
 });
+
+it("normalizes legacy mode and JSON field order without causing repeated autosaves", () => {
+  const follower = { ...validConfig, collaboration_mode: "follower" as const };
+  const reordered = Object.fromEntries(Object.entries(follower).reverse()) as unknown as RoomAutomationConfig;
+  expect(roomAutomationConfigsEqual(follower, reordered)).toBe(true);
+  expect(roomAutomationConfigsEqual(validConfig, { ...validConfig, collaboration_mode: "default" })).toBe(true);
+  expect(roomAutomationConfigsEqual(validConfig, follower)).toBe(false);
+});
+it("requires a primary listener for shared follower and permits a primary-only machine", () => {
+  const follower = { ...validConfig, collaboration_mode: "follower" as const, follower_account_ids: [] };
+  expect(validateRoomAutomationConfig(follower, ROOM_AUTOMATION_COPY["zh-CN"]).valid).toBe(true);
+  expect(validateRoomAutomationConfig({ ...follower, primary_account_id: "" }, ROOM_AUTOMATION_COPY["zh-CN"]).valid).toBe(false);
+});

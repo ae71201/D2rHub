@@ -17,7 +17,10 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
   const selection = {
     includeAudioTelemetry: draft.features.includeAudioTelemetry || draft.origin === "recognition" || inherited.includes(AUDIO_TELEMETRY_FEATURE_ID) || (!!selected?.update_required && !inherited.length),
     includeRoomTools: draft.features.includeRoomTools || draft.origin === "room-automation" || inherited.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
-    includeEscNextGame: draft.features.includeEscNextGame || inherited.includes(ESC_NEXT_GAME_FEATURE_ID),
+    includeSceneShortcuts: draft.features.includeSceneShortcuts || inherited.includes("scene_shortcuts"),
+    includePartyLoot: draft.features.includePartyLoot || inherited.includes("party_loot"),
+    includeHostileAutoRestart: draft.features.includeHostileAutoRestart || inherited.includes("hostile_auto_restart"),
+    includeEscNextGame: draft.features.includeHostileAutoRestart || inherited.includes("hostile_auto_restart") || draft.features.includeEscNextGame || inherited.includes(ESC_NEXT_GAME_FEATURE_ID),
     includeAutoExitOnDeath: draft.features.includeAutoExitOnDeath || inherited.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID),
   };
   const augment = draft.recipe.kind === "augment";
@@ -27,12 +30,14 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
   const original = originalName ? state?.installed_mods.find(mod => mod.name.toLowerCase() === originalName.toLowerCase()) : null;
   const originalUnavailable = updating && !!originalName && (!original || !original.source_eligible
     || original.requires_unpack || original.update_required || original.feature_groups.length > 0);
-  const nameError = draft.recipe.kind === "create" ? validateAudioModName(draft.recipe.name, state?.installed_mods.map(mod => mod.name) ?? []) : null;
+  const nameError = draft.recipe.kind === "create" ? validateAudioModName(draft.recipe.replaceSource ? draft.recipe.source ?? "" : draft.recipe.name, draft.recipe.replaceSource ? [] : state?.installed_mods.map(mod => mod.name) ?? []) : null;
   const targetReason = draft.installationOnly
     ? (!state || state.account_id !== "" ? (en ? "Inspect the game installation before processing" : "请先检查游戏目录的 Mod") : "")
     : !draft.accountId ? (en ? "Select an initialized account" : "请选择已初始化的账号")
       : !state || state.account_id !== draft.accountId ? (en ? "Inspect the target account before processing" : "请先检查目标账号的 Mod") : "";
-  const blockedReason = targetReason ? targetReason
+  const blockedReason = draft.recipe.kind === "create" && draft.recipe.replaceSource && !draft.recipe.source
+    ? (en ? "Same-name processing requires an existing source Mod" : "同名加工需要选择已有源 Mod")
+    : targetReason ? targetReason
     : selected?.requires_unpack ? (en ? "Unpack this MPQ in the Mod library before processing" : "请先在 Mod 库点击解压，完成后再加工")
       : selectedName && (!selected || (!augment && !selected.source_eligible)) ? (en ? "The selected Mod is unavailable; rescan and choose again" : "所选 Mod 已不可用，请重新扫描后再选择")
         : draft.recipe.kind === "create" && draft.recipe.source === "" ? (en ? "Select a source Mod" : "请选择源 Mod")

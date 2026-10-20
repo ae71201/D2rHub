@@ -1,77 +1,14 @@
 use super::catalog::{
-    LocationCatalog, LocationKind, ResolvedLocation, TelemetryMarker, MAX_AREA_ID, MAX_ITEM_ID,
-    RUNE_COUNT,
+    LocationCatalog, LocationKind, ResolvedLocation, TelemetryMarker, MAX_ITEM_ID, RUNE_COUNT,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[cfg(test)]
 pub const GENERIC_TERROR_ZONE_NAME: &str = "恐怖区域";
 
 fn session_run_key(scene_name: &str, tz: bool) -> String {
     format!("{}:{}", if tz { "tz" } else { "normal" }, scene_name)
-}
-
-/// Deduplicates location markers while accepting a different location immediately.
-#[derive(Debug, Clone)]
-pub struct SceneTransitionGate {
-    confirmed: Option<TelemetryMarker>,
-}
-
-impl SceneTransitionGate {
-    pub fn new(_sample_rate: u32) -> Self {
-        Self { confirmed: None }
-    }
-
-    /// Returns true on the first valid marker for a different location.
-    pub fn observe(&mut self, marker: TelemetryMarker, _observed_at_frame: u64) -> bool {
-        if !matches!(
-            marker,
-            TelemetryMarker::Area { area_id } if (1..=MAX_AREA_ID).contains(&area_id)
-        ) && marker != TelemetryMarker::Frontend
-        {
-            return false;
-        }
-        if self.confirmed == Some(marker) {
-            return false;
-        }
-        self.confirmed = Some(marker);
-        true
-    }
-}
-
-/// Converts the repeating generic TZ marker into logical activations.
-///
-/// The absence window is only a packet de-duplication boundary. It must not be
-/// interpreted as proof that the player left the terror zone: the game does
-/// not emit the generic marker frequently enough to support that conclusion.
-#[derive(Debug, Clone)]
-pub struct TerrorZonePresenceGate {
-    sample_rate: u32,
-    last_seen: Option<u64>,
-}
-
-impl TerrorZonePresenceGate {
-    const ABSENCE_SECONDS: f32 = 4.0;
-
-    pub fn new(sample_rate: u32) -> Self {
-        Self {
-            sample_rate,
-            last_seen: None,
-        }
-    }
-
-    pub fn observe(&mut self, observed_at_frame: u64) -> bool {
-        let absence_frames = self.absence_frames();
-        let is_new_activation = self
-            .last_seen
-            .is_none_or(|last| observed_at_frame.saturating_sub(last) >= absence_frames);
-        self.last_seen = Some(observed_at_frame);
-        is_new_activation
-    }
-
-    fn absence_frames(&self) -> u64 {
-        (self.sample_rate as f32 * Self::ABSENCE_SECONDS) as u64
-    }
 }
 
 /// Converts repeated Flippy packets into one logical ground-presence event.
@@ -253,7 +190,7 @@ struct ActiveSegment {
     tz: bool,
     journey_id: String,
     segment_index: u32,
-    started_at_frame: u64,
+    started_at_frame: Option<u64>,
     started_at_ms: i64,
     absolute_time: String,
     drops: Vec<TrackedDrop>,
@@ -276,7 +213,8 @@ impl TrackedLocation {
             TelemetryMarker::Area { area_id } => Some(area_id),
             TelemetryMarker::Rune { .. }
             | TelemetryMarker::Item { .. }
-            | TelemetryMarker::Frontend => None,
+            | TelemetryMarker::Frontend
+            | TelemetryMarker::Hostile => None,
         };
         let terror_zone_active = terror_zone_active && location.kind == LocationKind::Wilderness;
         let scene_key = if terror_zone_active {
@@ -295,6 +233,7 @@ impl TrackedLocation {
         }
     }
 
+    #[cfg(test)]
     fn terror_zone(scene_name: String, scene_name_en: String) -> Self {
         let scene_name = if scene_name.trim().is_empty() {
             GENERIC_TERROR_ZONE_NAME.to_string()
@@ -334,6 +273,8 @@ pub struct SegmentTracker {
     session_drops: Vec<TrackedDrop>,
     revision: u64,
     sample_rate: u32,
+    current_announcement: Option<u64>,
+    #[cfg(test)]
     catalog: LocationCatalog,
 }
 
@@ -354,6 +295,8 @@ impl SegmentTracker {
         sample_rate: u32,
         catalog: LocationCatalog,
     ) -> Self {
+        #[cfg(not(test))]
+        let _ = catalog;
         Self {
             source_id: account_id.clone(),
             account_id,
@@ -367,6 +310,8 @@ impl SegmentTracker {
             session_drops: Vec::new(),
             revision: 0,
             sample_rate,
+            current_announcement: None,
+            #[cfg(test)]
             catalog,
         }
     }
@@ -416,6 +361,7 @@ impl SegmentTracker {
         )
     }
 
+    #[cfg(test)]
     pub fn observe_location_with_terror_state(
         &mut self,
         marker: TelemetryMarker,
@@ -452,6 +398,7 @@ impl SegmentTracker {
         Ok(self.observe_tracked_location(exact, observed_at_frame, observed_at_ms, absolute_time))
     }
 
+    #[cfg(test)]
     pub fn observe_terror_zone(
         &mut self,
         scene_name: String,
@@ -468,53 +415,63 @@ impl SegmentTracker {
         )
     }
 
-    pub fn current_is_terror_zone(&self) -> bool {
-        self.current_location
-            .as_ref()
-            .is_some_and(|location| location.tz)
+    /// OCR identifies an actual location transition. Wall time is authoritative:
+    /// audio samples may be silent, paused, or absent during a loading screen.
+    pub fn timer_started_at_ms(&self) -> Option<i64> {
+        self.active_segment.as_ref().map(|v| v.started_at_ms)
     }
-
-    pub fn current_area_id(&self) -> Option<u32> {
-        self.current_location
-            .as_ref()
-            .and_then(|location| location.area_id)
-    }
-
-    pub fn current_terror_zone_scene(&self) -> Option<&str> {
-        self.current_location
-            .as_ref()
-            .filter(|location| location.tz)
-            .map(|location| location.scene_name.as_str())
-    }
-
-    /// Replaces the fallback TZ label after the forecast cache becomes ready.
-    /// This is metadata-only: the active timer, journey, segment index and drops
-    /// remain untouched, so a late network response cannot create a fake split.
-    pub fn upgrade_current_terror_zone(
+    pub fn observe_visual_location(
         &mut self,
-        scene_name: String,
-        scene_name_en: String,
-    ) -> Option<TrackingSnapshot> {
-        let upgraded = TrackedLocation::terror_zone(scene_name, scene_name_en);
-        if upgraded.scene_name == GENERIC_TERROR_ZONE_NAME
-            || !self.current_location.as_ref().is_some_and(|location| {
-                location.tz && location.scene_name == GENERIC_TERROR_ZONE_NAME
-            })
-            || !self
-                .active_segment
+        location: ResolvedLocation,
+        tz: bool,
+        announcement: Option<u64>,
+        observed_at_ms: i64,
+        absolute_time: String,
+    ) -> TrackingOutcome {
+        let exact = TrackedLocation::exact(location, tz);
+        let same_entry = announcement.is_some()
+            && announcement == self.current_announcement
+            && self
+                .current_location
                 .as_ref()
-                .is_some_and(|segment| segment.tz && segment.scene_name == GENERIC_TERROR_ZONE_NAME)
+                .is_some_and(|v| v.area_id == exact.area_id);
+        if self.current_location.as_ref() == Some(&exact) && (announcement.is_none() || same_entry)
         {
-            return None;
+            return TrackingOutcome {
+                changed: false,
+                completed_segment: None,
+                snapshot: self.snapshot(),
+            };
         }
-
-        let active_segment = self.active_segment.as_mut()?;
-        active_segment.scene_key = upgraded.scene_key.clone();
-        active_segment.scene_name = upgraded.scene_name.clone();
-        active_segment.scene_name_en = upgraded.scene_name_en.clone();
-        self.current_location = Some(upgraded);
-        self.revision += 1;
-        Some(self.snapshot())
+        if same_entry {
+            if let Some(active) = self.active_segment.as_mut() {
+                active.scene_key = exact.scene_key.clone();
+                active.scene_name = exact.scene_name.clone();
+                active.scene_name_en = exact.scene_name_en.clone();
+                active.tz = exact.tz;
+            }
+            self.current_location = Some(exact);
+            self.revision += 1;
+            return TrackingOutcome {
+                changed: true,
+                completed_segment: None,
+                snapshot: self.snapshot(),
+            };
+        }
+        self.current_announcement = announcement;
+        // A fresh entry announcement can revisit the same area in another game.
+        // The inner transition helper normally suppresses identical locations.
+        if self.current_location.as_ref() == Some(&exact) {
+            self.current_location = None;
+        }
+        if let Some(active) = self.active_segment.as_mut() {
+            active.started_at_frame = None;
+        }
+        let outcome = self.observe_tracked_location(exact, 0, observed_at_ms, absolute_time);
+        if let Some(active) = self.active_segment.as_mut() {
+            active.started_at_frame = None;
+        }
+        outcome
     }
 
     fn observe_tracked_location(
@@ -645,7 +602,7 @@ impl SegmentTracker {
             tz: location.tz,
             journey_id,
             segment_index,
-            started_at_frame: observed_at_frame,
+            started_at_frame: Some(observed_at_frame),
             started_at_ms: observed_at_ms,
             absolute_time,
             drops: Vec::new(),
@@ -659,7 +616,9 @@ impl SegmentTracker {
     ) -> Option<CompletedSegment> {
         let active = self.active_segment.take()?;
         self.previous_run_drops = active.drops.clone();
-        let elapsed_frames = observed_at_frame.checked_sub(active.started_at_frame);
+        let elapsed_frames = active
+            .started_at_frame
+            .and_then(|start| observed_at_frame.checked_sub(start));
         let timer_seconds = elapsed_frames
             .map(|frames| frames as f64 / self.sample_rate as f64)
             .unwrap_or_else(|| (observed_at_ms - active.started_at_ms).max(0) as f64 / 1000.0);
@@ -686,6 +645,114 @@ impl SegmentTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ocr_floor_changes_split_wall_clock_timers_and_same_scene_is_idempotent() {
+        let mut tracker = tracker();
+        let location = |id, name: &str| ResolvedLocation {
+            marker: area(id),
+            scene_key: format!("area_{id}"),
+            scene_name: name.into(),
+            scene_name_en: name.into(),
+            kind: LocationKind::Wilderness,
+        };
+        let names = [
+            "女眷住处一层",
+            "女眷住处二层",
+            "王宫地下一层",
+            "王宫地下二层",
+        ];
+        let times = [1_000, 4_000, 8_000, 13_000];
+        let mut journey = None;
+        for (index, name) in names.iter().enumerate() {
+            let outcome = tracker.observe_visual_location(
+                location(50 + index as u32, name),
+                false,
+                None,
+                times[index],
+                "sample".into(),
+            );
+            assert!(outcome.changed);
+            assert_eq!(outcome.snapshot.current_scene, *name);
+            assert_eq!(outcome.snapshot.timer_started_at_ms, Some(times[index]));
+            if index == 0 {
+                assert!(outcome.completed_segment.is_none());
+                journey = tracker.journey_id.clone();
+            } else {
+                let finished = outcome.completed_segment.unwrap();
+                assert_eq!(finished.scene_name, names[index - 1]);
+                assert_eq!(
+                    finished.timer_seconds,
+                    (times[index] - times[index - 1]) as f64 / 1000.0
+                );
+                assert_eq!(Some(finished.journey_id), journey);
+            }
+            let repeat = tracker.observe_visual_location(
+                location(50 + index as u32, name),
+                false,
+                None,
+                times[index] + 500,
+                "repeat".into(),
+            );
+            assert!(!repeat.changed);
+            assert_eq!(repeat.snapshot.timer_started_at_ms, Some(times[index]));
+        }
+        let tz = tracker.observe_visual_location(
+            location(53, names[3]),
+            true,
+            None,
+            15_000,
+            "tz".into(),
+        );
+        assert!(tz.changed);
+        assert!(tz.snapshot.tz);
+        assert_eq!(tz.completed_segment.unwrap().timer_seconds, 2.0);
+        let normal = tracker.observe_visual_location(
+            location(53, names[3]),
+            false,
+            None,
+            17_000,
+            "normal".into(),
+        );
+        assert!(normal.changed);
+        assert!(!normal.snapshot.tz);
+        assert_eq!(normal.completed_segment.unwrap().timer_seconds, 2.0);
+        let town = ResolvedLocation {
+            marker: area(40),
+            scene_key: "lut_gholein".into(),
+            scene_name: "鲁高因".into(),
+            scene_name_en: "Lut Gholein".into(),
+            kind: LocationKind::Town,
+        };
+        let stopped = tracker.observe_visual_location(town, false, None, 20_000, "town".into());
+        assert_eq!(stopped.completed_segment.unwrap().timer_seconds, 3.0);
+        assert!(!stopped.snapshot.is_timing);
+        assert!(stopped.snapshot.is_town);
+    }
+    #[test]
+    fn late_tz_text_refines_one_entry_but_new_entry_restarts_the_same_area() {
+        let mut tracker = tracker();
+        let location = || ResolvedLocation {
+            marker: area(50),
+            scene_key: "harem1".into(),
+            scene_name: "女眷住处一层".into(),
+            scene_name_en: "Harem Level 1".into(),
+            kind: LocationKind::Wilderness,
+        };
+        tracker.observe_visual_location(location(), false, Some(10), 1_000, "first".into());
+        let refined =
+            tracker.observe_visual_location(location(), true, Some(10), 1_500, "tz".into());
+        assert!(refined.changed);
+        assert!(refined.completed_segment.is_none());
+        assert_eq!(refined.snapshot.timer_started_at_ms, Some(1_000));
+        let repeat =
+            tracker.observe_visual_location(location(), true, Some(10), 2_000, "repeat".into());
+        assert!(!repeat.changed);
+        let next =
+            tracker.observe_visual_location(location(), true, Some(11), 5_000, "next".into());
+        assert_eq!(next.completed_segment.unwrap().timer_seconds, 4.0);
+        assert_eq!(next.snapshot.timer_started_at_ms, Some(5_000));
+    }
 
     fn area(area_id: u32) -> TelemetryMarker {
         TelemetryMarker::Area { area_id }
@@ -849,51 +916,8 @@ mod tests {
         assert!(completed.tz);
         assert_eq!(completed.scene_name, "营房");
         assert_eq!(completed.timer_seconds, 1.0);
-        assert!(tracker
-            .upgrade_current_terror_zone("营房".to_string(), "Terror Zone".to_string())
-            .is_none());
+
         assert_eq!(tracker.snapshot().current_scene, "黑色荒地");
-    }
-
-    #[test]
-    fn late_terror_zone_name_upgrade_preserves_the_active_segment() {
-        let mut tracker = tracker();
-        let generic = tracker.observe_terror_zone(
-            GENERIC_TERROR_ZONE_NAME.to_string(),
-            "Terror Zone".to_string(),
-            0,
-            0,
-            "2026/08/29/00:30:00".to_string(),
-        );
-        assert!(generic.changed);
-        let journey_id = tracker.journey_id.clone();
-        let segment_index = tracker.next_segment_index;
-        tracker.observe_drop(rune_drop(1, 30, "贝", "Ber"));
-
-        let upgraded = tracker
-            .upgrade_current_terror_zone("黑色沼泽".to_string(), "Terror Zone".to_string())
-            .expect("a generic TZ should accept a later concrete name");
-        assert_eq!(upgraded.current_scene, "黑色沼泽");
-        assert_eq!(upgraded.current_run_name.as_deref(), Some("黑色沼泽"));
-        assert_eq!(
-            upgraded.current_run_key.as_deref(),
-            Some("terror_zone:黑色沼泽")
-        );
-        assert_eq!(upgraded.timer_started_at_ms, Some(0));
-        assert_eq!(upgraded.current_run_drops.len(), 1);
-        assert_eq!(tracker.journey_id, journey_id);
-        assert_eq!(tracker.next_segment_index, segment_index);
-        assert!(tracker.session_runs.is_empty());
-
-        let town = tracker
-            .observe_location(area(1), 96_000, 2_000, "town".to_string())
-            .unwrap();
-        let completed = town.completed_segment.unwrap();
-        assert_eq!(completed.scene_name, "黑色沼泽");
-        assert_eq!(completed.timer_seconds, 2.0);
-        assert_eq!(completed.drops.len(), 1);
-        assert_eq!(town.snapshot.previous_run_drops.len(), 1);
-        assert_eq!(town.snapshot.session_drops.len(), 1);
     }
 
     #[test]
@@ -942,26 +966,6 @@ mod tests {
             .observe_location(TelemetryMarker::Frontend, 2_000, 2_000, "menu".to_string())
             .unwrap();
         assert!(!tracker.accepts_drop_observations());
-    }
-
-    #[test]
-    fn transition_gate_supports_areas_and_frontend() {
-        let mut gate = SceneTransitionGate::new(48_000);
-        assert!(gate.observe(area(1), 0));
-        assert!(!gate.observe(area(1), 24_000));
-        assert!(gate.observe(TelemetryMarker::Frontend, 48_000));
-        assert!(gate.observe(area(1), 60_000));
-        assert!(gate.observe(TelemetryMarker::Frontend, 72_000));
-        assert!(!gate.observe(TelemetryMarker::Rune { rune_number: 1 }, 96_000));
-    }
-
-    #[test]
-    fn competing_locations_are_accepted_without_a_confirmation_delay() {
-        let mut gate = SceneTransitionGate::new(48_000);
-        assert!(gate.observe(area(6), 0));
-        assert!(!gate.observe(area(6), 48_000 * 4));
-        assert!(gate.observe(area(21), 48_000 * 5));
-        assert!(gate.observe(area(6), 48_000 * 6));
     }
 
     #[test]

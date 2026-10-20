@@ -1,12 +1,11 @@
-use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker, MAX_AREA_ID};
+use super::catalog::{LocationCatalog, TelemetryMarker, MAX_AREA_ID};
 use super::item_catalog::{
     gem_quality_level, ItemCatalog, ItemCatalogEntry, CATEGORY_CHARMS, CATEGORY_GEMS,
     CATEGORY_RUNES,
 };
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
 use super::tracking::{
-    DropPresenceGate, SceneTransitionGate, SegmentTracker, TerrorZonePresenceGate, TrackedDrop,
-    TrackedDropKind, TrackingSnapshot, GENERIC_TERROR_ZONE_NAME,
+    DropPresenceGate, SegmentTracker, TrackedDrop, TrackedDropKind, TrackingSnapshot,
 };
 #[cfg(test)]
 use crate::commands::launch::parse_windows_command_line;
@@ -53,24 +52,6 @@ pub struct ItemAudioEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocationAudioEvent {
-    pub source: String,
-    pub account_id: String,
-    #[serde(default)]
-    pub source_id: String,
-    pub area_id: Option<u32>,
-    pub scene_key: String,
-    pub scene_name: String,
-    pub scene_name_en: String,
-    pub tz: bool,
-    pub location_kind: LocationKind,
-    pub is_town: bool,
-    pub is_frontend: bool,
-    pub confidence: f32,
-    pub timestamp: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuneAudioStatus {
     pub running: bool,
     pub account_id: Option<String>,
@@ -83,7 +64,7 @@ pub struct RuneAudioStatus {
     pub decoded_packets: u64,
     pub rune_events: u64,
     pub item_events: u64,
-    pub scene_heartbeats: u64,
+    pub scene_ocr_events: u64,
     pub last_marker: Option<String>,
     pub last_confidence: Option<f32>,
     pub last_detected_at: Option<String>,
@@ -127,6 +108,8 @@ struct DiagnosticRecording {
 
 #[derive(Debug, Clone)]
 struct MonitorConfig {
+    tracking_enabled: bool,
+    hostile_enabled: bool,
     account_id: String,
     source_id: String,
     process_started_at: Option<u64>,
@@ -212,7 +195,7 @@ fn status() -> &'static Mutex<RuneAudioStatus> {
             decoded_packets: 0,
             rune_events: 0,
             item_events: 0,
-            scene_heartbeats: 0,
+            scene_ocr_events: 0,
             last_marker: None,
             last_confidence: None,
             last_detected_at: None,
@@ -353,7 +336,7 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
     {
         return Err("识别与统计模块尚未安装".into());
     }
-    if !config.rune_audio_enabled {
+    if !config.rune_audio_enabled && !config.hostile_auto_restart_enabled {
         return Err("符文声纹识别尚未启用".into());
     }
     let (account_id, source_id, character_name, target_pid, process_started_at, catalog_directory) =
@@ -361,8 +344,22 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
             super::external::validate_target(&config, target)?;
             let directory = super::external::installation_directory(&config, &target.edition)?;
             let arguments = crate::audio_mod::arguments_with_audio_mod("", &target.mod_name)?;
-            let catalog =
-                crate::audio_mod::validate_runtime_audio_mod_directory(&directory, &arguments)?;
+            if config.hostile_auto_restart_enabled {
+                crate::audio_mod::validate_runtime_feature_directory(
+                    &directory,
+                    &arguments,
+                    "hostile_auto_restart",
+                )?;
+            }
+            let catalog = if config.rune_audio_enabled {
+                crate::audio_mod::validate_runtime_audio_mod_directory(&directory, &arguments)?
+            } else {
+                crate::audio_mod::validate_runtime_feature_directory(
+                    &directory,
+                    &arguments,
+                    "hostile_auto_restart",
+                )?
+            };
             let session = super::external::resolve_session(&config, target)?;
             (
                 String::new(),
@@ -387,8 +384,24 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
                 .and_then(|instance| instance.launch)
                 .map(|snapshot| snapshot.mod_args)
                 .unwrap_or_else(|| account.mod_args.clone());
-            let catalog =
-                crate::audio_mod::validate_runtime_audio_mod(&config, &account, &arguments)?;
+            if config.hostile_auto_restart_enabled {
+                crate::audio_mod::validate_runtime_feature(
+                    &config,
+                    &account,
+                    &arguments,
+                    "hostile_auto_restart",
+                )?;
+            }
+            let catalog = if config.rune_audio_enabled {
+                crate::audio_mod::validate_runtime_audio_mod(&config, &account, &arguments)?
+            } else {
+                crate::audio_mod::validate_runtime_feature(
+                    &config,
+                    &account,
+                    &arguments,
+                    "hostile_auto_restart",
+                )?
+            };
             let name = if account.display_name.trim().is_empty() {
                 account.id.clone()
             } else {
@@ -397,6 +410,8 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
             (account.id.clone(), account.id, name, pid, None, catalog)
         };
     Ok(MonitorConfig {
+        tracking_enabled: config.rune_audio_enabled,
+        hostile_enabled: config.hostile_auto_restart_enabled,
         account_id,
         source_id,
         character_name,
@@ -411,7 +426,7 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
             .into_iter()
             .map(|code| code.to_ascii_lowercase())
             .collect(),
-        catalog_directory: Some(catalog_directory),
+        catalog_directory: config.rune_audio_enabled.then_some(catalog_directory),
     })
 }
 
@@ -460,6 +475,7 @@ fn marker_status_label(
     item_catalog: &ItemCatalog,
 ) -> String {
     match marker {
+        TelemetryMarker::Hostile => "敌对提示".into(),
         TelemetryMarker::Rune { rune_number } => {
             let name = crate::rune_data::get_rune_name(rune_number).unwrap_or("未知符文");
             format!("符文 #{rune_number:02} {name}")
@@ -490,13 +506,12 @@ fn record_decoded_packet(
         let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
         current.decoded_packets += 1;
         match marker {
+            TelemetryMarker::Hostile => {}
             TelemetryMarker::Rune { .. } if logical_event => current.rune_events += 1,
             TelemetryMarker::Rune { .. } => {}
             TelemetryMarker::Item { .. } if logical_event => current.item_events += 1,
             TelemetryMarker::Item { .. } => {}
-            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {
-                current.scene_heartbeats += 1
-            }
+            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {}
         }
         current.last_marker = Some(marker_status_label(marker, catalog, item_catalog));
         current.last_confidence = Some(confidence);
@@ -660,236 +675,58 @@ fn handle_item_detection(
     emit_tracking_snapshot(app, &snapshot);
 }
 
-struct LocationDetectionContext {
-    marker: TelemetryMarker,
-    terror_zone_active: bool,
-    observed_at_frame: u64,
-    confidence: f32,
-}
-
-fn handle_location_detection(
+fn handle_visual_location(
     app: &tauri::AppHandle,
-    config: &MonitorConfig,
     tracker: &mut SegmentTracker,
-    catalog: &LocationCatalog,
-    detection: LocationDetectionContext,
-) {
-    let LocationDetectionContext {
-        marker,
-        terror_zone_active,
-        observed_at_frame,
-        confidence,
-    } = detection;
-    let Some(location) = catalog.resolve(marker) else {
-        return;
+    candidate: crate::vision::Candidate,
+) -> bool {
+    let Some(location) = candidate.location else {
+        return false;
     };
     let now = chrono::Local::now();
-    let outcome = match tracker.observe_location_with_terror_state(
-        marker,
-        terror_zone_active,
-        observed_at_frame,
-        now.timestamp_millis(),
-        now.format("%Y/%m/%d/%H:%M:%S").to_string(),
-    ) {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            crate::logger::log_msg("ERROR", "RuneAudio", &format!("处理场景状态失败: {error}"));
-            return;
-        }
-    };
-    // 环境事件会周期性重播；只有真实场景变化才进入计时与统计链路。
-    if !outcome.changed {
-        return;
-    }
-    if let Some(completed_segment) = &outcome.completed_segment {
-        let state = app.state::<crate::state::SharedState>();
-        if let Err(error) = crate::stats::save_completed_segment(&state, completed_segment) {
-            crate::logger::log_msg(
-                "ERROR",
-                "RuneAudio",
-                &format!("保存自动野外分段失败: {error}"),
-            );
-        }
-    }
-    let event = LocationAudioEvent {
-        source: "location_audio".to_string(),
-        account_id: config.account_id.clone(),
-        source_id: config.source_id.clone(),
-        area_id: match marker {
-            TelemetryMarker::Area { area_id } => Some(area_id),
-            TelemetryMarker::Rune { .. }
-            | TelemetryMarker::Item { .. }
-            | TelemetryMarker::Frontend => None,
-        },
-        scene_key: if outcome.snapshot.tz {
-            format!("terror_zone:{}", location.scene_name)
-        } else {
-            location.scene_key
-        },
-        scene_name: outcome.snapshot.current_scene.clone(),
-        scene_name_en: outcome.snapshot.current_scene_en.clone(),
-        tz: outcome.snapshot.tz,
-        location_kind: location.kind,
-        is_town: location.kind == LocationKind::Town,
-        is_frontend: location.kind == LocationKind::Frontend,
-        confidence,
-        timestamp: now.to_rfc3339(),
-    };
-    if let Err(error) = app.emit("location-audio-detected", &event) {
-        crate::logger::log_msg(
-            "WARN",
-            "RuneAudio",
-            &format!("推送场景声纹事件失败: {error}"),
-        );
-    }
-    emit_tracking_snapshot(app, &outcome.snapshot);
-}
-
-fn handle_terror_zone_detection(
-    app: &tauri::AppHandle,
-    config: &MonitorConfig,
-    tracker: &mut SegmentTracker,
-    observed_at_frame: u64,
-    confidence: f32,
-) {
-    let current_zone = crate::commands::terror_zone::cached_current_terror_zone();
-    if tracker.current_area_id().is_some()
-        && tracker
-            .current_terror_zone_scene()
-            .is_some_and(|scene_name| {
-                current_zone
-                    .as_ref()
-                    .is_none_or(|zone| terror_zone_contains_scene(zone, scene_name))
-            })
-    {
-        // A repeated 1023 heartbeat must not discard a previously validated
-        // exact Area. A conflicting forecast is a new activation and is
-        // allowed to replace it below.
-        return;
-    }
-    let (scene_name, scene_name_en) = current_zone
-        .map(|zone| (zone.location_name, "Terror Zone".to_string()))
-        .unwrap_or_else(|| {
-            (
-                GENERIC_TERROR_ZONE_NAME.to_string(),
-                "Terror Zone".to_string(),
-            )
-        });
-    let now = chrono::Local::now();
-    let outcome = tracker.observe_terror_zone(
-        scene_name,
-        scene_name_en,
-        observed_at_frame,
+    let previous_timer = tracker.timer_started_at_ms();
+    let outcome = tracker.observe_visual_location(
+        location.clone(),
+        candidate.tz,
+        candidate.announcement,
         now.timestamp_millis(),
         now.format("%Y/%m/%d/%H:%M:%S").to_string(),
     );
     if !outcome.changed {
-        return;
+        return false;
     }
-    if let Some(completed_segment) = &outcome.completed_segment {
-        let state = app.state::<crate::state::SharedState>();
-        if let Err(error) = crate::stats::save_completed_segment(&state, completed_segment) {
+    if let Some(segment) = &outcome.completed_segment {
+        if let Err(error) =
+            crate::stats::save_completed_segment(&app.state::<crate::state::SharedState>(), segment)
+        {
             crate::logger::log_msg(
                 "ERROR",
                 "RuneAudio",
-                &format!("保存 TZ 自动野外分段失败: {error}"),
+                &format!("保存 OCR 场景分段失败: {error}"),
             );
         }
     }
-    emit_terror_zone_tracking_update(app, config, &outcome.snapshot, confidence);
-}
-
-fn emit_terror_zone_tracking_update(
-    app: &tauri::AppHandle,
-    config: &MonitorConfig,
-    snapshot: &TrackingSnapshot,
-    confidence: f32,
-) {
-    let event = LocationAudioEvent {
-        source: "terror_zone_audio".to_string(),
-        account_id: config.account_id.clone(),
-        source_id: config.source_id.clone(),
-        area_id: snapshot.current_area_id,
-        scene_key: snapshot
-            .current_run_key
-            .clone()
-            .unwrap_or_else(|| "terror_zone:unknown".to_string()),
-        scene_name: snapshot.current_scene.clone(),
-        scene_name_en: snapshot.current_scene_en.clone(),
-        tz: true,
-        location_kind: snapshot.location_kind.unwrap_or(LocationKind::Wilderness),
-        is_town: snapshot.is_town,
-        is_frontend: snapshot.is_frontend,
-        confidence,
-        timestamp: chrono::Local::now().to_rfc3339(),
-    };
-    if let Err(error) = app.emit("location-audio-detected", &event) {
-        crate::logger::log_msg(
-            "WARN",
-            "RuneAudio",
-            &format!("推送 TZ 场景声纹事件失败: {error}"),
-        );
+    {
+        let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
+        current.scene_ocr_events += 1;
     }
-    emit_tracking_snapshot(app, snapshot);
-}
-
-fn comparable_scene_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-fn terror_zone_contains_scene(
-    zone: &crate::commands::terror_zone::TerrorZoneForecast,
-    scene_name: &str,
-) -> bool {
-    let expected = comparable_scene_name(scene_name);
-    !expected.is_empty()
-        && std::iter::once(zone.location_name.as_str())
-            .chain(zone.location_detail.split('/'))
-            .any(|candidate| comparable_scene_name(candidate) == expected)
-}
-
-fn area_in_current_terror_zone(
-    tracker: &SegmentTracker,
-    location: &crate::rune_audio::catalog::ResolvedLocation,
-    scene_changed: bool,
-) -> bool {
-    if !tracker.current_is_terror_zone() {
-        return false;
-    }
-    if let Some(zone) = crate::commands::terror_zone::cached_current_terror_zone() {
-        return terror_zone_contains_scene(&zone, &location.scene_name);
-    }
-    let Some(current_scene) = tracker.current_terror_zone_scene() else {
-        return false;
-    };
-    if current_scene == GENERIC_TERROR_ZONE_NAME {
-        // With no forecast cache, only a genuinely different Area may refine
-        // the generic TZ. Reusing the previous Area would reattach a stale
-        // ambience heartbeat to the new TZ activation.
-        return scene_changed;
-    }
-    comparable_scene_name(current_scene) == comparable_scene_name(&location.scene_name)
-}
-
-fn upgrade_cached_terror_zone_name(
-    app: &tauri::AppHandle,
-    config: &MonitorConfig,
-    tracker: &mut SegmentTracker,
-    confidence: f32,
-) {
-    let Some(zone) = crate::commands::terror_zone::cached_current_terror_zone() else {
-        return;
-    };
-    let Some(snapshot) =
-        tracker.upgrade_current_terror_zone(zone.location_name, "Terror Zone".to_string())
-    else {
-        return;
-    };
-    emit_terror_zone_tracking_update(app, config, &snapshot, confidence);
+    crate::logger::log_msg(
+        "INFO",
+        "SceneOCR",
+        &format!(
+            "场景更新：{}，TZ={}，上一分段={}，新计时起点={:?}",
+            outcome.snapshot.current_scene,
+            outcome.snapshot.tz,
+            outcome
+                .completed_segment
+                .as_ref()
+                .map(|v| format!("{} {:.1}s", v.scene_name, v.timer_seconds))
+                .unwrap_or_default(),
+            outcome.snapshot.timer_started_at_ms
+        ),
+    );
+    emit_tracking_snapshot(app, &outcome.snapshot);
+    outcome.completed_segment.is_some() || previous_timer != outcome.snapshot.timer_started_at_ms
 }
 
 #[cfg(target_os = "windows")]
@@ -992,35 +829,57 @@ fn capture_loop(
         catalog.clone(),
     )
     .with_source_id(config.source_id.clone());
-    let mut scene_gate = SceneTransitionGate::new(CAPTURE_SAMPLE_RATE);
     let mut drop_gate = DropPresenceGate::new(CAPTURE_SAMPLE_RATE);
-    let mut terror_zone_gate = TerrorZonePresenceGate::new(CAPTURE_SAMPLE_RATE);
-    let tz_refresh_generation = generation;
-    tauri::async_runtime::spawn(async move {
-        loop {
-            let refresh = crate::commands::terror_zone::get_terror_zone_snapshot().await;
-            if !monitor_generation_active(tz_refresh_generation) {
-                break;
-            }
-            if let Err(error) = refresh {
-                crate::logger::log_msg(
-                    "WARN",
-                    "RuneAudio",
-                    &format!("刷新当前 TZ 名称失败，将在声纹触发时使用通用名称: {error}"),
-                );
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
-            if !monitor_generation_active(tz_refresh_generation) {
-                break;
-            }
-        }
-    });
+    let mut hostile_gate = super::hostile::TriggerGate::default();
+    let mut visual = crate::vision::audio::AudioVision::default();
     let mut process_system = sysinfo::System::new();
     let process_id = sysinfo::Pid::from(config.target_pid as usize);
     let mut process_check_ticks = 0u8;
 
     let capture_result = (|| -> Result<(), String> {
         while RUNNING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == generation {
+            if config.tracking_enabled {
+                visual.tick_area(&app, config.target_pid, &catalog);
+            }
+            for evidence in visual.poll() {
+                if !app
+                    .state::<crate::state::SharedState>()
+                    .configuration()
+                    .snapshot()
+                    .is_some_and(|c| c.rune_audio_enabled)
+                {
+                    continue;
+                }
+                match evidence {
+                    crate::vision::audio::Evidence::Area(candidate) => {
+                        if handle_visual_location(&app, &mut tracker, candidate) {
+                            drop_gate.clear();
+                            visual.change_scene();
+                            break;
+                        }
+                    }
+                    crate::vision::audio::Evidence::Drop(
+                        TelemetryMarker::Rune { rune_number },
+                        confidence,
+                    ) => {
+                        handle_rune_detection(&app, &config, &mut tracker, rune_number, confidence);
+                    }
+                    crate::vision::audio::Evidence::Drop(
+                        TelemetryMarker::Item { item_id },
+                        confidence,
+                    ) => {
+                        handle_item_detection(
+                            &app,
+                            &config,
+                            &mut tracker,
+                            &item_catalog,
+                            item_id,
+                            confidence,
+                        );
+                    }
+                    _ => {}
+                }
+            }
             let _ = event_handle.wait_for_event(500);
             process_check_ticks = process_check_ticks.saturating_add(1);
             if process_check_ticks >= 4 {
@@ -1097,41 +956,53 @@ fn capture_loop(
                 current.audio_peak = peak;
             }
             write_diagnostic_samples(&chunk);
+            let runtime = app
+                .state::<crate::state::SharedState>()
+                .configuration()
+                .snapshot();
+            let Some(runtime) = runtime else {
+                break;
+            };
+            if runtime.rune_audio_enabled != config.tracking_enabled
+                || runtime.hostile_auto_restart_enabled != config.hostile_enabled
+            {
+                break;
+            }
+            if runtime.rune_audio_external_target.is_some() != config.account_id.is_empty() {
+                break;
+            }
+            if runtime.rune_audio_external_target.is_none()
+                && runtime.rune_audio_target_account != config.account_id
+            {
+                break;
+            }
             for detection in detector.push(&chunk) {
-                if detection.marker
-                    == (TelemetryMarker::Area {
-                        area_id: MAX_AREA_ID,
-                    })
-                {
-                    let logical_event = terror_zone_gate.observe(detection.start_frame);
+                if detection.marker == TelemetryMarker::Hostile {
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
                         detection.start_frame,
                         &catalog,
                         &item_catalog,
-                        logical_event,
+                        false,
                     );
-                    if logical_event {
-                        drop_gate.clear();
-                        handle_terror_zone_detection(
+                    if runtime.hostile_auto_restart_enabled
+                        && hostile_gate.accept(std::time::Instant::now())
+                    {
+                        super::hostile::trigger(
                             &app,
-                            &config,
-                            &mut tracker,
-                            detection.start_frame,
-                            detection.confidence,
-                        );
-                    } else {
-                        upgrade_cached_terror_zone_name(
-                            &app,
-                            &config,
-                            &mut tracker,
-                            detection.confidence,
+                            &config.account_id,
+                            &config.source_id,
+                            config.target_pid,
                         );
                     }
                     continue;
                 }
+                if !runtime.rune_audio_enabled {
+                    continue;
+                }
                 match detection.marker {
+                    TelemetryMarker::Hostile => {}
                     marker @ TelemetryMarker::Rune { rune_number } => {
                         let tracked = should_record_rune(&config, &tracker, rune_number);
                         let logical_event = tracked
@@ -1148,7 +1019,16 @@ fn capture_loop(
                             &item_catalog,
                             logical_event,
                         );
-                        if logical_event {
+                        let aliases = crate::rune_data::visual_rune_aliases(rune_number);
+                        if logical_event
+                            && !visual.drop(
+                                &app,
+                                config.target_pid,
+                                marker,
+                                detection.confidence,
+                                aliases,
+                            )
+                        {
                             handle_rune_detection(
                                 &app,
                                 &config,
@@ -1176,7 +1056,19 @@ fn capture_loop(
                             &item_catalog,
                             logical_event,
                         );
-                        if logical_event {
+                        let aliases = item_catalog
+                            .resolve(item_id)
+                            .map(|item| vec![item.name.clone(), item.name_en.clone()])
+                            .unwrap_or_default();
+                        if logical_event
+                            && !visual.drop(
+                                &app,
+                                config.target_pid,
+                                marker,
+                                detection.confidence,
+                                aliases,
+                            )
+                        {
                             handle_item_detection(
                                 &app,
                                 &config,
@@ -1187,46 +1079,7 @@ fn capture_loop(
                             );
                         }
                     }
-                    marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => {
-                        let scene_changed = scene_gate.observe(marker, detection.start_frame);
-                        let location = catalog.resolve(marker);
-                        let terror_zone_active = location.as_ref().is_some_and(|location| {
-                            matches!(marker, TelemetryMarker::Area { .. })
-                                && area_in_current_terror_zone(&tracker, location, scene_changed)
-                        });
-                        let exact_terror_zone_upgrade = match marker {
-                            TelemetryMarker::Area { area_id } => {
-                                terror_zone_active && tracker.current_area_id() != Some(area_id)
-                            }
-                            TelemetryMarker::Rune { .. }
-                            | TelemetryMarker::Item { .. }
-                            | TelemetryMarker::Frontend => false,
-                        };
-                        let logical_event = scene_changed || exact_terror_zone_upgrade;
-                        record_decoded_packet(
-                            detection.marker,
-                            detection.confidence,
-                            detection.start_frame,
-                            &catalog,
-                            &item_catalog,
-                            logical_event,
-                        );
-                        if logical_event {
-                            drop_gate.clear();
-                            handle_location_detection(
-                                &app,
-                                &config,
-                                &mut tracker,
-                                &catalog,
-                                LocationDetectionContext {
-                                    marker,
-                                    terror_zone_active,
-                                    observed_at_frame: detection.start_frame,
-                                    confidence: detection.confidence,
-                                },
-                            );
-                        }
-                    }
+                    TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {}
                 }
             }
         }
@@ -1291,7 +1144,7 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         decoded_packets: 0,
         rune_events: 0,
         item_events: 0,
-        scene_heartbeats: 0,
+        scene_ocr_events: 0,
         last_marker: None,
         last_confidence: None,
         last_detected_at: None,
@@ -1320,7 +1173,7 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
                     decoded_packets: previous.decoded_packets,
                     rune_events: previous.rune_events,
                     item_events: previous.item_events,
-                    scene_heartbeats: previous.scene_heartbeats,
+                    scene_ocr_events: previous.scene_ocr_events,
                     last_marker: previous.last_marker,
                     last_confidence: previous.last_confidence,
                     last_detected_at: previous.last_detected_at,
@@ -1609,6 +1462,8 @@ mod tests {
 
     fn test_monitor_config(min_rune_number: u32) -> MonitorConfig {
         MonitorConfig {
+            tracking_enabled: true,
+            hostile_enabled: false,
             account_id: "account-1".to_string(),
             source_id: "account-1".to_string(),
             process_started_at: None,
@@ -1727,15 +1582,6 @@ mod tests {
         );
         assert_eq!(active_mod_name("-txt").unwrap(), None);
         assert!(active_mod_name(r#"-mod "..\\outside" -txt"#).is_err());
-    }
-
-    #[test]
-    fn terror_zone_probe_rearms_only_after_a_real_absence() {
-        let mut gate = TerrorZonePresenceGate::new(CAPTURE_SAMPLE_RATE);
-        assert!(gate.observe(10_000));
-        assert!(!gate.observe(10_000 + CAPTURE_SAMPLE_RATE as u64));
-        assert!(!gate.observe(10_000 + CAPTURE_SAMPLE_RATE as u64 * 3));
-        assert!(gate.observe(10_000 + CAPTURE_SAMPLE_RATE as u64 * 8));
     }
 
     #[test]

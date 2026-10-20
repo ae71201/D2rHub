@@ -1,3 +1,5 @@
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyRoomRule } from "../../roomAutomation/ruleShare";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -129,9 +131,18 @@ const capsulePool: ModCapsulePool = {
   ],
 };
 
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ readText: vi.fn(), writeText: vi.fn() }));
+
 afterEach(cleanup);
 
 describe("RoomAutomationPanel", () => {
+  it("does not expose a join-only setting", async () => {
+    const { gateway } = makeGateway();
+    render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
+    await screen.findByText(/未创建房间时，也可用跟房快捷键/);
+    expect(screen.queryByRole("switch", { name: "只跟房（不创建）" })).toBeNull();
+  });
+
   it("redirects the first participant missing a room-tools capsule without a confirmation modal", async () => {
     const { gateway } = makeGateway();
     const disabledSnapshot = { ...snapshot, config: { ...config, enabled: false } };
@@ -347,4 +358,24 @@ describe("RoomAutomationPanel", () => {
     await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].flow.sync_message_timeout_ms).toBe(3500));
   });
 
+});
+
+it("autosaves identical pasted rules with an explicit chat reset", async () => {
+  const { gateway } = makeGateway();
+  vi.mocked(readText).mockResolvedValue(copyRoomRule(config));
+  const user = userEvent.setup();
+  render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
+  await user.click(await screen.findByRole("button", { name: "粘贴" }));
+  await waitFor(() => expect(gateway.saveConfig).toHaveBeenCalledWith(snapshot.generation, expect.objectContaining({ name_prefix: config.name_prefix }), true));
+});
+
+it("switches to shared follower with primary listening and join-only shortcut labels", async () => {
+  const user = userEvent.setup();
+  const { gateway, saveConfig } = makeGateway();
+  render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
+  await user.click(await screen.findByRole("radio", { name: /拼房跟随/ }));
+  expect(screen.getByText("加入下一局")).toBeTruthy();
+  expect(screen.queryByText("建房后等待手动确认。")).toBeNull();
+  expect(screen.getByText(/无需将主号重复勾选为小号/)).toBeTruthy();
+  await waitFor(() => expect(saveConfig).toHaveBeenCalledWith(4, expect.objectContaining({ collaboration_mode: "follower", primary_account_id: "one", follower_account_ids: ["two"] })));
 });

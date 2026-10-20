@@ -183,6 +183,7 @@ fn shutdown_and_publish(app: &tauri::AppHandle, registry: &CapabilityRegistry) {
 }
 
 fn reconcile_if_changed_and_publish(app: &tauri::AppHandle, registry: &CapabilityRegistry) {
+    crate::vision::project(app);
     let previous_revision = registry.snapshot().revision;
     // A periodic full reconciliation both probes healthy drivers and retries
     // cleanup/start after a transient lifecycle failure. A health-only pass

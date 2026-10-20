@@ -2275,7 +2275,7 @@ impl GlobalConfig {
     pub(crate) fn resolve_rune_audio_target_account(
         &self,
     ) -> Result<Option<AccountMeta>, AppError> {
-        if !self.rune_audio_enabled {
+        if !self.rune_audio_enabled && !self.hostile_auto_restart_enabled {
             return Ok(None);
         }
 

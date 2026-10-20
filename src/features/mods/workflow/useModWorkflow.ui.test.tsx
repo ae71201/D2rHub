@@ -40,6 +40,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Mod workflow", () => {
+  it("forwards the source name and explicit replacement intent instead of the spare output name", async () => {
+    const { result } = mount();
+    await openDraft(result);
+    act(() => result.current.actions.changeRecipe({ kind: "create", source: "MyExistingMod", name: "Unused", replaceSource: true }));
+    act(() => result.current.actions.changeFeatures({ includePartyLoot: true }));
+    await act(() => result.current.actions.prepare());
+    expect(invokeCommand).toHaveBeenCalledWith("prepare_audio_mod", expect.objectContaining({
+      modName: "MyExistingMod", sourceModName: "MyExistingMod", replaceSource: true, includePartyLoot: true,
+    }));
+  });
   it.each([
     { source: null, includeRoomTools: false },
     { source: "MyExistingMod", includeRoomTools: true },

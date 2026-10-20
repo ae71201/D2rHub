@@ -10,6 +10,27 @@ vi.mock("../../../platform/tauri", () => ({ invokeCommand: vi.fn(async () => ({ 
 afterEach(cleanup);
 
 describe("ModProcessingPanel", () => {
+  it("offers native loot buttons and same-name processing with retained backups", async () => {
+    const workflow = workflowFixture({ draft: { recipe: { kind: "create", source: "MyExistingMod", name: "Unused", replaceSource: true } } });
+    render(<ModProcessingPanel workflow={workflow} />);
+    expect(workflow.blockedReason).toBe("");
+    expect(screen.queryByPlaceholderText("MyD2RHubMod")).toBeNull();
+    expect(screen.getByRole("radio", { name: /沿用源名称/ }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText(/先生成并校验，再替换/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("checkbox", { name: /左侧玩家尸体拾取按钮/ }));
+    expect(workflow.actions.changeFeatures).toHaveBeenCalledWith({ includePartyLoot: true });
+    await userEvent.click(screen.getByRole("radio", { name: /生成新副本/ }));
+    expect(workflow.actions.changeRecipe).toHaveBeenCalledWith(expect.objectContaining({ replaceSource: false }));
+  });
+  it("exposes scene restart with its help-page replacement disclosure", async () => {
+    const workflow = workflowFixture();
+    render(<ModProcessingPanel workflow={workflow} />);
+    const choice = screen.getByRole("checkbox", { name: /场景重开/ });
+    expect(screen.getByText(/替换高清帮助页并备份/)).toBeTruthy();
+    await userEvent.click(choice);
+    expect(workflow.actions.changeFeatures).toHaveBeenCalledWith({ includeSceneShortcuts: true });
+  });
+
   it("blocks rebuilding from a missing or processed original before execution", () => {
     const original = { ...modState.installed_mods[0], name: "Original", feature_groups: [], update_required: false };
     const target = { ...modState.installed_mods[0], source_mod_name: "Original", update_required: true };

@@ -37,6 +37,8 @@ export const GLOBAL_CONFIG_FIELDS = [
   "download_source",
   "first_launch",
   "rune_audio_enabled",
+  "hostile_auto_restart_enabled",
+  "hostile_auto_restart_all_windows",
   "rune_audio_target_account",
   "rune_audio_external_target",
   "rune_audio_detection_threshold",

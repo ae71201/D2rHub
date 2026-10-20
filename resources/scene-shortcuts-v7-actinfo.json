@@ -1,0 +1,30 @@
+[
+  {
+    "act": "3",
+    "waypoints": {
+      "waypoint1": "Act 3 - Town",
+      "waypoint2": "Act 4 - Town",
+      "waypoint3": "Act 3 - Travincal",
+      "waypoint4": "Act 3 - Jungle 1",
+      "waypoint5": "Act 3 - Jungle 2",
+      "waypoint6": "Act 3 - Jungle 3",
+      "waypoint7": "Act 3 - Kurast 1",
+      "waypoint8": "Act 3 - Kurast 2",
+      "waypoint9": "Act 3 - Mephisto 2"
+    }
+  },
+  {
+    "act": "4",
+    "waypoints": {
+      "waypoint1": "Act 4 - Town",
+      "waypoint2": "Act 3 - Mephisto 2",
+      "waypoint3": "Act 4 - Lava 1",
+      "waypoint4": "Act 3 - Travincal",
+      "waypoint5": "Act 5 - Baal Temple 2",
+      "waypoint6": "Act 2 - Valley of the Kings",
+      "waypoint7": "Act 1 - Wilderness 5",
+      "waypoint8": "Act 2 - Arcane",
+      "waypoint9": "Act 5 - Temple 2"
+    }
+  }
+]

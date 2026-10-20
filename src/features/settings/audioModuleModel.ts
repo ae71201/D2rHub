@@ -9,7 +9,7 @@ export interface RuneAudioStatus {
   decoded_packets: number;
   rune_events: number;
   item_events: number;
-  scene_heartbeats: number;
+  scene_ocr_events: number;
   last_marker: string | null;
   last_confidence: number | null;
   last_detected_at: string | null;

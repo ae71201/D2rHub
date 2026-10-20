@@ -8,23 +8,40 @@ import {
 } from "./featureContract";
 
 describe("audio feature group truth", () => {
+  it("supports scene restart independently and forwards the opt-in", () => {
+    const selection = { includeAudioTelemetry: false, includeRoomTools: false, includeAutoExitOnDeath: false, includeSceneShortcuts: true };
+    expect(hasSelectedAudioModFeature(selection)).toBe(true);
+    expect(audioModFeatureInvokeOptions(selection).includeSceneShortcuts).toBe(true);
+    expect(selectedAudioModFeatureAddsCapability(selection, [])).toBe(true);
+    expect(selectedAudioModFeatureAddsCapability(selection, ["scene_shortcuts"])).toBe(false);
+  });
+
   it("chooses feature defaults from the processing entry point", () => {
     expect(audioModFeatureDefaultsForPurpose("recognition")).toEqual({
       includeAudioTelemetry: true,
       includeRoomTools: false,
       includeEscNextGame: false,
+      includeSceneShortcuts: false,
+      includePartyLoot: false,
+      includeHostileAutoRestart: false,
       includeAutoExitOnDeath: false,
     });
     expect(audioModFeatureDefaultsForPurpose("room-tools")).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: true,
       includeEscNextGame: false,
+      includeSceneShortcuts: false,
+      includePartyLoot: false,
+      includeHostileAutoRestart: false,
       includeAutoExitOnDeath: false,
     });
     expect(audioModFeatureDefaultsForPurpose("manage")).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: false,
       includeEscNextGame: false,
+      includeSceneShortcuts: false,
+      includePartyLoot: false,
+      includeHostileAutoRestart: false,
       includeAutoExitOnDeath: false,
     });
   });
@@ -38,6 +55,9 @@ describe("audio feature group truth", () => {
       includeAudioTelemetry: false,
       includeRoomTools: true,
       includeEscNextGame: false,
+      includeSceneShortcuts: false,
+      includePartyLoot: false,
+      includeHostileAutoRestart: false,
       includeAutoExitOnDeath: true,
     });
   });

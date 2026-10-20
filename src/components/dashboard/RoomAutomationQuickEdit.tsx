@@ -1,5 +1,11 @@
+import { RoomCollaborationMode, roomModeLabel } from "../../features/roomAutomation/RoomCollaborationMode";
+import type { CollaborationMode } from "../../features/roomAutomation/types";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyRoomRule, parseRoomRule } from "../../features/roomAutomation/ruleShare";
 import {
   AlertCircle,
+  Copy,
+  ClipboardPaste,
   Check,
   ChevronDown,
   DoorOpen,
@@ -17,6 +23,8 @@ import {
   normalizeSettingsLanguage,
   type SettingsLanguage,
 } from "../../features/settings/settingsRegistry";
+import { Button } from "../ui/Button";
+import "./roomQuickSettings.css";
 import { AnchoredPanel } from "../ui/AnchoredPanel";
 import { showToast } from "../ui/Toast";
 
@@ -27,6 +35,7 @@ interface RoomAutomationQuickEditProps {
 }
 
 interface RoomNamingDraft {
+  collaborationMode: CollaborationMode;
   prefix: string;
   password: string;
   nextSequence: string;
@@ -60,8 +69,8 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
   "zh-CN": {
     trigger: "跟房配置",
     triggerTitle: "修改下一局跟房配置",
-    title: "下一局房间",
-    description: "设置下一局的房间名称和密码。",
+    title: "跟房设置",
+    description: "切换本机拼房身份，与队友同步房间规则。",
     preview: "预览",
     prefix: "房名开头",
     sequence: "下一个序号",
@@ -72,8 +81,8 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     cancel: "取消",
     save: "应用",
     saving: "应用中",
-    saved: "下一局房间已更新",
-    savedWithWarning: "房间命名已保存，但运行配置未能立即应用",
+    saved: "房间规则与拼房模式已更新",
+    savedWithWarning: "房间规则与模式已保存，但运行配置未能立即应用",
     saveFailed: "无法更新下一局房间",
     invalidRoomText: "房名前缀不能为空；支持中文和可粘贴的特殊字符，不支持换行或控制字符。",
     roomTooLong: "生成后的房名和密码不能超过 15 个字符。",
@@ -83,7 +92,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     trigger: "Follow Config",
     triggerTitle: "Edit the next room automation settings",
     title: "Next room",
-    description: "Set the name and password for the next room.",
+    description: "Choose this computer’s role and synchronize the room rule.",
     preview: "Preview",
     prefix: "Room prefix",
     sequence: "Next sequence",
@@ -94,8 +103,8 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     cancel: "Cancel",
     save: "Apply",
     saving: "Applying",
-    saved: "Next room updated",
-    savedWithWarning: "Room naming was saved, but the runtime could not apply it immediately",
+    saved: "Room rule and collaboration mode updated",
+    savedWithWarning: "Room rule and mode were saved, but the runtime could not apply them immediately",
     saveFailed: "Could not update the next room",
     invalidRoomText: "A room name prefix is required. Chinese and pasteable special characters are supported; line breaks and control characters are not.",
     roomTooLong: "Generated room names and passwords are limited to 15 UTF-16 characters.",
@@ -105,6 +114,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
 
 function namingDraft(config: RoomAutomationConfig): RoomNamingDraft {
   return {
+    collaborationMode: config.collaboration_mode ?? "default",
     prefix: config.name_prefix,
     password: config.password,
     nextSequence: String(config.next_sequence),
@@ -147,6 +157,7 @@ export function RoomAutomationQuickEdit({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const openRef = useRef(false);
   const draftDirtyRef = useRef(false);
+  const resetChatHistoryRef = useRef(false);
   const [snapshot, setSnapshot] = useState<RoomAutomationConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<RoomNamingDraft | null>(null);
   const [open, setOpen] = useState(false);
@@ -213,6 +224,7 @@ export function RoomAutomationQuickEdit({
 
   const openEditor = () => {
     setError(null);
+    resetChatHistoryRef.current = false;
     setDraft(namingDraft(snapshot.config));
     draftDirtyRef.current = false;
     setOpen((current) => !current);
@@ -231,12 +243,16 @@ export function RoomAutomationQuickEdit({
       const latest = await roomAutomationGateway.getConfig();
       const candidate: RoomAutomationConfig = {
         ...latest.config,
+        collaboration_mode: draft.collaborationMode,
         name_prefix: draft.prefix,
         password: draft.password,
         next_sequence: Number(draft.nextSequence),
         sequence_width: Number(draft.sequenceWidth),
       };
-      const outcome = await roomAutomationGateway.saveConfig(latest.generation, candidate);
+      const outcome = resetChatHistoryRef.current
+        ? await roomAutomationGateway.saveConfig(latest.generation, candidate, true)
+        : await roomAutomationGateway.saveConfig(latest.generation, candidate);
+      resetChatHistoryRef.current = false;
       setSnapshot(outcome.snapshot);
       setDraft(namingDraft(outcome.snapshot.config));
       draftDirtyRef.current = false;
@@ -268,6 +284,7 @@ export function RoomAutomationQuickEdit({
         <span className="room-automation-quick-dot" aria-hidden="true" />
         <DoorOpen size={13} strokeWidth={1.9} aria-hidden="true" />
         <span>{copy.trigger}</span>
+        {snapshot?.config.collaboration_mode && snapshot.config.collaboration_mode !== "default" && <span className="text-2xs text-text-muted">{roomModeLabel(snapshot.config.collaboration_mode, locale === "en-US")}</span>}
         <ChevronDown size={12} strokeWidth={1.9} aria-hidden="true" />
       </button>
 
@@ -291,6 +308,29 @@ export function RoomAutomationQuickEdit({
             </div>
           </header>
 
+          <RoomCollaborationMode compact value={draft.collaborationMode} onChange={collaborationMode => updateDraft({ collaborationMode })} disabled={saving} en={locale === "en-US"} />
+          <div className="room-quick-toolbar">
+            <span>{locale === "en-US" ? "Room rule" : "房间规则"}</span>
+            <div>
+            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={async () => {
+              const invalid = validateDraft(draft, copy);
+              if (invalid) { setError(invalid); return; }
+              try {
+                await writeText(copyRoomRule({ ...snapshot.config, name_prefix: draft.prefix, password: draft.password,
+                  next_sequence: Number(draft.nextSequence), sequence_width: Number(draft.sequenceWidth) }));
+                showToast("success", locale === "en-US" ? "Room rule copied (includes password)" : "规则已复制（包含房间密码）");
+              } catch (e) { setError(errorMessage(e)); }
+            }}><Copy size={13} aria-hidden="true" />{locale === "en-US" ? "Copy" : "复制"}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={async () => {
+              setSaving(true); setError(null);
+              try {
+                const rule = parseRoomRule(await readText());
+                resetChatHistoryRef.current = true;
+                updateDraft({ prefix: rule.name_prefix, password: rule.password, nextSequence: String(rule.next_sequence), sequenceWidth: String(rule.sequence_width) });
+              } catch (e) { setError(errorMessage(e)); } finally { setSaving(false); }
+            }}><ClipboardPaste size={13} aria-hidden="true" />{locale === "en-US" ? "Paste" : "粘贴"}</Button>
+            </div>
+          </div>
           <div className="room-automation-quick-fields">
             <label>
               <span>{copy.prefix}</span>
@@ -346,6 +386,7 @@ export function RoomAutomationQuickEdit({
             </p>
           )}
 
+          <p className="room-quick-save-hint">{locale === "en-US" ? "Apply to save this rule and mode." : "点击应用，保存规则与跟房模式。"}</p>
           <footer className="room-automation-quick-footer">
             <button
               type="button"
@@ -359,15 +400,15 @@ export function RoomAutomationQuickEdit({
               {copy.fullSettings}
             </button>
             <div>
-              <button type="button" className="control-btn" disabled={saving} onClick={() => setOpen(false)}>
+              <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setOpen(false)}>
                 {copy.cancel}
-              </button>
-              <button type="submit" className="primary-cta" disabled={saving}>
+              </Button>
+              <Button type="submit" size="sm" variant="primary" disabled={saving}>
                 {saving
                   ? <LoaderCircle className="animate-spin" size={12} aria-hidden="true" />
                   : <Check size={12} strokeWidth={2} aria-hidden="true" />}
                 {saving ? copy.saving : copy.save}
-              </button>
+              </Button>
             </div>
           </footer>
         </form>

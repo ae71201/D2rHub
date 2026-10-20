@@ -135,6 +135,7 @@ export function roomAutomationConfigsEqual(
   if (!left || !right) return left === right;
   const withDefaults = (config: RoomAutomationConfig) => ({
     ...config,
+    collaboration_mode: config.collaboration_mode ?? "default",
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     flow: { ...DEFAULT_ROOM_FLOW_TIMING, ...config.flow,
@@ -145,7 +146,11 @@ export function roomAutomationConfigsEqual(
       sync_message_timeout_ms: config.flow.sync_message_timeout_ms ?? DEFAULT_ROOM_FLOW_TIMING.sync_message_timeout_ms,
     },
   });
-  return JSON.stringify(withDefaults(left)) === JSON.stringify(withDefaults(right));
+  const ordered = (value: unknown): unknown => Array.isArray(value) ? value.map(ordered)
+    : value !== null && typeof value === "object"
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, ordered(item)]))
+      : value;
+  return JSON.stringify(ordered(withDefaults(left))) === JSON.stringify(ordered(withDefaults(right)));
 }
 
 export function generatedRoomName(config: RoomAutomationConfig): string {
@@ -178,8 +183,8 @@ export function validateRoomAutomationConfig(
   const followers = config.follower_account_ids.map((id) => id.trim()).filter(Boolean);
   const participantKeys = [config.primary_account_id, ...followers].map((id) => id.trim().toLowerCase());
 
-  if (!config.join_only && !config.primary_account_id.trim()) fieldErrors.primary = copy.primaryRequired;
-  if (followers.length === 0) fieldErrors.followers = copy.followersRequired;
+  if (config.collaboration_mode === "follower" && !config.primary_account_id) fieldErrors.primary = copy.primaryRequired;
+  if (followers.length === 0 && config.collaboration_mode !== "follower") fieldErrors.followers = copy.followersRequired;
   if (knownAccountIds) {
     const known = new Set(knownAccountIds.map((id) => id.toLowerCase()));
     if (config.primary_account_id && !known.has(config.primary_account_id.toLowerCase())) {

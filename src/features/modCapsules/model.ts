@@ -9,9 +9,17 @@ export const ROOM_TOOLS_CAPSULE_FEATURE = "in_game_room_tools";
 export const ESC_NEXT_GAME_CAPSULE_FEATURE = "esc_next_game";
 export const AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE = "auto_exit_on_death";
 
+export const PARTY_LOOT_CAPSULE_FEATURE = "party_loot";
+export const SCENE_SHORTCUTS_CAPSULE_FEATURE = "scene_shortcuts";
+
+export const HOSTILE_RESTART_CAPSULE_FEATURE = "hostile_auto_restart";
+
 const FEATURE_LABELS: Record<string, readonly [string, string]> = {
   [AUDIO_TELEMETRY_CAPSULE_FEATURE]: ["声纹识别", "Audio recognition"],
   [ROOM_TOOLS_CAPSULE_FEATURE]: ["局内房间工具", "In-game room tools"],
+  [HOSTILE_RESTART_CAPSULE_FEATURE]: ["敌对自动重开", "Hostile auto-restart"],
+  [PARTY_LOOT_CAPSULE_FEATURE]: ["左侧玩家尸体拾取按钮", "Player loot buttons"],
+  [SCENE_SHORTCUTS_CAPSULE_FEATURE]: ["场景重开（实验）", "Scene restart (experimental)"],
   [ESC_NEXT_GAME_CAPSULE_FEATURE]: ["双击 Esc 下一局地狱", "Double Esc: next Hell game"],
   [AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE]: ["死亡自动退房", "Auto-exit on death"],
 };
@@ -22,7 +30,7 @@ export function capsuleFeatureLabels(
   minimalMode = false,
 ): string[] {
   const visibleFeatures = minimalMode
-    ? capsule.feature_groups.filter((feature) => feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE || feature === ESC_NEXT_GAME_CAPSULE_FEATURE)
+    ? capsule.feature_groups.filter((feature) => feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE || feature === ESC_NEXT_GAME_CAPSULE_FEATURE || feature === SCENE_SHORTCUTS_CAPSULE_FEATURE || feature === PARTY_LOOT_CAPSULE_FEATURE || feature === HOSTILE_RESTART_CAPSULE_FEATURE)
     : capsule.feature_groups;
   return visibleFeatures.map((feature) => {
     if (feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE

@@ -57,7 +57,8 @@ impl<'a> KeyDelivery<'a> {
         Ok(Self {
             task_id: cancel.task_id(),
             account_id,
-            primary: !config.join_only && account_id.eq_ignore_ascii_case(&config.primary_account_id),
+            primary: !config.join_only
+                && account_id.eq_ignore_ascii_case(&config.primary_account_id),
             pid,
             hwnd,
             created,
@@ -93,7 +94,7 @@ struct PreparedForm {
     room_name: String,
 }
 
-static DESKTOP: Mutex<()> = Mutex::new(());
+static DESKTOP: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 static PREPARED_FORMS: OnceLock<Mutex<HashMap<u32, PreparedForm>>> = OnceLock::new();
 
@@ -133,8 +134,11 @@ pub(crate) fn prepare_background_room(
     room_name: &str,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    let follower_pids: Vec<u32> = follower_pids.iter().copied()
-        .filter(|pid| !config.join_only || *pid != primary_pid).collect();
+    let follower_pids: Vec<u32> = follower_pids
+        .iter()
+        .copied()
+        .filter(|pid| !config.join_only || *pid != primary_pid)
+        .collect();
     validate_text(room_name)?;
     validate_text(&config.password)?;
     let _desktop = loop {
@@ -167,7 +171,11 @@ pub(crate) fn prepare_background_room(
         validate_target(hwnd)?;
         let created = process_creation_time(pid).ok_or("无法确认游戏进程身份")?;
         let account_id = if config.join_only {
-            config.follower_account_ids.get(index).ok_or("跟随账号与进程列表不一致")?.as_str()
+            config
+                .follower_account_ids
+                .get(index)
+                .ok_or("跟随账号与进程列表不一致")?
+                .as_str()
         } else if index == 0 {
             config.primary_account_id.as_str()
         } else {
@@ -181,11 +189,37 @@ pub(crate) fn prepare_background_room(
             config, account_id, pid, hwnd, created, cancel,
         )?);
     }
-    if foreground_pid() != Some(primary_pid) {
-        return Err("同步粘贴前请保持主号在前台".to_string());
-    }
-    let mut input = DesktopInput::acquire(targets[0].hwnd, primary_pid)?;
+    let mut input = if config.join_only {
+        DesktopInput::acquire_for_messages(targets[0].hwnd, primary_pid)?
+    } else {
+        DesktopInput::acquire(targets[0].hwnd, primary_pid)?
+    };
     let flow = config.flow();
+    if !config.join_only
+        && config.collaboration_mode == crate::domain::room_automation::CollaborationMode::Host
+    {
+        input.key_down(VK_RETURN)?;
+        wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
+        input.release_last()?;
+        wait(cancel, Duration::from_millis(200))?;
+        paste_group(
+            &mut input,
+            &[],
+            &crate::vision::processing::chat_signal(
+                room_name
+                    .strip_prefix(&config.name_prefix)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .ok_or("聊天信号房间序号无效")?,
+            ),
+            flow,
+            cancel,
+            "chat.signal",
+        )?;
+        input.key_down(VK_RETURN)?;
+        wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
+        input.release_last()?;
+        wait(cancel, Duration::from_millis(300))?;
+    }
     let forms = PREPARED_FORMS.get_or_init(|| Mutex::new(HashMap::new()));
     let passwords = ENTERED_PASSWORDS.get_or_init(|| Mutex::new(HashMap::new()));
     let password_needed = {
@@ -246,7 +280,11 @@ pub(crate) fn prepare_background_room(
     for result in results {
         result?;
     }
-    let background = targets.iter().skip(1).copied().collect::<Vec<_>>();
+    let background = targets
+        .iter()
+        .skip(usize::from(input.uses_foreground_keys()))
+        .copied()
+        .collect::<Vec<_>>();
     paste_group(
         &mut input,
         &background,
@@ -258,14 +296,15 @@ pub(crate) fn prepare_background_room(
     if password_needed {
         // Every participant uses the same password; refresh the group when any
         // participant lacks a valid cache, otherwise leave all passwords alone.
-        input.key_down(VK_TAB)?;
-        // Release the physical Tab before visiting followers: their cumulative
-        // message waits must not turn the primary's single Tab into key repeat.
-        wait(
-            cancel,
-            Duration::from_millis(flow.key_hold_ms.clamp(10, 250)),
-        )?;
-        input.release_all()?;
+        if input.uses_foreground_keys() {
+            input.key_down(VK_TAB)?;
+            // Release before visiting followers, avoiding physical key repeat.
+            wait(
+                cancel,
+                Duration::from_millis(flow.key_hold_ms.clamp(10, 250)),
+            )?;
+            input.release_all()?;
+        }
         for target in &background {
             deliver_key(
                 target,
@@ -299,17 +338,17 @@ pub(crate) fn prepare_background_room(
         }
     }
     if !config.join_only {
-    // Consume the primary's prepared marker before the externally visible submit.
-    forms.lock().remove(&primary_pid);
-    deliver_key(
-        &targets[0],
-        VK_RETURN,
-        false,
-        flow.key_hold_ms,
-        flow.step_delay_ms,
-        cancel,
-        "submit.primary",
-    )?;
+        // Consume the primary's prepared marker before the externally visible submit.
+        forms.lock().remove(&primary_pid);
+        deliver_key(
+            &targets[0],
+            VK_RETURN,
+            false,
+            flow.key_hold_ms,
+            flow.step_delay_ms,
+            cancel,
+            "submit.primary",
+        )?;
     }
     for target in &targets {
         if password_needed {
@@ -396,8 +435,10 @@ fn paste_select_and_paste(
             target.send(0x41, false, step)?;
             background_a_down.pop();
         }
-        input.key_down(0x41)?;
-        input.release_last()?;
+        if input.uses_foreground_keys() {
+            input.key_down(0x41)?;
+            input.release_last()?;
+        }
 
         wait(cancel, Duration::from_millis(flow.chord_hold_ms))?;
         input.check_clipboard()?;
@@ -411,8 +452,10 @@ fn paste_select_and_paste(
             target.send(0x56, false, step)?;
             background_v_down.pop();
         }
-        input.key_down(0x56)?;
-        input.release_last()?;
+        if input.uses_foreground_keys() {
+            input.key_down(0x56)?;
+            input.release_last()?;
+        }
 
         wait(cancel, Duration::from_millis(flow.character_delay_ms))?;
         Ok(())
@@ -475,9 +518,13 @@ fn group_chord(
         }
         // Send the physical key last so background message delays cannot extend
         // the primary's key hold and cause repeated pastes.
-        input.key_down(key)?;
+        if input.uses_foreground_keys() {
+            input.key_down(key)?;
+        }
         wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
-        input.release_last()?;
+        if input.uses_foreground_keys() {
+            input.release_last()?;
+        }
         while let Some(target) = background_keys.last() {
             target.send(key, false, step)?;
             background_keys.pop();
@@ -950,6 +997,37 @@ fn wait(cancel: &dyn CancellationCheck, duration: Duration) -> Result<(), String
     } else {
         Ok(())
     }
+}
+
+/// Reuse bounded window-message delivery; never activate or steal focus.
+pub(crate) fn hostile_escape_burst(pid: u32, active: impl Fn() -> bool) -> Result<(), String> {
+    let created = process_creation_time(pid).ok_or("目标进程已退出")?;
+    let hwnd = crate::infrastructure::system::find_game_hwnd(pid).ok_or("找不到目标游戏窗口")?;
+    let delivery = KeyDelivery {
+        task_id: None,
+        account_id: "hostile",
+        primary: false,
+        pid,
+        hwnd,
+        created,
+        strategy: BackgroundTextStrategy::from_value("post_message"),
+        timeout_ms: 100,
+    };
+    for index in 0..4 {
+        if !active()
+            || process_creation_time(pid) != Some(created)
+            || crate::infrastructure::system::find_game_hwnd(pid) != Some(hwnd)
+        {
+            return Err("敌对重开已取消或目标窗口已变化".into());
+        }
+        let down = delivery.send(VK_ESCAPE, true, "hostile-escape-down");
+        let up = delivery.release(VK_ESCAPE, "hostile-escape-up");
+        combine_cleanup(down, up)?;
+        if index < 3 {
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

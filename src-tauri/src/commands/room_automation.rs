@@ -40,6 +40,7 @@ pub(crate) fn room_automation_save_config(
     global: tauri::State<'_, SharedState>,
     expected_generation: u64,
     config: RoomAutomationConfig,
+    reset_chat_history: Option<bool>,
 ) -> Result<RoomAutomationSaveOutcome, String> {
     let _profile = global
         .runtime_activation_lock
@@ -48,7 +49,12 @@ pub(crate) fn room_automation_save_config(
     if config.enabled {
         require_module_installed(&global)?;
     }
-    manager(&app)?.save_config(expected_generation, config)
+    let manager = manager(&app)?;
+    if reset_chat_history.unwrap_or(false) {
+        manager.save_config_with_chat_reset(expected_generation, config, true)
+    } else {
+        manager.save_config(expected_generation, config)
+    }
 }
 
 #[tauri::command(async)]

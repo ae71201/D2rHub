@@ -8,19 +8,23 @@ import type { AudioModFeatureSelection } from "../../mods/featureContract";
 
 export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController }) {
   const { batch, en } = workflow;
-  const candidates = (batch.inspection?.installed_mods ?? []).filter(mod => batch.mode === "create"
+  const candidates = (batch.inspection?.installed_mods ?? []).filter(mod => (batch.mode === "create" || batch.mode === "replace-source")
     ? mod.source_eligible || mod.requires_unpack : mod.feature_groups.length || mod.update_required);
-  const labels = { create: en ? "New copies" : "加工新副本", augment: en ? "Add modules" : "增补模块", rebuild: en ? "Update modules" : "模块更新" };
+  const labels = { "replace-source": en ? "Keep source names + backup" : "同名加工并备份", create: en ? "New copies" : "加工新副本", augment: en ? "Add modules" : "增补模块", rebuild: en ? "Update modules" : "模块更新" };
   const states = { blocked: en ? "Blocked" : "需处理", pending: en ? "Pending" : "待执行", running: en ? "Processing" : "处理中", success: en ? "Complete" : "成功", failed: en ? "Failed" : "失败", skipped: en ? "Not started" : "未开始" };
   const featureLabels: [keyof AudioModFeatureSelection, string, string][] = [
     ["includeRoomTools", en ? "In-game room tools" : "局内房间工具", en ? "Create, join, and follow games" : "创建、加入与自动跟房"],
+    ["includeHostileAutoRestart", en ? "Hostile auto-restart" : "敌对自动重开", en ? "Requires sound; includes Double Esc" : "需开启声音，自动包含双击 Esc 下一局"],
+    ["includePartyLoot", en ? "Player loot buttons" : "左侧玩家尸体拾取按钮", en ? "Native per-player permission controls" : "在左侧玩家头像旁逐人点击切换尸体拾取权限"],
+    ["includeSceneShortcuts", en ? "Scene restart (experimental)" : "场景重开（实验）", en ? "MYMOD waypoint restart; replaces the HD Help page" : "MYMOD 小站重开链；替换高清帮助页，按游戏帮助键触发"],
     ["includeEscNextGame", en ? "Double Esc: next Hell game" : "双 Esc 下一局地狱", en ? "Press Esc twice to start the next game" : "快速双击 Esc，进入下一局地狱"],
-    ["includeAudioTelemetry", en ? "Audio recognition" : "声纹识别", en ? "Scenes, drops, and run statistics" : "识别场景、掉落与刷图统计"],
+    ["includeAudioTelemetry", en ? "Audio recognition" : "声纹识别", en ? "Drop audio and an OCR scene catalog" : "掉落声纹与 OCR 地区目录"],
     ["includeAutoExitOnDeath", en ? "Exit on death" : "死亡自动退出", en ? "Leave after death; the corpse cannot be recovered in that game" : "死亡后离开房间，本局无法捡回尸体"],
   ];
   const pending = batch.rows?.filter(row => row.state === "pending").length ?? 0;
   const completed = batch.rows?.filter(row => row.state === "success").length ?? 0;
   const description = batch.mode === "create" ? (en ? "Create a separate Mod for each source. Set output names below." : "为每个源 Mod 生成独立副本，在下方分别设置输出名称。")
+    : batch.mode === "replace-source" ? (en ? "Verify each result, retain the original folder with a backup suffix, then install under the source name. Close games using these Mods first." : "逐项生成并校验，原目录加 _backup_唯一编号 后缀保留，新 Mod 沿用源名称。请先关闭使用这些 Mod 的游戏。")
     : batch.mode === "augment" ? (en ? "Keep installed modules and add the selected ones. Incompatible protocols trigger a fresh rebuild." : "保留已有模块，增补所选功能；协议不一致时自动从原始源 Mod 重做。")
       : (en ? "Rebuild using each Mod’s original source and saved modules, then replace the same name after verification." : "使用各自的原始来源与已保存模块重新生成，校验后替换同名成品。");
 
@@ -43,7 +47,7 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
         </label>
         {!batch.accounts.length && <p className="mod-empty-state" role="status">{en ? "Initialize an account for this game edition before processing Mods." : "请先初始化当前游戏版本的账号，再加工 Mod。"}</p>}
         <div className="mod-batch-modes" role="group" aria-label={en ? "Batch operation" : "批量操作"}>
-          {(["create", "augment", "rebuild"] as const).map(mode => <button type="button" key={mode} aria-pressed={batch.mode === mode} onClick={() => batch.changeMode(mode)}>{labels[mode]}</button>)}
+          {(["create", "replace-source", "augment", "rebuild"] as const).map(mode => <button type="button" key={mode} aria-pressed={batch.mode === mode} onClick={() => batch.changeMode(mode)}>{labels[mode]}</button>)}
         </div>
         <p className="mod-section-description">{description}</p>
       </section>
@@ -64,6 +68,7 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
             <label><input type="checkbox" checked={batch.selected.includes(mod.name)} disabled={mod.requires_unpack} onChange={event => batch.select(event.target.checked ? [...batch.selected, mod.name] : batch.selected.filter(name => name !== mod.name))} /><PackageOpen size={15} aria-hidden="true" /><strong>{mod.name}</strong></label>
             {mod.requires_unpack ? <span className="mod-section-description">{en ? "Unpack in the library first" : "请先在 Mod 库解压"}</span> : batch.mode === "create"
               ? <input className="settings-input" aria-label={`${mod.name} ${en ? "output name" : "输出名称"}`} value={batch.names[mod.name] ?? `${mod.name}-Hub`} onChange={event => batch.changeName(mod.name, event.target.value)} />
+              : batch.mode === "replace-source" ? <small>{en ? "Output: " : "输出："}{mod.name}{en ? " · Original folder retained as backup" : " · 原目录加后缀备份"}</small>
               : <small>{en ? "Source: " : "来源："}{mod.source_mod_name ?? (en ? "Original game / saved recipe" : "原版游戏／旧配方")}{mod.update_required ? (en ? " · Rebuild required" : " · 需要重做") : ""}</small>}
           </div>)}
         </div> : <div className="mod-empty-state"><PackageOpen size={20} aria-hidden="true" /><p>{en ? "No eligible Mods in this directory." : "此目录没有适用于当前操作的 Mod。"}</p></div>}

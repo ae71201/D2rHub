@@ -24,7 +24,7 @@ export function ExternalRecognitionTarget({ config, state, status, pool, busy, i
   if (!target) return null;
   const en = config.app_language === "en-US";
   const editions = (["CN", "Global"] as const).filter(edition => (edition === "CN" ? config.cn_game_path : config.global_game_path)?.trim());
-  const mods = pool?.capsules.filter(mod => mod.edition === target.edition && mod.ready && mod.feature_groups.includes("audio_telemetry")) ?? [];
+  const mods = pool?.capsules.filter(mod => mod.edition === target.edition && mod.ready && (mod.feature_groups.includes("audio_telemetry") || (!!config.hostile_auto_restart_enabled && mod.feature_groups.includes("hostile_auto_restart")))) ?? [];
   const argumentsText = state?.launch_arguments || (target.mod_name ? `-mod ${target.mod_name} -txt` : "");
   const selected = instances.find(instance => instance.selected);
   const identityValue = (instance: ExternalAudioInstance) => `${instance.pid}:${instance.started_at}`;

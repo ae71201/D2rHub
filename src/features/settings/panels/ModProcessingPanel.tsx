@@ -28,7 +28,8 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
   const targetModName = draft.recipe.kind === "augment" ? draft.recipe.modName : "";
   const sourceMode = draft.recipe.kind === "create" && draft.recipe.source !== null ? "existing" : "original";
   const sourceName = draft.recipe.kind === "create" ? draft.recipe.source ?? "" : "";
-  const outputName = draft.recipe.kind === "create" ? draft.recipe.name : "";
+  const replaceSource = draft.recipe.kind === "create" && !!draft.recipe.replaceSource;
+  const outputName = draft.recipe.kind === "create" ? (replaceSource ? sourceName : draft.recipe.name) : "";
   const isAugment = analysis.augment;
   const isAddingFeatures = analysis.augment && !analysis.updating;
   const outputNameError = analysis.nameError;
@@ -52,7 +53,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
   const backLabel = draft.origin === "recognition" ? (isEnglish ? "Back to recognition" : "返回识别设置")
     : draft.origin === "room-automation" ? (isEnglish ? "Back to room automation" : "返回自动跟房")
       : (isEnglish ? "Back to Mod library" : "返回 Mod 管理");
-  const selectSourceMod = (source: string) => actions.changeRecipe({ kind: "create", source, name: outputName });
+  const selectSourceMod = (source: string) => actions.changeRecipe({ kind: "create", source, name: outputName, replaceSource });
   const selectProcessedMod = (modName: string) => actions.changeRecipe({ kind: "augment", modName });
   const selectNewMod = () => actions.changeRecipe({ kind: "create", source: null, name: "" });
   const setOutputName = (name: string) => { if (draft.recipe.kind === "create") actions.changeRecipe({ ...draft.recipe, name }); };
@@ -191,7 +192,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               <div className="mod-processing-section-heading">
                 <div>
                   <h3>{isEnglish ? "Choose the source Mod" : "选择源 Mod"}</h3>
-                  <p>{isEnglish ? "An existing Mod stays unchanged; D2RHub builds a separate verified result." : "原 Mod 不会被修改；D2RHub 会生成并校验一个独立结果。"}</p>
+                  <p>{isEnglish ? "Choose a separate output name, or keep the source name and retain the original folder as a backup." : "可生成独立副本，也可沿用源 Mod 名称，原目录加后缀保留为备份。"}</p>
                 </div>
               </div>
               <div className="mod-section-body">
@@ -278,10 +279,37 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                 onChange={value => actions.changeFeatures({ includeRoomTools: value })}
               />}
               <FeatureChoice
+                title={isEnglish ? "Hostile auto-restart" : "敌对自动重开"}
+                detail={isEnglish ? "Requires game sound. Includes Double Esc; works independently of scene/drop tracking." : "需开启游戏声音。自动包含双击 Esc 下一局，可独立于场景、掉落识别使用。"}
+                checked={!!analysis.selection.includeHostileAutoRestart}
+                locked={inheritedFeatureGroups.includes("hostile_auto_restart")}
+                lockLabel={isEnglish ? "Installed" : "已安装"}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includeHostileAutoRestart: value, ...(value ? { includeEscNextGame: true } : {}) })}
+              />
+              <FeatureChoice
+                title={isEnglish ? "Player loot buttons" : "左侧玩家尸体拾取按钮"}
+                detail={isEnglish ? "Native per-player loot permission buttons beside the left roster. HD keyboard/mouse interface." : "在左侧玩家头像旁逐人切换拾取权限。适用于高清键鼠界面，权限由游戏控制。"}
+                checked={!!analysis.selection.includePartyLoot}
+                locked={inheritedFeatureGroups.includes("party_loot")}
+                lockLabel={isEnglish ? "Installed" : "已安装"}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includePartyLoot: value })}
+              />
+              <FeatureChoice
+                title={isEnglish ? "Scene restart (experimental)" : "场景重开（实验）"}
+                detail={isEnglish ? "Use the game's Help key to restart Hell. Attempts Travincal travel on every game entry. Replaces HD Help with a backup; in-game testing required." : "帮助键触发下一局地狱，每次进房尝试传送崔凡克。替换高清帮助页并备份，需游戏内验证。"}
+                checked={!!analysis.selection.includeSceneShortcuts}
+                locked={inheritedFeatureGroups.includes("scene_shortcuts")}
+                lockLabel={isEnglish ? "Installed" : "已安装"}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includeSceneShortcuts: value })}
+              />
+              <FeatureChoice
                 title={isEnglish ? "Double Esc: next Hell game" : "双击 Esc 下一局地狱"}
                 detail={isEnglish ? "Press Esc twice within 0.5 seconds; available independently of room tools" : "0.5 秒内双击 Esc 退出并进入下一局地狱，可独立启用"}
-                checked={includeEscNextGame || inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
-                locked={inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
+                checked={!!analysis.selection.includeHostileAutoRestart || includeEscNextGame || inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
+                locked={!!analysis.selection.includeHostileAutoRestart || inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
                 disabled={preparing}
                 onChange={value => actions.changeFeatures({ includeEscNextGame: value })}
@@ -310,14 +338,24 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                   ? (isEnglish ? "Rebuild from the original source and saved modules, then replace the same name after verification and apply it to the account." : "从原始来源与已保存模块重新生成，校验后替换同名成品并应用到账号。")
                   : operationKind === "augment"
                   ? (isEnglish ? "The selected Mod is augmented in place after verification, then applied to the target account." : "校验成功后原位增补所选 Mod，再应用到目标账号。")
-                  : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "为加工结果命名，然后一次完成生成、校验与应用。")}</p>
+                  : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "确认输出方式，生成并校验后应用。")}</p>
               </div>
             </div>
             <div className="mod-section-body">
-              {operationKind === "augment" ? (
+              {operationKind === "create" && sourceMode === "existing" && <>
+                <div className="mod-processing-source-options" role="radiogroup" aria-label={isEnglish ? "Output method" : "输出方式"}>
+                  {[false, true].map(replace => <button key={String(replace)} type="button" role="radio" aria-checked={replaceSource === replace} className="mod-source-choice" disabled={preparing}
+                    onClick={() => { if (draft.recipe.kind === "create") actions.changeRecipe({ ...draft.recipe, replaceSource: replace }); }}>
+                    <strong>{replace ? (isEnglish ? "Keep source name" : "沿用源名称") : (isEnglish ? "Create a new copy" : "生成新副本")}</strong>
+                    <span>{replace ? (isEnglish ? "Keep the original folder as a backup" : "原文件夹改名备份") : (isEnglish ? "Choose a new name; keep the source" : "自定义名称，保留源 Mod")}</span>
+                  </button>)}
+                </div>
+                {replaceSource && <p className="mod-section-description">{isEnglish ? "Verify first, then replace. The original folder is retained with a _backup_ suffix. Close games using this Mod first." : "先生成并校验，再替换。原目录加 _backup_ 后缀保留；请先关闭使用此 Mod 的游戏。"}</p>}
+              </>}
+              {operationKind === "augment" || replaceSource ? (
                 <div className="mod-processing-existing-output">
                   <CheckCircle2 size={15} />
-                  <span>{targetModName}</span>
+                  <span>{replaceSource ? sourceName : targetModName}</span>
                 </div>
               ) : (
                 <label className="mod-processing-name" htmlFor="processed-mod-name">
@@ -327,7 +365,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                     className="settings-input"
                     value={outputName}
                     maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
-                    disabled={preparing}
+                    disabled={preparing || replaceSource}
                     autoCapitalize="off"
                     autoCorrect="off"
                     spellCheck={false}

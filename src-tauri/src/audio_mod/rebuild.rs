@@ -36,6 +36,9 @@ pub(super) fn recipe(
             "audio_telemetry" => AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
             "in_game_room_tools" => IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
             "esc_next_game" => 4,
+            "scene_shortcuts" => 7,
+            "party_loot" => 2,
+            "hostile_auto_restart" => 1,
             "auto_exit_on_death" => AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION,
             _ => {
                 return Err(format!(
@@ -101,9 +104,16 @@ mod tests {
     use super::*;
     #[test]
     fn rebuild_does_not_downgrade_future_known_recipes() {
-        let request =
-            RequestedFeatureGroups::from_options(Some(false), Some(true), Some(false), Some(false))
-                .unwrap();
+        let request = RequestedFeatureGroups::from_options(
+            Some(false),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            Some(false),
+        )
+        .unwrap();
         for id in [
             "audio_telemetry",
             "in_game_room_tools",
@@ -117,9 +127,16 @@ mod tests {
     }
     #[test]
     fn rebuild_keeps_old_audio_options_across_protocol_changes() {
-        let request =
-            RequestedFeatureGroups::from_options(Some(false), Some(true), Some(false), Some(false))
-                .unwrap();
+        let request = RequestedFeatureGroups::from_options(
+            Some(false),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            Some(false),
+        )
+        .unwrap();
         let doc = serde_json::json!({"feature_groups":[{"id":"audio_telemetry","recipe_version":3,
             "fingerprint":"audio-v3;protocol=6;areas=countess_route;track=gems,runes;gain_mdb=-24000"}]});
         let (features, options) = recipe(&doc, request).unwrap();

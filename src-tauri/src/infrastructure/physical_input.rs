@@ -12,6 +12,7 @@ pub(crate) const INPUT_TAG: usize = 0x44325248;
 pub(crate) struct DesktopInput {
     hwnd: HWND,
     pid: u32,
+    foreground_keys: bool,
     clipboard: ClipboardSession,
     releases: Vec<INPUT>,
     hotkeys: Option<crate::input_listener::hotkeys::Pause>,
@@ -26,9 +27,20 @@ pub(crate) fn modifiers_released() -> bool {
 
 impl DesktopInput {
     pub(crate) fn acquire(hwnd: isize, pid: u32) -> Result<Self, String> {
+        Self::acquire_mode(hwnd, pid, true)
+    }
+
+    /// Window messages deliver every non-modifier key. Only shared physical
+    /// Ctrl is allowed here, to retain D2R's existing background paste strategy.
+    pub(crate) fn acquire_for_messages(hwnd: isize, pid: u32) -> Result<Self, String> {
+        Self::acquire_mode(hwnd, pid, false)
+    }
+
+    fn acquire_mode(hwnd: isize, pid: u32, foreground_keys: bool) -> Result<Self, String> {
         let mut session = Self {
             hwnd: HWND(hwnd as *mut _),
             pid,
+            foreground_keys,
             clipboard: ClipboardSession::new()?,
             releases: Vec::new(),
             hotkeys: None,
@@ -40,6 +52,10 @@ impl DesktopInput {
         Ok(session)
     }
 
+    pub(crate) fn uses_foreground_keys(&self) -> bool {
+        self.foreground_keys
+    }
+
     pub(crate) fn check_target(&self) -> Result<(), String> {
         let mut pid = 0;
         unsafe {
@@ -48,13 +64,16 @@ impl DesktopInput {
         if pid != self.pid || unsafe { IsIconic(self.hwnd) }.as_bool() {
             return Err("目标窗口已退出或最小化，已停止自动输入".to_string());
         }
-        if unsafe { GetForegroundWindow() } != self.hwnd {
+        if self.foreground_keys && unsafe { GetForegroundWindow() } != self.hwnd {
             return Err("目标窗口已失去前台，已停止自动输入".to_string());
         }
         Ok(())
     }
 
     pub(crate) fn key_down(&mut self, key: u16) -> Result<(), String> {
+        if !self.foreground_keys && key != 0x11 {
+            return Err("后台消息输入不能发送物理文字或导航按键".into());
+        }
         self.check_target()?;
         let scan = unsafe { MapVirtualKeyW(u32::from(key), MAPVK_VK_TO_VSC) } as u16;
         if scan == 0 {
@@ -129,5 +148,56 @@ fn send(input: INPUT) -> Result<(), String> {
 impl Drop for DesktopInput {
     fn drop(&mut self) {
         let _ = self.release_all();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_input_accepts_background_window_but_cannot_type_into_foreground() {
+        struct TargetWindow(HWND);
+        impl Drop for TargetWindow {
+            fn drop(&mut self) {
+                let _ = unsafe { DestroyWindow(self.0) };
+            }
+        }
+        let window = TargetWindow(unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                windows::core::w!("STATIC"),
+                windows::core::w!("D2RHub Background Input Test"),
+                WINDOW_STYLE::default(),
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+        });
+        let mut input = DesktopInput {
+            hwnd: window.0,
+            pid: unsafe { windows::Win32::System::Threading::GetCurrentProcessId() },
+            foreground_keys: false,
+            clipboard: ClipboardSession::new().unwrap(),
+            releases: Vec::new(),
+            hotkeys: None,
+        };
+        // Message-only windows cannot acquire desktop focus. No actual keys
+        // or clipboard text are emitted by this test.
+        assert!(input.check_target().is_ok());
+        assert!(input.key_down(0x56).is_err());
+        assert!(input.key_down(0x09).is_err());
+        assert!(input.releases.is_empty());
+        input.foreground_keys = true;
+        assert!(input.check_target().is_err());
+        input.foreground_keys = false;
+        drop(window);
+        assert!(input.check_target().is_err());
     }
 }

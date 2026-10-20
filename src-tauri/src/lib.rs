@@ -33,6 +33,7 @@ mod stats_page;
 #[cfg(target_os = "windows")]
 mod token_registry_change;
 mod tray;
+mod vision;
 mod window_placement;
 
 use crate::domain::config::GlobalConfig;
@@ -209,6 +210,10 @@ pub fn run() {
         })
         // ── 全局配置 ──
         .invoke_handler(tauri::generate_handler![
+            vision::commands::vision_get_config,
+            vision::commands::vision_save_config,
+            vision::commands::vision_get_status,
+            vision::commands::vision_preview,
             commands::global_config::get_global_config,
             commands::capability::get_capability_statuses,
             commands::capability::get_capability_descriptors,

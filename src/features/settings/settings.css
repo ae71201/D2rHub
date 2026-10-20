@@ -1034,3 +1034,8 @@
   .room-automation-section-heading-action { flex-wrap: wrap; }
   .room-automation-section-heading-action > button { margin-left: 25px; }
 }
+
+.room-rule-sharing { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border-default); margin-bottom: 14px; }
+.room-rule-sharing p { margin: 0; max-width: 48ch; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.room-rule-sharing > div { display: flex; gap: 6px; flex-shrink: 0; }
+@media (max-width: 540px) { .room-rule-sharing { align-items: flex-start; flex-wrap: wrap; } }

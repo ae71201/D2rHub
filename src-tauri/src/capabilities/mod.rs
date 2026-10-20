@@ -12,7 +12,7 @@ pub(crate) mod room_automation;
 pub(crate) mod room_automation_config;
 pub(crate) mod room_automation_runtime;
 #[cfg(target_os = "windows")]
-mod room_automation_windows;
+pub(crate) mod room_automation_windows;
 mod rune_audio;
 mod supervisor;
 
@@ -81,6 +81,12 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         };
     let rune_audio_driver: Arc<dyn CapabilityDriver> =
         rune_audio::RuneAudioCapability::install(app);
+    let vision_driver: Arc<dyn CapabilityDriver> = match crate::vision::Vision::install(app) {
+        Ok(driver) => driver,
+        Err(error) => Arc::new(UnavailableCapability {
+            failure: CapabilityFailure::new("vision-config", error),
+        }),
+    };
     let terror_zone_overlay_driver: Arc<dyn CapabilityDriver> =
         overlay_windows::OverlayWindowCapability::install(
             app,
@@ -115,6 +121,21 @@ pub(crate) fn install(app: &tauri::AppHandle) {
 
     let state = app.state::<SharedState>();
     if let Err(error) = state.capabilities().register_all(vec![
+        CapabilityRegistration {
+            descriptor: CapabilityDescriptor::first_party(
+                crate::vision::ID,
+                CapabilityCategory::Telemetry,
+                1,
+                "automation",
+                &[
+                    "vision_get_config",
+                    "vision_save_config",
+                    "vision_get_status",
+                ],
+                &[],
+            ),
+            driver: vision_driver,
+        },
         CapabilityRegistration {
             descriptor: CapabilityDescriptor::first_party(
                 DESKTOP_PET_ID,
@@ -269,6 +290,7 @@ pub(crate) fn initialize_room_automation_if_installed(app: &tauri::AppHandle) {
             );
         }
     });
+    crate::vision::project(app);
 }
 
 /// Starts the serialized supervisor after all platform services are ready and
@@ -357,6 +379,9 @@ pub(crate) fn apply_configuration(
         }
     }
     if let Some(supervisor) = app.and_then(|app| app.try_state::<CapabilitySupervisor>()) {
+        if let Some(app) = app {
+            crate::vision::project_configuration(app, config);
+        }
         supervisor.schedule_reconcile();
     }
 }
@@ -372,7 +397,8 @@ fn configured_capabilities(config: &GlobalConfig) -> [(CapabilityId, bool, &'sta
         ),
         (
             RUNE_AUDIO_ID,
-            automation_installed && config.rune_audio_enabled,
+            automation_installed
+                && (config.rune_audio_enabled || config.hostile_auto_restart_enabled),
             "声纹识别",
         ),
         (

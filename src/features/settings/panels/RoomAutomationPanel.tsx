@@ -1,3 +1,6 @@
+import { RoomCollaborationMode } from "../../roomAutomation/RoomCollaborationMode";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyRoomRule, parseRoomRule } from "../../roomAutomation/ruleShare";
 import {
   AlertCircle,
   ArrowDown,
@@ -39,6 +42,7 @@ import type {
 } from "../../roomAutomation/types";
 import { normalizeSettingsLanguage } from "../settingsRegistry";
 import "../roomAutomationParticipants.css";
+import { VisualRecognitionSettings } from "./VisualRecognitionSettings";
 
 interface RoomAutomationPanelProps {
   accounts: AccountMeta[];
@@ -109,6 +113,9 @@ export function RoomAutomationPanel({
   const [snapshot, setSnapshot] = useState<RoomAutomationConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<RoomAutomationConfig | null>(null);
   const [status, setStatus] = useState<RoomAutomationWorkflowStatus | null>(null);
+  const [ruleMessage, setRuleMessage] = useState("");
+  const [resetChatHistory, setResetChatHistory] = useState(0);
+  const resetChatHistoryRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
@@ -122,8 +129,8 @@ export function RoomAutomationPanel({
   const mountedRef = useRef(true);
   const persistDraftRef = useRef<((candidate: RoomAutomationConfig) => Promise<void>) | null>(null);
   const dirty = useMemo(
-    () => !roomAutomationConfigsEqual(snapshot?.config ?? null, draft),
-    [draft, snapshot],
+    () => resetChatHistory > 0 || !roomAutomationConfigsEqual(snapshot?.config ?? null, draft),
+    [draft, snapshot, resetChatHistory],
   );
 
   useEffect(() => {
@@ -143,6 +150,8 @@ export function RoomAutomationPanel({
     draftRef.current = committed;
     setDraft(committed);
     dirtyRef.current = false;
+    resetChatHistoryRef.current = 0;
+    setResetChatHistory(0);
     setStale(false);
     return true;
   }, []);
@@ -205,13 +214,15 @@ export function RoomAutomationPanel({
       if (!current) return current;
       const next = updater(cloneConfig(current));
       draftRef.current = next;
-      dirtyRef.current = !roomAutomationConfigsEqual(snapshotRef.current?.config ?? null, next);
+      dirtyRef.current = resetChatHistoryRef.current > 0 || !roomAutomationConfigsEqual(snapshotRef.current?.config ?? null, next);
       return next;
     });
     setOperationError(null);
   }, []);
 
   const reload = () => {
+    resetChatHistoryRef.current = 0;
+    setResetChatHistory(0);
     dirtyRef.current = false;
     if (snapshotRef.current) setDraft(cloneConfig(snapshotRef.current.config));
     setStale(false);
@@ -225,6 +236,7 @@ export function RoomAutomationPanel({
   const workflowActive = isWorkflowActive(status);
   const saving = operation === "save";
   const editorDisabled = loading || !!unavailable || (!!operation && operation !== "save");
+  const sharedFollower = draft?.collaboration_mode === "follower";
   const followerJoinMode = draft?.follower_join_mode ?? "simultaneous";
   const participantAccountIds = useMemo(() => draft
     ? [draft.primary_account_id, ...draft.follower_account_ids].filter(Boolean)
@@ -248,8 +260,15 @@ export function RoomAutomationPanel({
     setOperation("save");
     setOperationError(null);
     let saved = false;
+    const resetRequest = resetChatHistoryRef.current;
     try {
-      const outcome = await gateway.saveConfig(currentSnapshot.generation, candidate);
+      const outcome = resetRequest
+        ? await gateway.saveConfig(currentSnapshot.generation, candidate, true)
+        : await gateway.saveConfig(currentSnapshot.generation, candidate);
+      if (resetChatHistoryRef.current === resetRequest) {
+        resetChatHistoryRef.current = 0;
+        setResetChatHistory(0);
+      }
       saved = true;
       snapshotRef.current = outcome.snapshot;
       setSnapshot(outcome.snapshot);
@@ -257,7 +276,7 @@ export function RoomAutomationPanel({
         const committed = cloneConfig(outcome.snapshot.config);
         draftRef.current = committed;
         setDraft(committed);
-        dirtyRef.current = false;
+        dirtyRef.current = resetChatHistoryRef.current > 0;
       }
       setStale(false);
       if (outcome.apply_warning) {
@@ -439,6 +458,8 @@ export function RoomAutomationPanel({
           </p>
         )}
       </header>
+      <RoomCollaborationMode value={draft.collaboration_mode} onChange={collaboration_mode => updateDraft(current => ({ ...current, collaboration_mode }))} disabled={editorDisabled} en={locale === "en-US"} />
+      <VisualRecognitionSettings mode="chat" language={language} accounts={eligibleAccounts} primaryAccountId={snapshot?.config.primary_account_id} collaborationMode={snapshot?.config.collaboration_mode} />
 
       {(stale || operationError) && (
         <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">
@@ -459,13 +480,16 @@ export function RoomAutomationPanel({
           <UsersRound size={16} aria-hidden="true" />
           <div>
             <h3 id="room-participants-title">{copy.participants}</h3>
-            <p>{copy.participantsHelp}</p>
+            <p>{sharedFollower ? (locale === "en-US" ? "The primary listens for signals and joins together with the followers." : "主号负责监听聊天信号，并与小号一起加入房间。") : copy.participantsHelp}</p>
           </div>
         </div>
         {eligibleAccounts.length === 0 ? (
           <p className="room-automation-empty">{copy.noAccounts}</p>
         ) : (
           <>
+            <p className="feature-help">{sharedFollower
+              ? (locale === "en-US" ? "Keep your normal account setup. The primary is included automatically and does not create rooms in this mode." : "沿用平时的账号配置，主号会自动加入队伍，本机不执行创建。无需将主号重复勾选为小号。")
+              : (locale === "en-US" ? "The join shortcut can join the local rule directly. The sequence advances after all join commands are delivered." : "未创建房间时，也可用跟房快捷键直接加入本机规则房间。全部加入指令送达后序号递增。")}</p>
             <div className="room-automation-field">
               <ChoiceField label={copy.primary} value={draft.primary_account_id}
                 options={eligibleAccounts.map((account) => ({ value: account.id, label: accountLabel(account) }))}
@@ -645,14 +669,14 @@ export function RoomAutomationPanel({
           <KeyRound size={16} aria-hidden="true" />
           <div><h3 id="room-mode-title">{copy.modeAndRoom}</h3></div>
         </div>
-        <p className="room-automation-consent-copy">{copy.backgroundMethodHelp}</p>
+        <p className="room-automation-consent-copy">{sharedFollower ? (locale === "en-US" ? "A new chat signal starts a group join after 1 second plus the configured wait. Both shortcuts can also join manually." : "识别到新聊天信号后，等待 1 秒加下方等待时间，再让本机主号和小号加入。两个快捷键也可手动触发加入。") : copy.backgroundMethodHelp}</p>
         <div className="room-automation-behavior-fields">
-          <ChoiceField label={copy.followTrigger} value={draft.auto_followers_enabled ? "auto" : "manual"}
+          {!sharedFollower && <ChoiceField label={copy.followTrigger} value={draft.auto_followers_enabled ? "auto" : "manual"}
             options={[{ value: "manual", label: copy.manualMode }, { value: "auto", label: copy.automaticMode }]}
             disabled={editorDisabled}
             help={draft.auto_followers_enabled ? copy.automaticModeHelp : copy.manualModeHelp}
-            onChange={(value) => updateDraft((current) => ({ ...current, auto_followers_enabled: value === "auto" }))} />
-          <ChoiceField label={copy.followerJoinMode} value={followerJoinMode}
+            onChange={(value) => updateDraft((current) => ({ ...current, auto_followers_enabled: value === "auto" }))} />}
+          <ChoiceField label={sharedFollower ? (locale === "en-US" ? "Group join method" : "本机队伍进房方式") : copy.followerJoinMode} value={followerJoinMode}
             options={[
               { value: "simultaneous", label: copy.simultaneousJoin },
               { value: "interval", label: copy.intervalJoin },
@@ -667,9 +691,9 @@ export function RoomAutomationPanel({
         </div>
 
         <div className="room-automation-shortcuts">
-          {draft.auto_followers_enabled && (
+          {(draft.auto_followers_enabled || sharedFollower) && (
             <NumberField
-              label={copy.followerDelay}
+              label={sharedFollower ? (locale === "en-US" ? "Signal wait (seconds)" : "信号后等待（秒）") : copy.followerDelay}
               value={draft.auto_followers_delay_secs}
               min={0.5}
               step={0.5}
@@ -691,7 +715,7 @@ export function RoomAutomationPanel({
             />
           )}
           <ShortcutField
-            label={copy.createShortcut}
+            label={draft.collaboration_mode === "follower" ? (locale === "en-US" ? "Join next room" : "加入下一局") : copy.createShortcut}
             checkingLabel={locale === "en-US" ? "Checking availability..." : "正在检查占用..."}
             checkConflict={shortcut => checkShortcutConflict(shortcut, "shortcut")}
             value={draft.shortcut}
@@ -702,7 +726,7 @@ export function RoomAutomationPanel({
             onChange={(shortcut) => updateDraft((current) => ({ ...current, shortcut }))}
           />
           <ShortcutField
-            label={copy.followerShortcut}
+            label={sharedFollower ? (locale === "en-US" ? "Manual group join" : "手动加入队伍") : copy.followerShortcut}
             checkingLabel={locale === "en-US" ? "Checking availability..." : "正在检查占用..."}
             checkConflict={shortcut => checkShortcutConflict(shortcut, "join_shortcut")}
             value={draft.join_shortcut}
@@ -719,6 +743,22 @@ export function RoomAutomationPanel({
             <div><strong>{copy.roomNaming}</strong><span>{copy.roomNamingHelp}</span></div>
             <code aria-label={copy.preview} title={copy.preview}>{generatedRoomName(draft)}</code>
           </div>
+          <div className="room-rule-sharing">
+            <p>{language === "en-US" ? "Share before creating the next room. Includes the password." : "建房前分享规则，双方使用相同序号。复制内容包含密码。"}</p>
+            <div>
+              <Button size="sm" disabled={editorDisabled} onClick={() => void writeText(copyRoomRule(draft))
+                .then(() => setRuleMessage("规则已复制"), () => setRuleMessage("复制失败，请重试"))}>{language === "en-US" ? "Copy" : "复制"}</Button>
+              <Button size="sm" disabled={editorDisabled} onClick={async () => {
+                try { const rule = parseRoomRule(await readText());
+                  resetChatHistoryRef.current += 1;
+                  setResetChatHistory(resetChatHistoryRef.current);
+                  updateDraft(current => ({ ...current, ...rule }));
+                  setRuleMessage("规则已粘贴，保存后重新同步聊天信号，请确认跟随账号");
+                } catch (error) { setRuleMessage(error instanceof Error ? error.message : "粘贴失败"); }
+              }}>{language === "en-US" ? "Paste" : "粘贴"}</Button>
+            </div>
+          </div>
+          {ruleMessage && <p className="text-xs text-text-muted" role="status">{ruleMessage}</p>}
           <div className="room-automation-room-name-fields">
             <TextField label={copy.prefix} value={draft.name_prefix} maxLength={15} disabled={editorDisabled}
             invalid={!!validation?.fieldErrors.prefix}

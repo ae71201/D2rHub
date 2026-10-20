@@ -13,7 +13,7 @@ export interface RoomAutomationSyncHandlers {
 
 export interface RoomAutomationGateway {
   getConfig(): Promise<RoomAutomationConfigSnapshot>;
-  saveConfig(expectedGeneration: number, config: RoomAutomationConfig): Promise<RoomAutomationSaveOutcome>;
+  saveConfig(expectedGeneration: number, config: RoomAutomationConfig, resetChatHistory?: boolean): Promise<RoomAutomationSaveOutcome>;
   getStatus(): Promise<RoomAutomationWorkflowStatus>;
   startPrimary(): Promise<RoomAutomationWorkflowStatus>;
   startFollowers(): Promise<RoomAutomationWorkflowStatus>;
@@ -44,9 +44,9 @@ function acceptNewerConfig(
 
 export const roomAutomationGateway: RoomAutomationGateway = {
   getConfig: () => invokeCommand<RoomAutomationConfigSnapshot>("room_automation_get_config"),
-  saveConfig: (expectedGeneration, config) => invokeCommand<RoomAutomationSaveOutcome>(
+  saveConfig: (expectedGeneration, config, resetChatHistory = false) => invokeCommand<RoomAutomationSaveOutcome>(
     "room_automation_save_config",
-    { expectedGeneration, config },
+    { expectedGeneration, config, ...(resetChatHistory ? { resetChatHistory: true } : {}) },
   ),
   getStatus: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_get_status"),
   startPrimary: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_start_primary"),

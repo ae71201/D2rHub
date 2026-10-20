@@ -127,6 +127,8 @@ export interface GlobalConfig {
   download_source?: "auto" | "gitee" | "github";
   first_launch: boolean;
   rune_audio_enabled: boolean;
+  hostile_auto_restart_enabled?: boolean;
+  hostile_auto_restart_all_windows?: boolean;
   rune_audio_target_account: string;
   /** null/absent retains account monitoring and its saved target. */
   rune_audio_external_target?: { edition: "CN" | "Global"; mod_name: string } | null;

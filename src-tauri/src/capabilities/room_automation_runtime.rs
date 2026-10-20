@@ -22,6 +22,7 @@ use crate::application::multi_instance::{
 use crate::application::task_runtime::{TaskHandle, TaskRequest};
 use crate::commands::account::AccountManager;
 use crate::domain::config::GlobalConfig;
+use crate::domain::room_automation::CollaborationMode;
 use crate::error::AppError;
 use crate::input_listener::{
     register_unbounded_capability_shortcuts, replace_unbounded_capability_shortcuts,
@@ -434,7 +435,16 @@ impl TauriRuntimeBridge {
         }
         match status.phase {
             WorkflowPhase::Primary => {
-                let _ = current.handle.update(20, "primary", "主号正在创建房间");
+                let message = if status
+                    .primary_account_id
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                {
+                    "正在准备本机账号加入房间"
+                } else {
+                    "主号正在创建房间"
+                };
+                let _ = current.handle.update(20, "primary", message);
             }
             WorkflowPhase::Waiting => {
                 let message = match status.waiting_mode {
@@ -517,6 +527,7 @@ impl RuntimeBridge for TauriRuntimeBridge {
                 .set_requested(ROOM_AUTOMATION_ID, installed && enabled)
                 .map_err(|error| error.to_string())
         })?;
+        crate::vision::refresh_room_mode(&self.app)?;
         if let Some(supervisor) = self.app.try_state::<CapabilitySupervisor>() {
             supervisor.schedule_reconcile();
         }
@@ -759,14 +770,29 @@ impl RoomAutomationManager {
     pub(crate) fn save_config(
         &self,
         expected_generation: u64,
+        candidate: RoomAutomationConfig,
+    ) -> Result<RoomAutomationSaveOutcome, String> {
+        self.save_config_with_chat_reset(expected_generation, candidate, false)
+    }
+
+    pub(crate) fn save_config_with_chat_reset(
+        &self,
+        expected_generation: u64,
         mut candidate: RoomAutomationConfig,
+        reset_chat_history: bool,
     ) -> Result<RoomAutomationSaveOutcome, String> {
         let _config_apply = self.config_apply.lock();
-        self.join_finished_workflow();
-        if self.workflow_is_reserved() {
+        // Check while owning the same lock as shortcut/chat dispatch. A task
+        // can otherwise start between the cancellation check and the save.
+        let operation = loop {
+            self.join_finished_workflow();
+            let operation = self.operation.lock();
+            if !self.workflow_is_reserved() {
+                break operation;
+            }
+            drop(operation);
             self.cancel()?;
-        }
-        let operation = self.operation.lock();
+        };
         let previous = self.get_config();
 
         candidate
@@ -790,6 +816,21 @@ impl RoomAutomationManager {
                 )?;
             }
             let shortcuts = self.host.account_shortcuts()?;
+            // Commit the reset with the configuration, so failed saves cannot
+            // erase history. Automatic sequence advancement bypasses this path.
+            candidate.chat_signal_epoch = if reset_chat_history
+                || candidate.collaboration_mode != previous.config.collaboration_mode
+                || candidate.primary_account_id != previous.config.primary_account_id
+                || candidate.follower_account_ids != previous.config.follower_account_ids
+                || candidate.name_prefix != previous.config.name_prefix
+                || candidate.password != previous.config.password
+                || candidate.next_sequence != previous.config.next_sequence
+                || candidate.sequence_width != previous.config.sequence_width
+            {
+                expected_generation.checked_add(1).ok_or("配置版本已耗尽")?
+            } else {
+                previous.config.chat_signal_epoch
+            };
             let saved = self
                 .controller
                 .save(expected_generation, candidate, &shortcuts)
@@ -863,12 +904,15 @@ impl RoomAutomationManager {
     }
 
     pub(crate) fn start_primary(&self) -> Result<WorkflowStatus, String> {
-        if self.get_config().config.join_only { return Err("只跟房模式不创建房间，请使用跟房快捷键".into()); }
-        self.start_room_workflow()
+        self.start_room_workflow(false)
     }
 
-    fn start_room_workflow(&self) -> Result<WorkflowStatus, String> {
+    fn start_room_workflow(&self, join_only: bool) -> Result<WorkflowStatus, String> {
         let _operation = self.operation.lock();
+        self.start_room_workflow_locked(join_only)
+    }
+
+    fn start_room_workflow_locked(&self, join_only: bool) -> Result<WorkflowStatus, String> {
         self.join_finished_workflow();
         self.require_started()?;
         let mut status_before = self.workflow.lock().snapshot();
@@ -880,10 +924,34 @@ impl RoomAutomationManager {
         if self.lifecycle.lock().leases.is_some() {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝启动".to_string());
         }
-        let raw_config = self.workflow_config_snapshot()?;
+        let mut raw_config = self.workflow_config_snapshot()?;
+        let shared_follower = raw_config.collaboration_mode == CollaborationMode::Follower;
+        let join_only = join_only || shared_follower;
+        if shared_follower {
+            if raw_config.primary_account_id.is_empty() {
+                return Err("拼房跟随需要先配置主号，主号同时负责聊天识别和加入房间".into());
+            }
+            let primary = raw_config.primary_account_id.clone();
+            raw_config
+                .follower_account_ids
+                .retain(|id| !id.eq_ignore_ascii_case(&primary));
+            raw_config.follower_account_ids.insert(0, primary);
+        }
+        raw_config.join_only = join_only;
+        if join_only {
+            raw_config.primary_account_id.clear();
+        } else if raw_config.primary_account_id.is_empty() {
+            return Err("创建房间前请选择主账号；直接跟房无需主账号".into());
+        }
+        if raw_config.join_only && raw_config.next_sequence == u32::MAX {
+            return Err("房间序号已耗尽，请修改规则".into());
+        }
         // Prepare all participating forms before submitting the primary.
-        let ((config, primary, followers), primary_lease) =
-            self.prepare_and_reserve_workflow(raw_config.clone(), true, raw_config.join_only)?;
+        let ((config, primary, followers), primary_lease) = self.prepare_and_reserve_workflow(
+            raw_config.clone(),
+            !raw_config.join_only,
+            raw_config.join_only,
+        )?;
         let task = self
             .workflow
             .lock()
@@ -935,11 +1003,46 @@ impl RoomAutomationManager {
     }
 
     pub(crate) fn start_followers(&self) -> Result<WorkflowStatus, String> {
-        if self.get_config().config.join_only { return self.start_room_workflow(); }
+        self.start_followers_for_chat(None)
+    }
+
+    pub(crate) fn start_followers_for_chat(
+        &self,
+        expected_chat_epoch: Option<u64>,
+    ) -> Result<WorkflowStatus, String> {
         let _operation = self.operation.lock();
+        if expected_chat_epoch
+            .is_some_and(|epoch| epoch != self.get_config().config.chat_signal_epoch)
+        {
+            return Err("房间规则已更新，旧聊天跟房任务已取消".into());
+        }
+        if expected_chat_epoch.is_some()
+            && self.get_config().config.collaboration_mode != CollaborationMode::Follower
+        {
+            return Err("当前不是拼房跟随模式，已取消聊天触发".into());
+        }
         self.join_finished_workflow();
         self.require_started()?;
         let mut snapshot = self.workflow.lock().snapshot();
+        if !snapshot.running
+            && matches!(
+                snapshot.phase,
+                WorkflowPhase::Idle
+                    | WorkflowPhase::Complete
+                    | WorkflowPhase::Error
+                    | WorkflowPhase::Cancelled
+            )
+            // A failed creator workflow still owns its pending-room recovery.
+            // Do not silently turn a consumed join form into a fresh next room.
+            && (matches!(snapshot.phase, WorkflowPhase::Idle | WorkflowPhase::Complete)
+                || self.get_config().config.collaboration_mode == CollaborationMode::Follower
+                || snapshot
+                    .primary_account_id
+                    .as_deref()
+                    .is_none_or(str::is_empty))
+        {
+            return self.start_room_workflow_locked(true);
+        }
         validate_follower_trigger(&snapshot)?;
         self.join_previous_workflow(snapshot.task_id)?;
         snapshot = self.workflow.lock().snapshot();
@@ -978,7 +1081,7 @@ impl RoomAutomationManager {
         // 快捷键执行只解析当前窗口并取得实际参与账号的租约。Mod 兼容性
         // 在加工和配置阶段报告，不能阻断运行中的原生输入序列。
         let ((config, _primary, mut followers), acquired_leases) =
-            self.prepare_and_reserve_workflow(raw_config, true, true)?;
+            self.prepare_and_reserve_workflow(raw_config, false, true)?;
         let (task_id, room) = match snapshot.phase {
             WorkflowPhase::Waiting => {
                 let task_id = snapshot
@@ -1123,11 +1226,22 @@ impl RoomAutomationManager {
     ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
         let foreground_account = if config.join_only {
-            config.follower_account_ids.first().ok_or("请先选择跟随账号")?
-        } else { &config.primary_account_id };
+            config
+                .follower_account_ids
+                .first()
+                .ok_or("请先选择跟随账号")?
+        } else {
+            &config.primary_account_id
+        };
         let primary = self.host.running_instance(foreground_account)?;
-        if require_primary_foreground && self.host.foreground_pid() != Some(primary.pid) {
-            return Err("请先切到主号 D2R 窗口再执行自动跟房".to_string());
+        if require_primary_foreground && !config.join_only {
+            let foreground = self.host.foreground_pid();
+            if foreground != Some(primary.pid) {
+                return Err(format!(
+                    "请先切到主号 D2R 窗口再创建房间（账号={}，目标 PID={}，实际前台 PID={foreground:?}）",
+                    foreground_account, primary.pid
+                ));
+            }
         }
         Ok((config, primary))
     }
@@ -1268,15 +1382,30 @@ impl RoomAutomationManager {
         };
         self.bridge.publish_status(&status);
         if config.join_only {
-            let ready = self.workflow.lock().begin_selected_followers(task_id, config.follower_account_ids.clone());
+            let ready = self
+                .workflow
+                .lock()
+                .begin_selected_followers(task_id, config.follower_account_ids.clone());
             match ready {
                 Ok(status) => self.bridge.publish_status(&status),
-                Err(error) => { self.fail_and_release(task_id, &error.to_string()); return; }
+                Err(error) => {
+                    self.fail_and_release(task_id, &error.to_string());
+                    return;
+                }
             }
             self.run_followers(task_id, config, followers, room_name, cancel);
             let status = self.get_status();
-            if status.phase == WorkflowPhase::Complete && status.undelivered_follower_account_ids.is_empty() {
-                let _ = self.persist_used_sequence(task_id, sequence);
+            if status.phase == WorkflowPhase::Complete
+                && status.undelivered_follower_account_ids.is_empty()
+            {
+                if let Err(error) = self.persist_used_sequence(task_id, sequence) {
+                    if let Ok(status) = self.workflow.lock().completion_commit_failed(
+                        task_id,
+                        format!("{error}；入房指令已送达，请核对下一序号后再跟房"),
+                    ) {
+                        self.bridge.publish_status(&status);
+                    }
+                }
             }
             return;
         }
@@ -2239,6 +2368,157 @@ mod tests {
     }
 
     #[test]
+    fn collaboration_follower_joins_primary_and_followers_and_rejects_stale_mode_signals() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, _leases, host) = manager("collaboration_modes", false, false);
+        let original = manager.get_config();
+        let mut config = original.config.clone();
+        config.collaboration_mode = CollaborationMode::Follower;
+        let saved = manager
+            .save_config(original.generation, config)
+            .unwrap()
+            .snapshot;
+        assert!(saved.config.chat_signal_epoch > original.config.chat_signal_epoch);
+        manager.start().unwrap();
+        // The create shortcut in follower mode must become a local group join.
+        manager.start_primary().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager
+            .join_previous_workflow(manager.get_status().task_id)
+            .unwrap();
+        assert_eq!(manager.get_status().primary_account_id.as_deref(), Some(""));
+        let calls = host.follower_calls.lock().clone();
+        assert!(calls.iter().any(|(id, _)| id == "main"));
+        assert!(calls.iter().any(|(id, _)| id == "follower"));
+        assert_eq!(manager.get_config().config.primary_account_id, "main");
+        assert_eq!(
+            manager.get_config().config.follower_account_ids,
+            ["follower"]
+        );
+        let before = manager.get_config();
+        let mut config = before.config.clone();
+        config.collaboration_mode = CollaborationMode::Host;
+        let host_mode = manager
+            .save_config(before.generation, config)
+            .unwrap()
+            .snapshot;
+        assert!(manager
+            .start_followers_for_chat(Some(before.config.chat_signal_epoch))
+            .is_err());
+        assert!(manager
+            .start_followers_for_chat(Some(host_mode.config.chat_signal_epoch))
+            .is_err());
+        manager.start_primary().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Waiting);
+        // Changing identity cancels an old prepared creator task before joining.
+        let mut config = host_mode.config;
+        config.collaboration_mode = CollaborationMode::Follower;
+        let latest = manager.get_config();
+        config.next_sequence = latest.config.next_sequence;
+        let follower = manager
+            .save_config(latest.generation, config)
+            .unwrap()
+            .snapshot;
+        manager
+            .start_followers_for_chat(Some(follower.config.chat_signal_epoch))
+            .unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager.stop().unwrap();
+    }
+
+    #[test]
+    fn join_only_prepares_all_followers_without_foreground_or_reordering() {
+        let (_root, manager, _leases, _host) = manager("background_follower", false, false);
+        let mut config = manager.get_config().config;
+        config.join_only = true;
+        config.primary_account_id.clear();
+        // First follower=202; foreground=101. Neither eligibility nor order
+        // should depend on which application currently receives keyboard input.
+        config.follower_account_ids = vec!["follower".into(), "main".into()];
+        let (prepared, primary, followers) = manager.prepare_workflow(config, true, true).unwrap();
+        assert_eq!(primary.pid, 202);
+        assert_eq!(prepared.follower_account_ids, ["follower", "main"]);
+        assert_eq!(followers[0].1.pid, 202);
+        assert_eq!(followers[1].1.pid, 101);
+        let mut unrelated = prepared;
+        unrelated.follower_account_ids = vec!["follower".into()];
+        assert!(manager.prepare_primary_workflow(unrelated, true).is_ok());
+    }
+
+    #[test]
+    fn join_only_joins_without_a_creator_and_advances_only_after_delivery() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, _leases, host) = manager("join_only", false, false);
+        let snapshot = manager.get_config();
+        let mut config = snapshot.config;
+        config.auto_followers_enabled = true;
+        config.primary_account_id.clear();
+        config.follower_account_ids = vec!["follower".into()];
+        manager.save_config(snapshot.generation, config).unwrap();
+        manager.start().unwrap();
+        assert!(manager.start_primary().is_err());
+        host.fail_follower_once.store(true, Ordering::Release);
+        manager.start_followers().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Error);
+        manager.join_finished_workflow();
+        assert_eq!(manager.get_config().config.next_sequence, 1);
+        manager.start_followers().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager
+            .join_previous_workflow(manager.get_status().task_id)
+            .unwrap();
+        assert_eq!(manager.get_config().config.next_sequence, 2);
+        assert!(manager.get_config().config.auto_followers_enabled);
+        assert!(!manager.get_config().config.join_only);
+        assert_eq!(host.follower_calls.lock().len(), 2);
+        manager.start_followers().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager
+            .join_previous_workflow(manager.get_status().task_id)
+            .unwrap();
+        assert_eq!(manager.get_config().config.next_sequence, 3);
+        let module_dir = _root.0.join("modules").join(ROOM_AUTOMATION_MODULE_ID);
+        std::fs::write(module_dir.join("config.json"), "{broken-primary").unwrap();
+        std::fs::write(module_dir.join("config.json.bak"), "{broken-backup").unwrap();
+        manager.start_followers().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Error);
+        manager
+            .join_previous_workflow(manager.get_status().task_id)
+            .unwrap();
+        assert_eq!(manager.get_status().phase, WorkflowPhase::Error);
+        assert!(manager
+            .get_status()
+            .last_error
+            .unwrap()
+            .contains("入房指令已送达"));
+        assert_eq!(manager.get_config().config.next_sequence, 3);
+        manager.stop().unwrap();
+    }
+
+    #[test]
+    fn direct_follow_preserves_configured_creator_and_automatic_mode() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, _leases, _host) = manager("direct_follow_auto", true, false);
+        let snapshot = manager.get_config();
+        let mut config = snapshot.config;
+        config.primary_account_id = "follower".into();
+        config.follower_account_ids = vec!["main".into()];
+        manager.save_config(snapshot.generation, config).unwrap();
+        manager.start().unwrap();
+        manager.start_followers().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager
+            .join_previous_workflow(manager.get_status().task_id)
+            .unwrap();
+        let saved = manager.get_config().config;
+        assert_eq!(saved.primary_account_id, "follower");
+        assert!(saved.auto_followers_enabled);
+        assert_eq!(saved.next_sequence, 2);
+        assert_eq!(manager.get_status().primary_account_id.as_deref(), Some(""));
+        manager.stop().unwrap();
+    }
+
+    #[test]
     fn dormant_room_module_cleanup_does_not_initialize_a_manager() {
         let deferred = RoomAutomationCommandState::default();
         assert!(!deferred.is_initialized());
@@ -2433,6 +2713,78 @@ mod tests {
         assert!(host.primary_calls.lock().is_empty());
         assert!(leases.is_empty());
         manager.stop().unwrap();
+    }
+
+    #[test]
+    fn chat_reset_commits_only_with_explicit_rule_edits_or_paste() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let root = TestDirectory::new("chat_reset_save");
+        let controller = RoomAutomationConfigController::new(&root.0).unwrap();
+        let initial = controller.load_or_initialize(None, &[]).unwrap();
+        let manager = RoomAutomationManager::new(
+            controller.clone(),
+            initial.clone(),
+            AccountLeaseManager::default(),
+            Arc::new(FakeHost::new(false)),
+            Arc::new(FakeBridge::default()),
+        );
+        let mut current = initial;
+        let mut candidate = current.config.clone();
+        candidate.auto_followers_delay_secs = 6.0;
+        candidate.chat_signal_epoch = 999;
+        current = manager
+            .save_config(current.generation, candidate)
+            .unwrap()
+            .snapshot;
+        assert_eq!(current.config.chat_signal_epoch, 0);
+        for field in 0..4 {
+            let mut candidate = current.config.clone();
+            match field {
+                0 => candidate.name_prefix = "new-".into(),
+                1 => candidate.password = "newpw".into(),
+                2 => candidate.next_sequence = 2,
+                _ => candidate.sequence_width = 4,
+            }
+            let old_epoch = current.config.chat_signal_epoch;
+            current = manager
+                .save_config(current.generation, candidate)
+                .unwrap()
+                .snapshot;
+            assert!(current.config.chat_signal_epoch > old_epoch);
+        }
+        let previous = current.clone();
+        current = manager
+            .save_config_with_chat_reset(current.generation, current.config.clone(), true)
+            .unwrap()
+            .snapshot;
+        assert!(current.config.chat_signal_epoch > previous.config.chat_signal_epoch);
+        assert!(manager
+            .save_config_with_chat_reset(previous.generation, previous.config, true)
+            .is_err());
+        let mut invalid = current.config.clone();
+        invalid.strategy_version = u8::MAX;
+        assert!(manager
+            .save_config_with_chat_reset(current.generation, invalid, true)
+            .is_err());
+        assert_eq!(
+            controller
+                .load_or_initialize(None, &[])
+                .unwrap()
+                .config
+                .chat_signal_epoch,
+            current.config.chat_signal_epoch
+        );
+        let advanced = controller
+            .advance_sequence_at_least(current.config.next_sequence)
+            .unwrap();
+        assert_eq!(
+            advanced.config.chat_signal_epoch,
+            current.config.chat_signal_epoch
+        );
+        assert!(manager
+            .start_followers_for_chat(Some(0))
+            .unwrap_err()
+            .contains("旧聊天跟房任务已取消"));
     }
 
     #[test]

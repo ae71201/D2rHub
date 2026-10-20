@@ -208,7 +208,7 @@ export function useModWorkflow(options: Options) {
           completed = { key, modName: current.recipe.modName, ...(alreadyAssigned ? { applied: upgraded } : {}) };
         } else {
           const built = await invokeCommand<AudioModPrepareResult>("prepare_audio_mod", {
-            accountId: current.accountId, ...(current.installationOnly ? { edition: current.edition } : {}), modName: current.recipe.name.trim(), sourceModName: current.recipe.source, ...features,
+            accountId: current.accountId, ...(current.installationOnly ? { edition: current.edition } : {}), modName: current.recipe.replaceSource ? current.recipe.source : current.recipe.name.trim(), sourceModName: current.recipe.source, replaceSource: current.recipe.replaceSource ?? false, ...features,
           });
           completed = { key, modName: built.mod_name };
         }

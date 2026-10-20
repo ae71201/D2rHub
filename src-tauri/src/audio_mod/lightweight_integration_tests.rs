@@ -176,6 +176,9 @@ fn features(mask: u8) -> RequestedFeatureGroups {
         audio_telemetry: mask & 1 != 0,
         room_tools: mask & 2 != 0,
         esc_next_game: mask & 4 != 0,
+        scene_shortcuts: mask & 16 != 0,
+        party_loot: mask & 32 != 0,
+        hostile_auto_restart: false,
         auto_exit_on_death: mask & 8 != 0,
     }
 }
@@ -470,4 +473,216 @@ fn lightweight_processed_same_name_replacement() {
         )
         .unwrap();
     }
+}
+
+#[test]
+#[ignore = "requires locally generated scene-shortcuts review Mod"]
+fn scene_shortcuts_real_output_passes_host_validation() {
+    let root = std::path::PathBuf::from(
+        std::env::var("D2RHUB_SCENE_TEST_MODS").expect("set D2RHUB_SCENE_TEST_MODS"),
+    );
+    let name =
+        std::env::var("D2RHUB_SCENE_TEST_NAME").unwrap_or_else(|_| "SceneRestartReview".into());
+    let validated = validate_audio_mod_credential(&root, &name).unwrap();
+    assert!(validated
+        .feature_groups
+        .iter()
+        .any(|group| group.id == "scene_shortcuts"));
+    super::validation::layouts::validate_scene_shortcuts(&root.join(&name), &name).unwrap();
+    let temp = TemporaryDirectory::create(
+        std::env::temp_dir().join(format!("scene-layout-test-{}", uuid::Uuid::new_v4())),
+    )
+    .unwrap();
+    let copy = temp.path().join(&name);
+    let copied_mpq = copy.join(format!("{name}.mpq"));
+    let copied_layouts = copied_mpq.join("data/global/ui/layouts");
+    std::fs::create_dir_all(&copied_layouts).unwrap();
+    let source_mpq = root.join(&name).join(format!("{name}.mpq"));
+    for entry in std::fs::read_dir(source_mpq.join("data/global/ui/layouts")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            std::fs::copy(entry.path(), copied_layouts.join(entry.file_name())).unwrap();
+        }
+        if entry.file_type().unwrap().is_dir() && entry.file_name() == "CALL" {
+            let call = copied_layouts.join("CALL");
+            std::fs::create_dir_all(&call).unwrap();
+            for child in std::fs::read_dir(entry.path()).unwrap() {
+                let child = child.unwrap();
+                if child.file_type().unwrap().is_file() {
+                    std::fs::copy(child.path(), call.join(child.file_name())).unwrap();
+                }
+            }
+        }
+    }
+    if source_mpq.join("data/global/excel/actinfo.txt").exists() {
+        std::fs::create_dir_all(copied_mpq.join("data/global/excel")).unwrap();
+        std::fs::copy(
+            source_mpq.join("data/global/excel/actinfo.txt"),
+            copied_mpq.join("data/global/excel/actinfo.txt"),
+        )
+        .unwrap();
+    }
+    std::fs::copy(
+        source_mpq.join("d2rhub-scene-shortcuts-original-help.json"),
+        copied_mpq.join("d2rhub-scene-shortcuts-original-help.json"),
+    )
+    .unwrap();
+    super::validation::layouts::validate_scene_shortcuts(&copy, &name).unwrap();
+    if validated
+        .feature_groups
+        .iter()
+        .any(|g| g.id == "scene_shortcuts" && g.recipe_version >= 6)
+    {
+        if validated
+            .feature_groups
+            .iter()
+            .any(|g| g.id == "scene_shortcuts" && g.recipe_version >= 7)
+        {
+            let table = copied_mpq.join("data/global/excel/actinfo.txt");
+            let original = std::fs::read(&table).unwrap();
+            let text = String::from_utf8(original.clone()).unwrap().replace(
+                "Act 3 - Town\tAct 4 - Town\tAct 3 - Travincal",
+                "Act 3 - Town\tAct 3 - Jungle 1\tAct 3 - Jungle 2",
+            );
+            assert_ne!(text.as_bytes(), original.as_slice());
+            std::fs::write(&table, text).unwrap();
+            assert!(super::validation::layouts::validate_scene_shortcuts(&copy, &name).is_err());
+            std::fs::write(&table, original).unwrap();
+        }
+        let path = copied_layouts.join("CALL/OnekeyTravincalhd.json");
+        let original = std::fs::read(&path).unwrap();
+        std::fs::write(&path, b"{}").unwrap();
+        assert!(super::validation::layouts::validate_scene_shortcuts(&copy, &name).is_err());
+        std::fs::write(&path, original).unwrap();
+        let path = copied_layouts.join("HudWarningshd.json");
+        let mut doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        doc["children"].as_array_mut().unwrap().insert(0, serde_json::json!({"type":"TimerWidget","fields":{"time":0.008,"message":"PanelManager:ClosePanel:HUDWarnings"}}));
+        std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+        assert!(super::validation::layouts::validate_scene_shortcuts(&copy, &name).is_err());
+        return;
+    }
+    for file in [
+        "D2RHubSceneArrivalhd.json",
+        "D2RHubSceneArrivalWaypointhd.json",
+    ] {
+        let path = copied_layouts.join(file);
+        let original = std::fs::read(&path).unwrap();
+        std::fs::write(&path, b"{}").unwrap();
+        assert!(super::validation::layouts::validate_scene_shortcuts(&copy, &name).is_err());
+        std::fs::write(&path, original).unwrap();
+    }
+    let hud_path = copied_layouts.join("HudWarningshd.json");
+    let original_hud = std::fs::read(&hud_path).unwrap();
+    let mut hud: serde_json::Value = serde_json::from_slice(&original_hud).unwrap();
+    hud["children"].as_array_mut().unwrap().insert(
+        0,
+        serde_json::json!({
+        "type":"TimerWidget", "name":"TooEarlyClose", "fields":{
+            "time":0.008, "message":"PanelManager:ClosePanel:HUDWarnings"}}),
+    );
+    std::fs::write(&hud_path, serde_json::to_vec(&hud).unwrap()).unwrap();
+    assert!(super::validation::layouts::validate_scene_shortcuts(&copy, &name).is_err());
+    std::fs::write(&hud_path, original_hud).unwrap();
+    assert!(!copied_layouts.join("D2RHubSceneEntryhd.json").exists());
+    let entry = copied_layouts.join("D2RHubSceneRestarthd.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&entry).unwrap()).unwrap();
+    value["children"][2]["fields"]["time"] = serde_json::json!(0.0);
+    std::fs::write(&entry, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(super::validation::layouts::validate_scene_shortcuts(&copy, &name).is_err());
+}
+
+#[test]
+#[ignore = "requires locally generated party-loot review Mod"]
+fn party_loot_output_and_same_name_backup_are_validated() {
+    let root = PathBuf::from(std::env::var("D2RHUB_PARTY_TEST_MODS").unwrap());
+    let name = std::env::var("D2RHUB_PARTY_TEST_NAME").unwrap_or_else(|_| "PartyLootReview".into());
+    let validated = validate_audio_mod(&root, &name).unwrap();
+    assert!(validated
+        .feature_groups
+        .iter()
+        .any(|g| g.id == "party_loot"));
+    let temp = TemporaryDirectory::create(
+        std::env::temp_dir().join(format!("party-loot-test-{}", uuid::Uuid::new_v4())),
+    )
+    .unwrap();
+    let mods = temp.path();
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let staged = mods.join(format!(".d2rhub-source-stage-{id}")).join(&name);
+    fn copy(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                copy(&entry.path(), &to.join(entry.file_name()));
+            } else {
+                std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+            }
+        }
+    }
+    copy(&root.join(&name), &staged);
+    let original = mods.join(&name);
+    std::fs::create_dir_all(original.join(format!("{name}.mpq"))).unwrap();
+    std::fs::write(
+        original.join(format!("{name}.mpq/original.bin")),
+        b"original data unchanged",
+    )
+    .unwrap();
+    let before = snapshot(&original);
+    let backup = super::source_replace::commit(mods, &name, &staged, &id).unwrap();
+    assert_eq!(snapshot(&mods.join(&backup)), before);
+    validate_audio_mod(mods, &name).unwrap();
+    assert!(super::validation::installed_mods(mods)
+        .iter()
+        .any(|m| m.name == backup && m.source_eligible));
+    assert!(resolve_source_directory(mods, "Another", Some(backup.clone())).is_ok());
+    super::source_replace::recover(mods).unwrap();
+    assert!(mods.join(backup).is_dir());
+    // A native message changed to a different action must not be accepted.
+    let layouts = original.join(format!("{name}.mpq/data/global/ui/layouts"));
+    let hud_path = layouts.join("HudWarningshd.json");
+    let original_hud = std::fs::read(&hud_path).unwrap();
+    let mut delayed: serde_json::Value = serde_json::from_slice(&original_hud).unwrap();
+    delayed["children"][0]["fields"]["time"] = serde_json::json!(1.0);
+    std::fs::write(&hud_path, serde_json::to_vec(&delayed).unwrap()).unwrap();
+    assert!(
+        validate_audio_mod(mods, &name).is_err(),
+        "delayed launcher must not pass r2 validation"
+    );
+    std::fs::write(&hud_path, original_hud).unwrap();
+    let file = if layouts.join("mymodsShowListLayouthd.json").exists() {
+        "mymodsShowListLayouthd.json"
+    } else if layouts.join("jcypartyextrahd.json").exists() {
+        "jcypartyextrahd.json"
+    } else {
+        "D2RHubPartyLoothd.json"
+    };
+    let path = layouts.join(file);
+    let contents = std::fs::read_to_string(&path).unwrap().replace(
+        "PartyPanelMessage:ToggleLootBody",
+        "PartyPanelMessage:ToggleHostile",
+    );
+    std::fs::write(path, contents).unwrap();
+    assert!(validate_audio_mod(mods, &name).is_err());
+}
+
+#[test]
+#[ignore = "requires D2RHUB_HOSTILE_REVIEW_ROOT generated by the independent processor"]
+fn hostile_only_mod_validates_without_tracking_assets() {
+    let root = PathBuf::from(std::env::var("D2RHUB_HOSTILE_REVIEW_ROOT").unwrap());
+    let validated = validate_audio_mod(&root, "HostileReview").unwrap();
+    assert!(!validated.has_audio_telemetry);
+    assert!(validated
+        .feature_groups
+        .iter()
+        .any(|g| g.id == "hostile_auto_restart"));
+    assert!(validated
+        .feature_groups
+        .iter()
+        .any(|g| g.id == "esc_next_game"));
+    assert_eq!(validated.feature_groups.len(), 2);
+    assert!(!root
+        .join("HostileReview/HostileReview.mpq/data/hd/global/sfx/audio_telemetry")
+        .exists());
 }

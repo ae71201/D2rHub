@@ -1317,6 +1317,30 @@
           "markdownDescription": "Enables the validate_shortcut_availability command without any pre-configured scope."
         },
         {
+          "description": "Enables the vision_get_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vision-get-config",
+          "markdownDescription": "Enables the vision_get_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vision_get_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vision-get-status",
+          "markdownDescription": "Enables the vision_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vision_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vision-preview",
+          "markdownDescription": "Enables the vision_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vision_save_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vision-save-config",
+          "markdownDescription": "Enables the vision_save_config command without any pre-configured scope."
+        },
+        {
           "description": "Enables the wait_for_new_process command without any pre-configured scope.",
           "type": "string",
           "const": "allow-wait-for-new-process",
@@ -2257,6 +2281,30 @@
           "type": "string",
           "const": "deny-validate-shortcut-availability",
           "markdownDescription": "Denies the validate_shortcut_availability command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vision_get_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vision-get-config",
+          "markdownDescription": "Denies the vision_get_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vision_get_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vision-get-status",
+          "markdownDescription": "Denies the vision_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vision_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vision-preview",
+          "markdownDescription": "Denies the vision_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vision_save_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vision-save-config",
+          "markdownDescription": "Denies the vision_save_config command without any pre-configured scope."
         },
         {
           "description": "Denies the wait_for_new_process command without any pre-configured scope.",

@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 pub mod catalog;
 pub(crate) mod external;
+pub(crate) mod hostile;
 #[allow(dead_code)]
 pub mod item_catalog;
 pub mod monitor;

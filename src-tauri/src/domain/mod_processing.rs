@@ -8,9 +8,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub(crate) const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
-pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
+pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 4;
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 33;
+pub(crate) const PARTY_LOOT_FEATURE_ID: &str = "party_loot";
+pub(crate) const PARTY_LOOT_FINGERPRINT: &str =
+    "party-loot-v2;native-party-row;jcy=1;launch=immediate";
+const LEGACY_PARTY_LOOT_FINGERPRINT: &str = "party-loot-v1;native-party-row;x=80;y=20";
+pub(crate) const SCENE_SHORTCUTS_FEATURE_ID: &str = "scene_shortcuts";
+const LEGACY_SCENE_SHORTCUTS_FINGERPRINT: &str =
+    "scene-shortcuts-v1;mymod-wp;select_ms=100;restart_ms=200;cleanup_ms=300;tab=2;help=1";
+const V2_SCENE_SHORTCUTS_FINGERPRINT: &str = "scene-shortcuts-v2;mymod-travincal;select_ms=100;restart_ms=200;cleanup_ms=300;tabs=3;tab=2;help=1;launch=immediate";
+const V3_SCENE_SHORTCUTS_FINGERPRINT: &str = "scene-shortcuts-v3;mymod-two-stage;restart_tabs=4;arrival_tabs=3;tab=2;arrival_ms=1000;launch=immediate";
+const V4_SCENE_SHORTCUTS_FINGERPRINT: &str = "scene-shortcuts-v4;mymod-two-stage;restart_tabs=4;arrival_tabs=3;tab=2;arrival_ms=1000;launch=immediate;help_only=1";
+const V5_SCENE_SHORTCUTS_FINGERPRINT: &str = "scene-shortcuts-v5;mymod-hud-direct;restart_tabs=4;arrival_tabs=3;tab=2;arrival_ms=1000;help_only=1";
+const V6_SCENE_SHORTCUTS_FINGERPRINT: &str =
+    "scene-shortcuts-v6;mymod-exact-chain;hud=unload-then-arrival;arrival_ms=1000;help_only=1";
+pub(crate) const SCENE_SHORTCUTS_FINGERPRINT: &str =
+    "scene-shortcuts-v7;mymod-exact-chain;actinfo=a3-a4-waypoints;hud=unload-then-arrival;arrival_ms=1000;help_only=1";
 pub(crate) const ESC_NEXT_GAME_FEATURE_ID: &str = "esc_next_game";
 pub(crate) const ESC_NEXT_GAME_FINGERPRINT: &str =
     "esc-next-game-v4;window_ms=500;pause_timeout=1;hud_cleanup=0";
@@ -54,6 +69,9 @@ pub(crate) struct RequestedFeatureGroups {
     pub(crate) audio_telemetry: bool,
     pub(crate) room_tools: bool,
     pub(crate) esc_next_game: bool,
+    pub(crate) scene_shortcuts: bool,
+    pub(crate) party_loot: bool,
+    pub(crate) hostile_auto_restart: bool,
     pub(crate) auto_exit_on_death: bool,
 }
 
@@ -62,17 +80,25 @@ impl RequestedFeatureGroups {
         audio_telemetry: Option<bool>,
         room_tools: Option<bool>,
         esc_next_game: Option<bool>,
+        scene_shortcuts: Option<bool>,
+        party_loot: Option<bool>,
+        hostile_auto_restart: Option<bool>,
         auto_exit_on_death: Option<bool>,
     ) -> Result<Self, String> {
         // Missing fields preserve the pre-r22 command contract used by older D2RHub frontends.
         let requested = Self {
             audio_telemetry: audio_telemetry.unwrap_or(true),
             room_tools: room_tools.unwrap_or(false),
-            esc_next_game: esc_next_game.unwrap_or(false),
+            esc_next_game: esc_next_game.unwrap_or(false) || hostile_auto_restart.unwrap_or(false),
+            scene_shortcuts: scene_shortcuts.unwrap_or(false),
+            party_loot: party_loot.unwrap_or(false),
+            hostile_auto_restart: hostile_auto_restart.unwrap_or(false),
             auto_exit_on_death: auto_exit_on_death.unwrap_or(false),
         };
         if !requested.audio_telemetry
             && !requested.room_tools
+            && !requested.party_loot
+            && !requested.scene_shortcuts
             && !requested.esc_next_game
             && !requested.auto_exit_on_death
         {
@@ -89,6 +115,15 @@ impl RequestedFeatureGroups {
         if self.room_tools {
             features.push("rooms");
         }
+        if self.hostile_auto_restart {
+            features.push("hostile-restart");
+        }
+        if self.party_loot {
+            features.push("party-loot");
+        }
+        if self.scene_shortcuts {
+            features.push("scene-shortcuts");
+        }
         if self.esc_next_game {
             features.push("esc-next-game");
         }
@@ -104,6 +139,17 @@ impl RequestedFeatureGroups {
         audio_protocol_version: u8,
     ) -> Result<(), String> {
         for (requested, id, label) in [
+            (
+                self.hostile_auto_restart,
+                "hostile_auto_restart",
+                "敌对自动重开",
+            ),
+            (
+                self.party_loot,
+                PARTY_LOOT_FEATURE_ID,
+                "左侧玩家尸体拾取按钮",
+            ),
+            (self.scene_shortcuts, SCENE_SHORTCUTS_FEATURE_ID, "场景重开"),
             (self.audio_telemetry, AUDIO_TELEMETRY_FEATURE_ID, "声纹识别"),
             (
                 self.esc_next_game,
@@ -143,6 +189,11 @@ impl RequestedFeatureGroups {
         self.esc_next_game |= groups
             .iter()
             .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID);
+        self.hostile_auto_restart |= groups.iter().any(|g| g.id == "hostile_auto_restart");
+        self.party_loot |= groups.iter().any(|group| group.id == PARTY_LOOT_FEATURE_ID);
+        self.scene_shortcuts |= groups
+            .iter()
+            .any(|group| group.id == SCENE_SHORTCUTS_FEATURE_ID);
         self.auto_exit_on_death |= groups
             .iter()
             .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID);
@@ -150,10 +201,11 @@ impl RequestedFeatureGroups {
     }
 
     pub(crate) fn all_present(self, groups: &[GeneratorFeatureGroup]) -> bool {
-        (!self.audio_telemetry
-            || groups
-                .iter()
-                .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID))
+        (!self.hostile_auto_restart || groups.iter().any(|g| g.id == "hostile_auto_restart"))
+            && (!self.audio_telemetry
+                || groups
+                    .iter()
+                    .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID))
             && (!self.room_tools
                 || groups
                     .iter()
@@ -162,6 +214,11 @@ impl RequestedFeatureGroups {
                 || groups
                     .iter()
                     .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID))
+            && (!self.party_loot || groups.iter().any(|group| group.id == PARTY_LOOT_FEATURE_ID))
+            && (!self.scene_shortcuts
+                || groups
+                    .iter()
+                    .any(|group| group.id == SCENE_SHORTCUTS_FEATURE_ID))
             && (!self.auto_exit_on_death
                 || groups
                     .iter()
@@ -228,6 +285,28 @@ pub(crate) fn validate_upgrade_source_feature_group_entries(
             if group.fingerprint != format!("room-tools-v{}", group.recipe_version) {
                 return Err("上一版局内房间工具指纹无效，不能作为原位升级来源".to_string());
             }
+        } else if group.id == SCENE_SHORTCUTS_FEATURE_ID && matches!(group.recipe_version, 1..=6) {
+            if group.fingerprint
+                != if group.recipe_version == 1 {
+                    LEGACY_SCENE_SHORTCUTS_FINGERPRINT
+                } else if group.recipe_version == 2 {
+                    V2_SCENE_SHORTCUTS_FINGERPRINT
+                } else if group.recipe_version == 3 {
+                    V3_SCENE_SHORTCUTS_FINGERPRINT
+                } else if group.recipe_version == 4 {
+                    V4_SCENE_SHORTCUTS_FINGERPRINT
+                } else if group.recipe_version == 5 {
+                    V5_SCENE_SHORTCUTS_FINGERPRINT
+                } else {
+                    V6_SCENE_SHORTCUTS_FINGERPRINT
+                }
+            {
+                return Err("旧版场景重开指纹无效".into());
+            }
+        } else if group.id == PARTY_LOOT_FEATURE_ID && group.recipe_version == 1 {
+            if group.fingerprint != LEGACY_PARTY_LOOT_FINGERPRINT {
+                return Err("旧版拾取按钮指纹无效".into());
+            }
         } else if group.id == ESC_NEXT_GAME_FEATURE_ID && matches!(group.recipe_version, 2 | 3) {
             let expected = if group.recipe_version == 2 {
                 LEGACY_ESC_NEXT_GAME_FINGERPRINT
@@ -250,6 +329,38 @@ pub(crate) fn validate_preserved_feature_groups(
 ) -> Result<(), String> {
     for required in existing {
         let preserved = candidate.iter().any(|actual| {
+            if required.id == SCENE_SHORTCUTS_FEATURE_ID
+                && matches!(required.recipe_version, 1..=6)
+                && required.fingerprint
+                    == if required.recipe_version == 1 {
+                        LEGACY_SCENE_SHORTCUTS_FINGERPRINT
+                    } else if required.recipe_version == 2 {
+                        V2_SCENE_SHORTCUTS_FINGERPRINT
+                    } else if required.recipe_version == 3 {
+                        V3_SCENE_SHORTCUTS_FINGERPRINT
+                    } else if required.recipe_version == 4 {
+                        V4_SCENE_SHORTCUTS_FINGERPRINT
+                    } else if required.recipe_version == 5 {
+                        V5_SCENE_SHORTCUTS_FINGERPRINT
+                    } else {
+                        V6_SCENE_SHORTCUTS_FINGERPRINT
+                    }
+                && actual.id == SCENE_SHORTCUTS_FEATURE_ID
+                && actual.recipe_version == 7
+                && actual.fingerprint == SCENE_SHORTCUTS_FINGERPRINT
+            {
+                return true;
+            }
+
+            if required.id == PARTY_LOOT_FEATURE_ID
+                && required.recipe_version == 1
+                && required.fingerprint == LEGACY_PARTY_LOOT_FINGERPRINT
+                && actual.id == PARTY_LOOT_FEATURE_ID
+                && actual.recipe_version == 2
+                && actual.fingerprint == PARTY_LOOT_FINGERPRINT
+            {
+                return true;
+            }
             if required.id == ESC_NEXT_GAME_FEATURE_ID
                 && required.recipe_version == 2
                 && required.fingerprint == LEGACY_ESC_NEXT_GAME_FINGERPRINT
@@ -287,6 +398,14 @@ fn validate_supported_feature_group(
     audio_protocol_version: u8,
 ) -> Result<(), String> {
     match group.id.as_str() {
+        "hostile_auto_restart" => {
+            if group.recipe_version != 1
+                || group.fingerprint != "hostile-restart-v1;control=1;esc=4"
+            {
+                return Err("敌对自动重开配方不受支持".into());
+            }
+            Ok(())
+        }
         AUDIO_TELEMETRY_FEATURE_ID => {
             if group.recipe_version != AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION {
                 return Err(format!(
@@ -306,6 +425,18 @@ fn validate_supported_feature_group(
             let expected = format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}");
             if group.fingerprint != expected {
                 return Err("D2RHub Mod 的局内房间工具指纹无效，请重新加工".to_string());
+            }
+            Ok(())
+        }
+        PARTY_LOOT_FEATURE_ID => {
+            if group.recipe_version != 2 || group.fingerprint != PARTY_LOOT_FINGERPRINT {
+                return Err("左侧拾取按钮功能组无效，请重新加工".into());
+            }
+            Ok(())
+        }
+        SCENE_SHORTCUTS_FEATURE_ID => {
+            if group.recipe_version != 7 || group.fingerprint != SCENE_SHORTCUTS_FINGERPRINT {
+                return Err("场景重开功能组无效，请重新加工".into());
             }
             Ok(())
         }
@@ -382,13 +513,125 @@ mod tests {
 
     const TEST_AUDIO_PROTOCOL: u8 = 7;
 
+    #[test]
+    fn party_loot_r1_can_upgrade_but_is_not_current() {
+        let old = GeneratorFeatureGroup {
+            id: PARTY_LOOT_FEATURE_ID.into(),
+            recipe_version: 1,
+            fingerprint: LEGACY_PARTY_LOOT_FINGERPRINT.into(),
+            reused_from_source: true,
+        };
+        let new = GeneratorFeatureGroup {
+            recipe_version: 2,
+            fingerprint: PARTY_LOOT_FINGERPRINT.into(),
+            ..old.clone()
+        };
+        assert!(
+            validate_feature_group_entries(std::slice::from_ref(&old), TEST_AUDIO_PROTOCOL)
+                .is_err()
+        );
+        validate_upgrade_source_feature_group_entries(
+            std::slice::from_ref(&old),
+            TEST_AUDIO_PROTOCOL,
+        )
+        .unwrap();
+        validate_feature_group_entries(std::slice::from_ref(&new), TEST_AUDIO_PROTOCOL).unwrap();
+        validate_preserved_feature_groups(std::slice::from_ref(&old), std::slice::from_ref(&new))
+            .unwrap();
+        let forged = GeneratorFeatureGroup {
+            fingerprint: "unknown".into(),
+            ..old
+        };
+        assert!(validate_upgrade_source_feature_group_entries(
+            std::slice::from_ref(&forged),
+            TEST_AUDIO_PROTOCOL
+        )
+        .is_err());
+        assert!(validate_preserved_feature_groups(&[forged], &[new]).is_err());
+    }
+
     fn test_audio_fingerprint() -> String {
         format!("audio-v{AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION};protocol={TEST_AUDIO_PROTOCOL};areas=all_areas;track=runes;gain_mdb=-30000")
     }
 
     #[test]
+    fn hostile_processing_implies_only_esc_dependency() {
+        let selected = RequestedFeatureGroups::from_options(
+            Some(false),
+            Some(false),
+            Some(false),
+            None,
+            None,
+            Some(true),
+            Some(false),
+        )
+        .unwrap();
+        assert!(!selected.audio_telemetry && !selected.room_tools);
+        assert!(selected.esc_next_game && selected.hostile_auto_restart);
+        assert_eq!(selected.generator_value(), "hostile-restart,esc-next-game");
+        assert!(!selected.all_present(&[]));
+    }
+
+    #[test]
+    fn scene_r1_is_an_upgrade_source_but_not_a_current_result() {
+        let old = GeneratorFeatureGroup {
+            id: SCENE_SHORTCUTS_FEATURE_ID.into(),
+            recipe_version: 1,
+            fingerprint: LEGACY_SCENE_SHORTCUTS_FINGERPRINT.into(),
+            reused_from_source: true,
+        };
+        let new = GeneratorFeatureGroup {
+            recipe_version: 7,
+            fingerprint: SCENE_SHORTCUTS_FINGERPRINT.into(),
+            ..old.clone()
+        };
+        validate_upgrade_source_feature_group_entries(
+            std::slice::from_ref(&old),
+            TEST_AUDIO_PROTOCOL,
+        )
+        .unwrap();
+        assert!(
+            validate_feature_group_entries(std::slice::from_ref(&old), TEST_AUDIO_PROTOCOL)
+                .is_err()
+        );
+        validate_preserved_feature_groups(&[old], &[new]).unwrap();
+    }
+
+    #[test]
+    fn scene_shortcuts_are_independent_and_validate_recipe() {
+        let requested = RequestedFeatureGroups::from_options(
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(true),
+            None,
+            None,
+            Some(false),
+        )
+        .unwrap();
+        assert_eq!(requested.generator_value(), "scene-shortcuts");
+        assert!(requested
+            .validate_present(&[], TEST_AUDIO_PROTOCOL)
+            .is_err());
+        let mut group = GeneratorFeatureGroup {
+            id: SCENE_SHORTCUTS_FEATURE_ID.into(),
+            recipe_version: 7,
+            fingerprint: SCENE_SHORTCUTS_FINGERPRINT.into(),
+            reused_from_source: false,
+        };
+        assert!(requested
+            .validate_present(&[group.clone()], TEST_AUDIO_PROTOCOL)
+            .is_ok());
+        group.recipe_version = 8;
+        assert!(requested
+            .validate_present(&[group], TEST_AUDIO_PROTOCOL)
+            .is_err());
+    }
+
+    #[test]
     fn omitted_feature_flags_keep_the_legacy_audio_command_contract() {
-        let requested = RequestedFeatureGroups::from_options(None, None, None, None).unwrap();
+        let requested =
+            RequestedFeatureGroups::from_options(None, None, None, None, None, None, None).unwrap();
         assert!(requested.audio_telemetry);
         assert!(!requested.room_tools);
         assert!(!requested.auto_exit_on_death);
@@ -403,10 +646,17 @@ mod tests {
             fingerprint: test_audio_fingerprint(),
             reused_from_source: false,
         };
-        let requested =
-            RequestedFeatureGroups::from_options(Some(true), Some(true), Some(false), Some(false))
-                .unwrap()
-                .include_existing_known(std::slice::from_ref(&audio));
+        let requested = RequestedFeatureGroups::from_options(
+            Some(true),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            Some(false),
+        )
+        .unwrap()
+        .include_existing_known(std::slice::from_ref(&audio));
         assert!(!requested.all_present(std::slice::from_ref(&audio)));
         assert_eq!(requested.generator_value(), "audio,rooms");
 
@@ -518,7 +768,9 @@ mod tests {
 
     #[test]
     fn requested_audio_must_match_the_host_protocol_and_a_supported_fingerprint() {
-        let requested = RequestedFeatureGroups::from_options(Some(true), None, None, None).unwrap();
+        let requested =
+            RequestedFeatureGroups::from_options(Some(true), None, None, None, None, None, None)
+                .unwrap();
         let mut group = GeneratorFeatureGroup {
             id: AUDIO_TELEMETRY_FEATURE_ID.into(),
             recipe_version: AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,

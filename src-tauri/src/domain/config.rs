@@ -196,6 +196,10 @@ pub struct GlobalConfig {
     /// 是否启用按 D2R 进程捕获的符文声纹识别。
     #[serde(default)]
     pub rune_audio_enabled: bool,
+    #[serde(default)]
+    pub hostile_auto_restart_enabled: bool,
+    #[serde(default)]
+    pub hostile_auto_restart_all_windows: bool,
     /// 被监控的账号 ID（对应 account.json 中的 id）。
     #[serde(default)]
     pub rune_audio_target_account: String,
@@ -462,6 +466,10 @@ impl GlobalConfig {
             self.enable_stats_overlay = false;
             changed = true;
         }
+        if !automation_installed && self.hostile_auto_restart_enabled {
+            self.hostile_auto_restart_enabled = false;
+            changed = true;
+        }
         if !automation_installed && self.rune_audio_enabled {
             self.rune_audio_enabled = false;
             changed = true;
@@ -517,6 +525,8 @@ impl Default for GlobalConfig {
             download_source: DownloadSource::Auto,
             first_launch: true,
             rune_audio_enabled: false,
+            hostile_auto_restart_enabled: false,
+            hostile_auto_restart_all_windows: false,
             rune_audio_target_account: String::new(),
             rune_audio_external_target: None,
             rune_audio_detection_threshold: default_rune_audio_detection_threshold(),

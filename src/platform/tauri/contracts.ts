@@ -6,6 +6,8 @@
  * payload shapes remain owned by the feature that consumes them.
  */
 export const TAURI_COMMANDS = [
+    "vision_get_config", "vision_save_config", "vision_get_status",
+  "vision_preview",
   "activate_application_runtime",
   "get_application_disclosure_acceptance",
   "accept_application_disclosure",
@@ -36,8 +38,7 @@ export const TAURI_COMMANDS = [
   "get_account_settings",
   "get_game_layout_monitors",
   "get_game_layout_account_order",
-  "capture_game_window_layout",
-  "capture_account_window_position",
+  "capture_game_window_layout", "capture_account_window_position",
   "restore_game_window_layout",
   "get_app_version",
   "get_audio_mod_setup_state",
@@ -165,6 +166,7 @@ export const TAURI_EVENTS = [
   "launch-ended",
   "launch-progress",
   "rune-audio-detected",
+  "hostile-restart-status",
   "room-automation://config-committed",
   "room-automation://status-changed",
   "task-status-updated",

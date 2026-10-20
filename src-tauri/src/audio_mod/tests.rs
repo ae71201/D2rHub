@@ -561,9 +561,16 @@ fn room_tools_require_a_running_pid_with_a_matching_launch_snapshot() {
 
 #[test]
 fn death_auto_exit_is_an_independent_verified_feature_group() {
-    let requested =
-        RequestedFeatureGroups::from_options(Some(false), Some(false), Some(false), Some(true))
-            .unwrap();
+    let requested = RequestedFeatureGroups::from_options(
+        Some(false),
+        Some(false),
+        Some(false),
+        None,
+        None,
+        None,
+        Some(true),
+    )
+    .unwrap();
     assert_eq!(requested.generator_value(), "death-exit");
 
     let root = test_mods_directory("death_auto_exit");
@@ -602,9 +609,16 @@ fn death_auto_exit_is_an_independent_verified_feature_group() {
     );
     let disabled = validate_audio_mod(&root, mod_name).unwrap();
     assert!(!disabled.auto_exit_on_death_enabled);
-    let disabled_request =
-        RequestedFeatureGroups::from_options(Some(false), Some(false), Some(false), Some(true))
-            .unwrap();
+    let disabled_request = RequestedFeatureGroups::from_options(
+        Some(false),
+        Some(false),
+        Some(false),
+        None,
+        None,
+        None,
+        Some(true),
+    )
+    .unwrap();
     assert!(disabled_request.all_present(&disabled.feature_groups));
     validate_preserved_feature_groups(&[enabled_group], &disabled.feature_groups).unwrap();
     let mut legacy_group = disabled.feature_groups[0].clone();
@@ -1041,6 +1055,9 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             audio_telemetry: true,
             room_tools: false,
             esc_next_game: false,
+            scene_shortcuts: false,
+            party_loot: false,
+            hostile_auto_restart: false,
             auto_exit_on_death: false,
         },
         &[],
@@ -1062,6 +1079,9 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             audio_telemetry: true,
             room_tools: false,
             esc_next_game: false,
+            scene_shortcuts: false,
+            party_loot: false,
+            hostile_auto_restart: false,
             auto_exit_on_death: false,
         },
         &[required_future],
@@ -1077,6 +1097,9 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             audio_telemetry: true,
             room_tools: true,
             esc_next_game: false,
+            scene_shortcuts: false,
+            party_loot: false,
+            hostile_auto_restart: false,
             auto_exit_on_death: false,
         },
         &[],
@@ -1098,6 +1121,9 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             audio_telemetry: true,
             room_tools: true,
             esc_next_game: false,
+            scene_shortcuts: false,
+            party_loot: false,
+            hostile_auto_restart: false,
             auto_exit_on_death: false,
         },
         &[],
