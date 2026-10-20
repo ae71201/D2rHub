@@ -267,6 +267,7 @@ pub fn run() {
             commands::account::update_account_positions,
             commands::window_layout::get_game_layout_monitors,
             commands::window_layout::get_game_layout_account_order,
+            commands::window_layout::capture_game_window_layout,
             commands::window_layout::capture_account_window_position,
             commands::window_layout::restore_game_window_layout,
             commands::account::initialize_bnet_account,

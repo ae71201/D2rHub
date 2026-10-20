@@ -173,12 +173,13 @@ mod native {
     use std::collections::HashMap;
     use std::os::windows::ffi::OsStringExt;
 
-    use windows::core::PWSTR;
+    use windows::core::{PCWSTR, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, BOOL, FILETIME, HWND, LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::Graphics::Gdi::{
-        ClientToScreen, EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR,
-        MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
+        ClientToScreen, EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW,
+        MonitorFromWindow, DISPLAY_DEVICEW, HDC, HMONITOR, MONITORINFOEXW,
+        MONITOR_DEFAULTTONEAREST,
     };
     use windows::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -216,6 +217,31 @@ mod native {
                 }
             }
         }
+    }
+
+    // DISPLAY1/2 are source names, and can be reassigned after a reconnect.
+    // Persist the monitor interface identity while retaining DISPLAYn as its label.
+    fn monitor_identity(device: &[u16]) -> String {
+        let end = device
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(device.len());
+        let fallback = String::from_utf16_lossy(&device[..end]);
+        let mut display = DISPLAY_DEVICEW {
+            cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32,
+            ..Default::default()
+        };
+        if unsafe { EnumDisplayDevicesW(PCWSTR(device.as_ptr()), 0, &mut display, 1) }.as_bool() {
+            let end = display
+                .DeviceID
+                .iter()
+                .position(|unit| *unit == 0)
+                .unwrap_or(display.DeviceID.len());
+            if end > 0 {
+                return String::from_utf16_lossy(&display.DeviceID[..end]);
+            }
+        }
+        fallback
     }
 
     fn rectangle(rect: RECT) -> LayoutRect {
@@ -347,11 +373,6 @@ mod native {
             if !GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() {
                 return None;
             }
-            let end = info
-                .szDevice
-                .iter()
-                .position(|unit| *unit == 0)
-                .unwrap_or(info.szDevice.len());
             let (mut dpi_x, mut dpi_y) = (96, 96);
             GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y).ok()?;
             let window_dpi = GetDpiForWindow(hwnd);
@@ -362,7 +383,7 @@ mod native {
                 handle: hwnd.0 as isize,
                 pid,
                 key: FrameCalibrationKey {
-                    monitor_id: String::from_utf16_lossy(&info.szDevice[..end]),
+                    monitor_id: monitor_identity(&info.szDevice),
                     monitor_dpi: dpi_x,
                     window_dpi,
                     style,
@@ -440,11 +461,12 @@ mod native {
                     .iter()
                     .position(|&unit| unit == 0)
                     .unwrap_or(info.szDevice.len());
-                let id = String::from_utf16_lossy(&info.szDevice[..end]);
+                let name = String::from_utf16_lossy(&info.szDevice[..end]);
+                let id = monitor_identity(&info.szDevice);
                 let (mut dpi_x, mut dpi_y) = (96, 96);
                 let _ = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
                 result.push(LayoutMonitor {
-                    name: id.trim_start_matches(r"\\.\").to_string(),
+                    name: name.trim_start_matches(r"\\.\").to_string(),
                     id,
                     bounds: rectangle(info.monitorInfo.rcMonitor),
                     work_area: rectangle(info.monitorInfo.rcWork),

@@ -20,6 +20,7 @@ interface ConfigField {
   label: string;
   type: FieldType;
   defaultValue: number | string;
+  existingOnly?: boolean;
   min?: number;
   max?: number;
   step?: number;
@@ -239,6 +240,9 @@ const settingsSections: ConfigSection[] = [
           { label: "音频与文本", value: 2 },
         ],
       },
+      { key: "Subtitles", label: "字幕", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "GreetingsSubtitles", label: "NPC 问候字幕", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "Mono Mode", label: "单声道音频", type: "toggle", defaultValue: 0, existingOnly: true },
       { key: "Verb Disable", label: "禁用混响", type: "toggle", defaultValue: 0 },
       { key: "Controller Feedback", label: "控制器反馈", type: "toggle", defaultValue: 0 },
     ],
@@ -271,6 +275,11 @@ const settingsSections: ConfigSection[] = [
           { label: "限时", value: 2 },
         ],
       },
+      { key: "Always Run", label: "始终奔跑", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "Camera Shake", label: "镜头震动", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "Display Active Skill Bindings", label: "显示当前技能快捷键", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "Controller Swap Thumbsticks", label: "交换手柄摇杆", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "Controller Weapon Swap Separate Bindings", label: "切换武器使用独立手柄绑定", type: "toggle", defaultValue: 0, existingOnly: true },
       { key: "Auto Gold Enabled", label: "自动拾取金币", type: "toggle", defaultValue: 1 },
       { key: "Auto Party Invite", label: "自动队伍邀请", type: "toggle", defaultValue: 0 },
       { key: "Quick Cast Enabled", label: "快速施法", type: "toggle", defaultValue: 0 },
@@ -301,6 +310,11 @@ const settingsSections: ConfigSection[] = [
           { label: "微缩地图放右", value: 2 },
         ],
       },
+      { key: "AutoMap Party", label: "地图显示队友", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "AutoMap Party Names", label: "地图显示队友名称", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "AutoMap Open On Load", label: "进入游戏时打开地图", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "AutoMap Centers", label: "地图居中", type: "toggle", defaultValue: 0, existingOnly: true },
+      { key: "Automap Room Name and Password", label: "地图显示房名和密码", type: "toggle", defaultValue: 0, existingOnly: true },
       { key: "AutoMapFadeAllCustomOpacity", label: "自定义透明度", type: "range", defaultValue: 50, min: 0, max: 100 },
     ],
   },
@@ -491,8 +505,9 @@ function FieldControl({
   if (field.type === "toggle") {
     return (
       <Toggle
+        ariaLabel={field.label}
         checked={numberValue(settings, field.key, Number(field.defaultValue)) === 1}
-        onChange={(v) => update(field.key, v ? 1 : 0)}
+        onChange={(v) => update(field.key, typeof settings[field.key] === "boolean" ? v : v ? 1 : 0)}
       />
     );
   }
@@ -556,7 +571,7 @@ function SettingsSection({
 }) {
   return (
     <SectionCard title={section.title} actions={actions}>
-      {section.fields.map((field) => (
+      {section.fields.filter(field => !field.existingOnly || [0, 1, true, false].includes(settings[field.key] as number | boolean)).map((field) => (
         <SettingRow key={field.key} label={field.label}>
           <FieldControl field={field} settings={settings} update={update} />
         </SettingRow>

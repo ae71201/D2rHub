@@ -59,6 +59,7 @@ const APP_COMMANDS: &[&str] = &[
     "update_account_positions",
     "get_game_layout_monitors",
     "get_game_layout_account_order",
+    "capture_game_window_layout",
     "capture_account_window_position",
     "restore_game_window_layout",
     "initialize_bnet_account",

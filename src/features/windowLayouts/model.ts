@@ -63,7 +63,11 @@ export function adaptLayout(layout: WindowLayout, monitors: LayoutMonitor[]): Wi
   if (!primary) return layout;
   return { ...layout, monitors, windows: layout.windows.map(slot => {
     const saved = layout.monitors.find(monitor => monitor.id === slot.monitor_id) ?? primary;
-    const current = monitors.find(monitor => monitor.id === slot.monitor_id) ?? primary;
+    const legacy = saved.id.startsWith("\\\\.\\DISPLAY");
+    const current = monitors.find(monitor => monitor.id === slot.monitor_id)
+      ?? (legacy ? monitors.find(monitor => monitor.bounds.x === saved.bounds.x && monitor.bounds.y === saved.bounds.y
+        && monitor.bounds.width === saved.bounds.width && monitor.bounds.height === saved.bounds.height)
+        ?? monitors.find(monitor => monitor.name === saved.name) : undefined) ?? primary;
     const { width, height } = slot;
     const before = visibleSize(slot, saved), after = visibleSize(slot, current);
     return constrainSlot({ ...slot, monitor_id: current.id, width, height,

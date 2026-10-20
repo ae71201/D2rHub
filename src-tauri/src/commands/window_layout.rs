@@ -6,7 +6,9 @@ use serde::Serialize;
 use crate::commands::account::{AccountManager, AccountMeta};
 use crate::domain::account::WindowPositionPreset;
 use crate::domain::config::GlobalConfig;
-use crate::domain::window_layout::{LayoutMonitor, LayoutRect, WindowFrameProfile, WindowLayout};
+use crate::domain::window_layout::{
+    LayoutMonitor, LayoutRect, LayoutSlot, WindowFrameProfile, WindowLayout,
+};
 use crate::error::AppError;
 use crate::infrastructure::game_layout_windows::{self as windows, GameLayoutWindow};
 use crate::launch_context::account_game_executable_identity;
@@ -242,6 +244,102 @@ pub async fn get_game_layout_account_order(
     })
     .await
     .map_err(|error| AppError::FileError(error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn capture_game_window_layout(
+    state: tauri::State<'_, SharedState>,
+) -> Result<LayoutCaptureResult, AppError> {
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let config = state
+            .configuration()
+            .snapshot()
+            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".into()))?;
+        let observed = windows::snapshot()?;
+        let mut matched = match_accounts(&identities(&config, &state), &observed);
+        if let Some(session) = &config.launch_session {
+            // Never compact missing members: restoration uses fixed session slots.
+            if session.scheme.account_ids.iter().any(|id| {
+                !matched
+                    .iter()
+                    .any(|(found, _)| found.eq_ignore_ascii_case(id))
+            }) {
+                return Err(AppError::FileError(
+                    "本次方案仍有账号未打开游戏窗口，请全部启动后再捕获布局".into(),
+                ));
+            }
+            matched.sort_by_key(|(id, _)| layout_slot_index(&config, id, 0));
+        }
+        if matched.is_empty() {
+            return Err(AppError::FileError(
+                "未找到可识别的账号游戏窗口，请先启动游戏".into(),
+            ));
+        }
+        let monitors = configured_monitors(Some(&config))?;
+        let mut slots = Vec::new();
+        let mut account_ids = Vec::new();
+        for (id, window) in matched {
+            let sample = windows::frame_target(window.pid, &window.executable)
+                .filter(|target| target.handle == window.handle)
+                .and_then(|target| {
+                    let first = windows::sample_target(&target)?;
+                    let second = windows::sample_target(&target)?;
+                    (first == second).then_some(second)
+                })
+                .ok_or_else(|| {
+                    AppError::FileError(format!(
+                        "{}：请还原为普通窗口（非最小化、最大化或全屏），停止拖动后重试",
+                        window.title
+                    ))
+                })?;
+            slots.push(captured_slot(&monitors, &sample)?);
+            account_ids.push(id);
+        }
+        let layout = WindowLayout {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "当前窗口布局".into(),
+            monitors,
+            windows: slots,
+        };
+        layout.validate().map_err(|error| {
+            AppError::FileError(format!(
+                "无法原样保存当前布局：{error}。请将窗口移回显示器工作区后重试"
+            ))
+        })?;
+        Ok(LayoutCaptureResult {
+            layout,
+            account_ids,
+        })
+    })
+    .await
+    .map_err(|error| AppError::FileError(error.to_string()))?
+}
+
+#[derive(Serialize)]
+pub struct LayoutCaptureResult {
+    pub layout: WindowLayout,
+    pub account_ids: Vec<String>,
+}
+
+fn captured_slot(
+    monitors: &[LayoutMonitor],
+    sample: &windows::GameFrameSample,
+) -> Result<LayoutSlot, AppError> {
+    let monitor = monitors
+        .iter()
+        .find(|monitor| {
+            monitor.id == sample.profile.monitor_id
+                && (monitor.scale_factor - sample.profile.scale_factor).abs() < 0.001
+        })
+        .ok_or_else(|| AppError::FileError("显示器配置已变化，请重新捕获布局".into()))?;
+    Ok(LayoutSlot {
+        monitor_id: monitor.id.clone(),
+        x: sample.visible_rect.x - monitor.work_area.x,
+        y: sample.visible_rect.y - monitor.work_area.y,
+        width: sample.client_width,
+        height: sample.client_height,
+    })
 }
 
 #[tauri::command]
@@ -521,6 +619,80 @@ pub async fn restore_game_window_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_preserves_physical_origin_and_client_resolution_on_negative_monitor() {
+        use crate::domain::window_layout::{FrameInsets, WindowFrameMetrics};
+        let metrics = WindowFrameMetrics {
+            dpi: 144,
+            style: 0,
+            ex_style: 0,
+            visible: FrameInsets {
+                left: 2,
+                top: 46,
+                right: 2,
+                bottom: 2,
+            },
+            invisible: FrameInsets::default(),
+        };
+        let monitor = LayoutMonitor {
+            id: "left".into(),
+            name: "Left".into(),
+            primary: true,
+            scale_factor: 1.5,
+            bounds: LayoutRect {
+                x: -2560,
+                y: -200,
+                width: 2560,
+                height: 1440,
+            },
+            work_area: LayoutRect {
+                x: -2520,
+                y: -180,
+                width: 2520,
+                height: 1380,
+            },
+            frame: Some(metrics),
+        };
+        let sample = windows::GameFrameSample {
+            profile: WindowFrameProfile {
+                monitor_id: "left".into(),
+                scale_factor: 1.5,
+                metrics,
+            },
+            visible_rect: LayoutRect {
+                x: -2400,
+                y: -100,
+                width: 1284,
+                height: 768,
+            },
+            client_width: 1280,
+            client_height: 720,
+            handle: 1,
+        };
+        let monitors = vec![monitor];
+        let slot = captured_slot(&monitors, &sample).unwrap();
+        assert_eq!(
+            (slot.x, slot.y, slot.width, slot.height),
+            (120, 80, 1280, 720)
+        );
+        let layout = WindowLayout {
+            id: "captured".into(),
+            name: "Captured".into(),
+            monitors,
+            windows: vec![slot],
+        };
+        let restored = layout.resolve(&layout.monitors).unwrap()[0];
+        assert_eq!(
+            (restored.x, restored.y, restored.width, restored.height),
+            (-2400, -100, 1280, 720)
+        );
+        let mut changed = sample;
+        changed.profile.scale_factor = 1.0;
+        assert!(captured_slot(&layout.monitors, &changed).is_err());
+        changed.profile.monitor_id = "disconnected".into();
+        assert!(captured_slot(&layout.monitors, &changed).is_err());
+    }
 
     #[test]
     fn identical_frame_calibration_does_not_write_and_dpi_profiles_stay_separate() {

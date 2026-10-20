@@ -145,3 +145,6 @@
 .layout-visible-size { color: var(--text-secondary); font-size: var(--text-xs); grid-column: 1 / -1; }
 
 .preset-caption { fill: var(--text-muted); opacity: .3; }
+
+.layout-library-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.layout-library-heading { flex-wrap: wrap; }

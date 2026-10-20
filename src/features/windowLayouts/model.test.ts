@@ -66,3 +66,11 @@ assert(frameResize.width === 1380 && frameResize.height === 770, "Resizing opera
 const tall = { ...framed, monitors: [{ ...framedMonitor, work_area: { ...framedMonitor.work_area, height: 2160 } }] };
 const stacked = moveSlot(tall, 1, { x: 0, y: 748, width: 1280, height: 720 }, 8);
 assert(stacked.y === 752 && stacked.height === 720, "Snapping stacks visible frames without caption overlap");
+
+const oldDisplay = { ...monitor(1920, 1040, "\\\\.\\DISPLAY1", -1920, false), name: "DISPLAY1" };
+const newDisplay = { ...oldDisplay, id: "monitor-interface-left", name: "DISPLAY2" };
+const legacyDesktop: WindowLayout = { id: "legacy", name: "Legacy", monitors: [oldDisplay], windows: [{ monitor_id: oldDisplay.id, x: 10, y: 20, width: 1280, height: 720 }] };
+const migrated = adaptLayout(legacyDesktop, [monitor(1920, 1040, "monitor-interface-right"), newDisplay]);
+assert(migrated.windows[0].monitor_id === newDisplay.id, "Legacy DISPLAY names migrate by saved physical location even after numbering swaps");
+const renumbered = adaptLayout(migrated, [{ ...newDisplay, name: "DISPLAY1" }, monitor(1920, 1040, "monitor-interface-right")]);
+assert(renumbered.windows[0].monitor_id === newDisplay.id, "Stable monitor identity survives source-name and enumeration-order changes");

@@ -453,6 +453,12 @@
           "markdownDescription": "Enables the capture_account_window_position command without any pre-configured scope."
         },
         {
+          "description": "Enables the capture_game_window_layout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-capture-game-window-layout",
+          "markdownDescription": "Enables the capture_game_window_layout command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_browser_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check-browser-running",
@@ -1387,6 +1393,12 @@
           "type": "string",
           "const": "deny-capture-account-window-position",
           "markdownDescription": "Denies the capture_account_window_position command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the capture_game_window_layout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-capture-game-window-layout",
+          "markdownDescription": "Denies the capture_game_window_layout command without any pre-configured scope."
         },
         {
           "description": "Denies the check_browser_running command without any pre-configured scope.",

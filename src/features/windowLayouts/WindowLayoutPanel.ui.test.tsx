@@ -7,8 +7,8 @@ import { useLaunch } from "../../store/launch";
 import { WindowLayoutPanel } from "./WindowLayoutPanel";
 import { presetSlots } from "./model";
 
-const mocks = vi.hoisted(() => ({ monitors: vi.fn(), order: vi.fn(), persist: vi.fn(), restore: vi.fn(), toast: vi.fn() }));
-vi.mock("./gateway", () => ({ getLayoutMonitors: mocks.monitors, getLayoutAccountOrder: mocks.order, restoreGameLayout: mocks.restore }));
+const mocks = vi.hoisted(() => ({ capture: vi.fn(), monitors: vi.fn(), order: vi.fn(), persist: vi.fn(), restore: vi.fn(), toast: vi.fn() }));
+vi.mock("./gateway", () => ({ captureGameLayout: mocks.capture, getLayoutMonitors: mocks.monitors, getLayoutAccountOrder: mocks.order, restoreGameLayout: mocks.restore }));
 vi.mock("../../components/ui/Toast", () => ({ showToast: mocks.toast }));
 const displays: LayoutMonitor[] = [
   { id: "main", name: "Main", primary: true, scale_factor: 1.5, bounds: { x: 0, y: 0, width: 2560, height: 1440 }, work_area: { x: 0, y: 0, width: 2560, height: 1400 } },
@@ -42,6 +42,36 @@ const create = async () => {
   fireEvent.click(screen.getByRole("button", { name: "新建布局" }));
 };
 describe("window layout library and editor", () => {
+  it("captures physical positions into a named draft and persists them without moving windows", async () => {
+    const captured: WindowLayout = { ...saved, id: "capture", windows: [
+      { monitor_id: "left", x: 120, y: 90, width: 1280, height: 720 },
+      { monitor_id: "main", x: 180, y: 140, width: 1600, height: 900 },
+    ] };
+    mocks.capture.mockResolvedValue({ layout: captured, account_ids: ["second", "first"] });
+    render(<Harness layouts={[{ ...saved, name: "当前窗口布局" }]} />);
+    await screen.findByText("已识别 2 台显示器");
+    fireEvent.click(screen.getByRole("button", { name: "捕获当前布局" }));
+    const name = await screen.findByRole("textbox", { name: "布局名称" });
+    expect((name as HTMLInputElement).value).toBe("当前窗口布局 2");
+    expect((screen.getByRole("spinbutton", { name: "X" }) as HTMLInputElement).value).toBe("-1800");
+    expect(mocks.persist).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存布局" }));
+    await screen.findByRole("button", { name: "编辑布局：当前窗口布局 2" });
+    expect(latest.window_layouts?.[1].windows).toEqual(captured.windows);
+    expect(latest.active_window_layout_id).toBe(saved.id);
+    expect(mocks.restore).not.toHaveBeenCalled();
+  });
+  it("leaves saved layouts intact when capture fails and allows retry", async () => {
+    mocks.capture.mockRejectedValueOnce(new Error("请还原为普通窗口"));
+    render(<Harness layouts={[saved]} />);
+    await screen.findByText("已识别 2 台显示器");
+    fireEvent.click(screen.getByRole("button", { name: "捕获当前布局" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("请还原为普通窗口");
+    expect(latest.window_layouts).toEqual([saved]);
+    expect(mocks.persist).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "布局名称" })).toBeNull();
+    expect((screen.getByRole("button", { name: "捕获当前布局" }) as HTMLButtonElement).disabled).toBe(false);
+  });
   it("opens the library first and only shows editor controls after selecting a capsule", async () => {
     render(<Harness layouts={[saved]} enabled />);
     expect(screen.getByRole("switch", { name: "启用布局" }).getAttribute("aria-checked")).toBe("true");

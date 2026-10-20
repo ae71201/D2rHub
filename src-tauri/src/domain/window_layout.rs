@@ -193,6 +193,20 @@ impl WindowLayout {
                 let current = monitors
                     .iter()
                     .find(|monitor| monitor.id == slot.monitor_id)
+                    // Legacy layouts only stored DISPLAYn. Prefer their exact saved
+                    // desktop location when the display source numbers were swapped.
+                    .or_else(|| {
+                        if saved.id.starts_with(r"\\.\DISPLAY") {
+                            monitors
+                                .iter()
+                                .find(|monitor| monitor.bounds == saved.bounds)
+                                .or_else(|| {
+                                    monitors.iter().find(|monitor| monitor.name == saved.name)
+                                })
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(primary);
                 let work = current.work_area;
                 if work.width < MIN_WINDOW_WIDTH || work.height < MIN_WINDOW_HEIGHT {
@@ -313,6 +327,25 @@ mod tests {
                 height: 720,
             }],
         }
+    }
+
+    #[test]
+    fn legacy_source_names_migrate_by_location_and_stable_ids_survive_renumbering() {
+        let mut value = layout();
+        value.monitors[1].id = r"\\.\DISPLAY1".into();
+        value.monitors[1].name = "DISPLAY1".into();
+        value.windows[0].monitor_id = value.monitors[1].id.clone();
+        let mut current = value.monitors.clone();
+        current[1].id = "monitor-interface-left".into();
+        current[1].name = "DISPLAY2".into();
+        current[0].id = "monitor-interface-right".into();
+        current[0].name = "DISPLAY1".into();
+        assert_eq!(value.resolve(&current).unwrap()[0].x, -1920);
+        value.monitors = current.clone();
+        value.windows[0].monitor_id = "monitor-interface-left".into();
+        current.reverse();
+        current[0].name = "DISPLAY3".into();
+        assert_eq!(value.resolve(&current).unwrap()[0].x, -1920);
     }
 
     #[test]

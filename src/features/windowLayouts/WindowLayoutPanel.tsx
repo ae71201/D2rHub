@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { AlignCenter, ArrowLeft, Check, ChevronDown, LayoutDashboard, Maximize, Monitor, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { AlignCenter, ArrowLeft, Camera, Check, ChevronDown, LayoutDashboard, Maximize, Monitor, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type { GlobalConfig, LayoutMonitor, LayoutSlot, WindowLayout } from "../../store/types";
 import { Toggle } from "../../components/ui/Toggle";
 import { Button } from "../../components/ui/Button";
@@ -9,7 +9,7 @@ import { layoutAccountLabels } from "./accountLabels";
 import { useLaunch } from "../../store/launch";
 import { showToast } from "../../components/ui/Toast";
 import { LayoutCanvas } from "./LayoutCanvas";
-import { getLayoutAccountOrder, getLayoutMonitors, restoreGameLayout } from "./gateway";
+import { captureGameLayout, getLayoutAccountOrder, getLayoutMonitors, restoreGameLayout } from "./gateway";
 import { adaptLayout, changeSlotCount, constrainSlot, defaultPresetResolution, MAX_LAYOUT_WINDOWS, MIN_VISIBLE_PIXELS, MIN_LAYOUT_HEIGHT, MIN_LAYOUT_WIDTH, moveSlot, presetSlots, primaryMonitor, resizeSlot, slotRect, visibleSize, visibleInsets, validateLayout, type PresetResolution } from "./model";
 import "./windowLayouts.css";
 
@@ -215,6 +215,23 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
       setFeedback({ text: message, error: result.failures.length > 0 });
     }
   });
+  const capture = () => void run(async () => {
+    const result = await captureGameLayout();
+    if (!mounted.current) return;
+    const existing = (readDraft() ?? config).window_layouts ?? [];
+    if (existing.length >= 64) throw new Error(english ? "You can save up to 64 layouts." : "最多保存 64 个窗口布局，请先删除不需要的布局。");
+    const base = english ? "Current windows" : "当前窗口布局";
+    let name = base, suffix = 2;
+    while (existing.some(item => item.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) name = `${base} ${suffix++}`;
+    setMonitors(result.layout.monitors);
+    setMonitorError(null);
+    setAccountOrder(result.account_ids);
+    setAccountOrderError("");
+    openEditor({ ...result.layout, name }, null);
+    setFeedback({ text: english
+      ? `Captured ${result.layout.windows.length} windows. Review the preview, then save the layout.`
+      : `已捕获 ${result.layout.windows.length} 个窗口的实际位置与游戏分辨率，确认预览后点击“保存布局”。` });
+  });
   const remove = () => {
     if (!editor?.baseline) return;
     if (!confirmDelete) { setConfirmDelete(true); return; }
@@ -252,7 +269,11 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
       {saveFeedback}
       <section className="layout-library" aria-label={english ? "Saved layouts" : "已保存布局"}>
         <div className="layout-library-heading"><span>{english ? "Saved layouts" : "已保存布局"}</span>
-          <Button type="button" size="sm" onClick={create} disabled={!capable || monitorLoading || layouts.length >= 64}><Plus size={14} />{english ? "New layout" : "新建布局"}</Button></div>
+          <div className="layout-library-actions">
+            <Button type="button" size="sm" onClick={capture} loading={busy} disabled={monitorLoading || layouts.length >= 64}><Camera size={14} />{english ? "Capture current layout" : "捕获当前布局"}</Button>
+            <Button type="button" size="sm" onClick={create} disabled={!capable || monitorLoading || layouts.length >= 64}><Plus size={14} />{english ? "New layout" : "新建布局"}</Button>
+          </div></div>
+        <p className="layout-helper">{english ? "Arrange your game windows, then capture their positions and resolutions. Restore minimized or maximized windows first." : "摆好游戏窗口后，可捕获实际位置和分辨率；请先将最小化、最大化或全屏窗口还原为普通窗口。"}</p>
         {layouts.length ? <div className="layout-capsules layout-library-capsules">
           {layouts.map(saved => <button key={saved.id} type="button" className="layout-capsule" data-saved={saved.id === savedId}
             aria-label={english ? `Edit layout: ${saved.name}` : `编辑布局：${saved.name}`} data-applied={!!config.window_layout_enabled && saved.id === active?.id}

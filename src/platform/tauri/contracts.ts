@@ -36,6 +36,7 @@ export const TAURI_COMMANDS = [
   "get_account_settings",
   "get_game_layout_monitors",
   "get_game_layout_account_order",
+  "capture_game_window_layout",
   "capture_account_window_position",
   "restore_game_window_layout",
   "get_app_version",
