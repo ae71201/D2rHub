@@ -40,6 +40,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Mod workflow", () => {
+  it("forwards the disabled default-Hell processing preference", async () => {
+    const { result } = mount();
+    await openDraft(result);
+    act(() => result.current.actions.changeFeatures({ includeRoomTools: true, roomToolsDefaultHell: false }));
+    await act(() => result.current.actions.prepare());
+    expect(invokeCommand).toHaveBeenCalledWith("prepare_audio_mod", expect.objectContaining({
+      includeRoomTools: true, roomToolsDefaultHell: false,
+    }));
+  });
   it("forwards the source name and explicit replacement intent instead of the spare output name", async () => {
     const { result } = mount();
     await openDraft(result);

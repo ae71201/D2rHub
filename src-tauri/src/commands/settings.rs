@@ -136,30 +136,41 @@ impl AccountGameSettingsRepository for AccountGameSettingsAdapter<'_> {
 pub fn get_account_settings(
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    defaults_only: Option<bool>,
 ) -> Result<HashMap<String, Value>, AppError> {
-    if let Some(member) = crate::commands::launch_scheme::current_member(state.inner(), &account_id)
-    {
-        if let Some(snapshot) = member.snapshot {
-            let mut settings: HashMap<_, _> = snapshot.game_settings.into_iter().collect();
-            if let Some(resolution) = member.resolution {
-                settings.insert("Screen Resolution (Windowed)".into(), resolution.into());
+    if defaults_only != Some(true) {
+        if let Some(member) =
+            crate::commands::launch_scheme::current_member(state.inner(), &account_id)
+        {
+            if let Some(snapshot) = member.snapshot {
+                let mut settings: HashMap<_, _> = snapshot.game_settings.into_iter().collect();
+                if let Some(resolution) = member.resolution {
+                    settings.insert("Screen Resolution (Windowed)".into(), resolution.into());
+                }
+                if let Some(fps) = member.fps {
+                    settings.insert("Framerate Cap".into(), fps.into());
+                }
+                return Ok(settings);
             }
-            if let Some(fps) = member.fps {
-                settings.insert("Framerate Cap".into(), fps.into());
-            }
-            return Ok(settings);
         }
     }
+    account_default_settings(state.inner(), &account_id)
+}
+
+pub(crate) fn account_default_settings(
+    state: &SharedState,
+    account_id: &str,
+) -> Result<HashMap<String, Value>, AppError> {
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let adapter = AccountGameSettingsAdapter {
         config: &cfg,
-        state: state.inner(),
+        state,
     };
     AccountGameSettingsService::new(&adapter, state.multi_instance().account_leases())
-        .get(&account_id)
+        .get(account_id)
 }
 
 /// 保存指定账号的 Settings.json

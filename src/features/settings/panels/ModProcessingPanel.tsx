@@ -2,6 +2,7 @@ import { useId } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Layers3, PackageOpen, PackagePlus, RefreshCw } from "lucide-react";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
+import { RoomToolProcessingOptions } from "./RoomToolProcessingOptions";
 import { ModProcessorStatus } from "./ModProcessorStatus";
 import { ModPageHeader } from "./ModPageHeader";
 import { ModFeatureChoice as FeatureChoice } from "./ModFeatureChoice";
@@ -31,7 +32,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
   const replaceSource = draft.recipe.kind === "create" && !!draft.recipe.replaceSource;
   const outputName = draft.recipe.kind === "create" ? (replaceSource ? sourceName : draft.recipe.name) : "";
   const isAugment = analysis.augment;
-  const isAddingFeatures = analysis.augment && !analysis.updating;
+  const isAddingFeatures = analysis.augment && !analysis.updating && !analysis.roomOptionsChanged;
   const outputNameError = analysis.nameError;
   const showNameError = !!outputName && !!analysis.nameError && !workflow.prepared;
   const inheritedFeatureGroups = analysis.inherited;
@@ -265,7 +266,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                 disabled={preparing}
                 onChange={value => actions.changeFeatures({ includeAudioTelemetry: value })}
               />}
-              {!minimalMode && <FeatureChoice
+              {!minimalMode && <div className="mod-feature-with-options"><FeatureChoice
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}
                 detail={isEnglish ? "Create/join shortcuts and automation with hidden buttons" : "创建、加入与自动跟房，局内按钮始终隐藏"}
                 checked={roomToolsSelected}
@@ -277,7 +278,11 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                   : (isEnglish ? "Required for room automation" : "自动跟房必选")}
                 disabled={preparing}
                 onChange={value => actions.changeFeatures({ includeRoomTools: value })}
-              />}
+              />
+              {roomToolsSelected && <RoomToolProcessingOptions en={isEnglish}
+                enabled={analysis.selection.roomToolsDefaultHell} disabled={preparing}
+                onChange={value => actions.changeFeatures({ roomToolsDefaultHell: value })} />}
+              </div>}
               <FeatureChoice
                 title={isEnglish ? "Hostile auto-restart" : "敌对自动重开"}
                 detail={isEnglish ? "Requires game sound. Includes Double Esc; works independently of scene/drop tracking." : "需开启游戏声音。自动包含双击 Esc 下一局，可独立于场景、掉落识别使用。"}

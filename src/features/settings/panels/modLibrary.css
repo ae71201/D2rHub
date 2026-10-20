@@ -190,3 +190,10 @@
   .mod-processing-panel .mod-processing-section { display: flex; }
   .mod-processing-features, .mod-feature-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.mod-feature-with-options { min-width: 0; }
+.mod-feature-with-options > .mod-feature-choice { height: 100%; }
+.mod-feature-with-options:has(.mod-feature-options) > .mod-feature-choice { height: auto; border-radius: 7px 7px 0 0; }
+.mod-feature-options { padding: 10px 12px 12px 34px; border: 1px solid var(--border-strong); border-top: 0; border-radius: 0 0 7px 7px; background: var(--surface-hover); }
+.mod-feature-options label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--text-xs); cursor: pointer; }
+.mod-feature-options p { margin: 5px 0 0 21px; color: var(--text-muted); font-size: var(--text-2xs); line-height: 1.55; }

@@ -1,5 +1,8 @@
+#[cfg(test)]
+use super::catalog::ResolvedLocation;
 use super::catalog::{
-    LocationCatalog, LocationKind, ResolvedLocation, TelemetryMarker, MAX_ITEM_ID, RUNE_COUNT,
+    scene_name_identity, LocationCatalog, LocationKind, NamedLocation, TelemetryMarker,
+    MAX_ITEM_ID, RUNE_COUNT,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -208,6 +211,24 @@ struct TrackedLocation {
 }
 
 impl TrackedLocation {
+    fn named(location: NamedLocation, tz: bool) -> Self {
+        let tz = tz && location.kind == LocationKind::Wilderness;
+        Self {
+            marker: None,
+            area_id: None,
+            scene_key: format!(
+                "{}:{}",
+                if tz { "terror_zone" } else { "scene" },
+                scene_name_identity(&location.scene_name)
+            ),
+            scene_name: location.scene_name,
+            scene_name_en: location.scene_name_en,
+            kind: location.kind,
+            tz,
+        }
+    }
+
+    #[cfg(test)]
     fn exact(location: ResolvedLocation, terror_zone_active: bool) -> Self {
         let area_id = match location.marker {
             TelemetryMarker::Area { area_id } => Some(area_id),
@@ -422,20 +443,26 @@ impl SegmentTracker {
     }
     pub fn observe_visual_location(
         &mut self,
-        location: ResolvedLocation,
+        location: NamedLocation,
         tz: bool,
         announcement: Option<u64>,
         observed_at_ms: i64,
         absolute_time: String,
     ) -> TrackingOutcome {
-        let exact = TrackedLocation::exact(location, tz);
-        let same_entry = announcement.is_some()
-            && announcement == self.current_announcement
+        let exact = TrackedLocation::named(location, tz);
+        let same_scene = self.current_location.as_ref().is_some_and(|current| {
+            current.kind == exact.kind
+                && scene_name_identity(&current.scene_name)
+                    == scene_name_identity(&exact.scene_name)
+        });
+        let same_entry =
+            announcement.is_some() && announcement == self.current_announcement && same_scene;
+        if same_scene
             && self
                 .current_location
                 .as_ref()
-                .is_some_and(|v| v.area_id == exact.area_id);
-        if self.current_location.as_ref() == Some(&exact) && (announcement.is_none() || same_entry)
+                .is_some_and(|current| current.tz == exact.tz)
+            && (announcement.is_none() || same_entry)
         {
             return TrackingOutcome {
                 changed: false,
@@ -461,7 +488,7 @@ impl SegmentTracker {
         self.current_announcement = announcement;
         // A fresh entry announcement can revisit the same area in another game.
         // The inner transition helper normally suppresses identical locations.
-        if self.current_location.as_ref() == Some(&exact) {
+        if same_scene {
             self.current_location = None;
         }
         if let Some(active) = self.active_segment.as_mut() {
@@ -649,9 +676,7 @@ mod tests {
     #[test]
     fn ocr_floor_changes_split_wall_clock_timers_and_same_scene_is_idempotent() {
         let mut tracker = tracker();
-        let location = |id, name: &str| ResolvedLocation {
-            marker: area(id),
-            scene_key: format!("area_{id}"),
+        let location = |name: &str| NamedLocation {
             scene_name: name.into(),
             scene_name_en: name.into(),
             kind: LocationKind::Wilderness,
@@ -666,7 +691,7 @@ mod tests {
         let mut journey = None;
         for (index, name) in names.iter().enumerate() {
             let outcome = tracker.observe_visual_location(
-                location(50 + index as u32, name),
+                location(name),
                 false,
                 None,
                 times[index],
@@ -688,7 +713,7 @@ mod tests {
                 assert_eq!(Some(finished.journey_id), journey);
             }
             let repeat = tracker.observe_visual_location(
-                location(50 + index as u32, name),
+                location(name),
                 false,
                 None,
                 times[index] + 500,
@@ -697,18 +722,13 @@ mod tests {
             assert!(!repeat.changed);
             assert_eq!(repeat.snapshot.timer_started_at_ms, Some(times[index]));
         }
-        let tz = tracker.observe_visual_location(
-            location(53, names[3]),
-            true,
-            None,
-            15_000,
-            "tz".into(),
-        );
+        let tz =
+            tracker.observe_visual_location(location(names[3]), true, None, 15_000, "tz".into());
         assert!(tz.changed);
         assert!(tz.snapshot.tz);
         assert_eq!(tz.completed_segment.unwrap().timer_seconds, 2.0);
         let normal = tracker.observe_visual_location(
-            location(53, names[3]),
+            location(names[3]),
             false,
             None,
             17_000,
@@ -717,9 +737,7 @@ mod tests {
         assert!(normal.changed);
         assert!(!normal.snapshot.tz);
         assert_eq!(normal.completed_segment.unwrap().timer_seconds, 2.0);
-        let town = ResolvedLocation {
-            marker: area(40),
-            scene_key: "lut_gholein".into(),
+        let town = NamedLocation {
             scene_name: "鲁高因".into(),
             scene_name_en: "Lut Gholein".into(),
             kind: LocationKind::Town,
@@ -732,25 +750,68 @@ mod tests {
     #[test]
     fn late_tz_text_refines_one_entry_but_new_entry_restarts_the_same_area() {
         let mut tracker = tracker();
-        let location = || ResolvedLocation {
-            marker: area(50),
-            scene_key: "harem1".into(),
+        let location = || NamedLocation {
             scene_name: "女眷住处一层".into(),
             scene_name_en: "Harem Level 1".into(),
             kind: LocationKind::Wilderness,
         };
         tracker.observe_visual_location(location(), false, Some(10), 1_000, "first".into());
+        tracker.observe_drop(rune_drop(1, 24, "伊斯特", "Ist"));
         let refined =
             tracker.observe_visual_location(location(), true, Some(10), 1_500, "tz".into());
         assert!(refined.changed);
         assert!(refined.completed_segment.is_none());
         assert_eq!(refined.snapshot.timer_started_at_ms, Some(1_000));
+        assert_eq!(refined.snapshot.current_run_drops.len(), 1);
+        assert_eq!(refined.snapshot.current_area_id, None);
         let repeat =
             tracker.observe_visual_location(location(), true, Some(10), 2_000, "repeat".into());
         assert!(!repeat.changed);
         let next =
             tracker.observe_visual_location(location(), true, Some(11), 5_000, "next".into());
         assert_eq!(next.completed_segment.unwrap().timer_seconds, 4.0);
+        assert_eq!(next.snapshot.timer_started_at_ms, Some(5_000));
+    }
+
+    #[test]
+    fn visual_identity_ignores_display_punctuation_and_never_merges_different_names() {
+        let mut tracker = tracker();
+        let location = |name: &str, english: &str| NamedLocation {
+            scene_name: name.into(),
+            scene_name_en: english.into(),
+            kind: LocationKind::Wilderness,
+        };
+        let first = tracker.observe_visual_location(
+            location("塔·拉夏之墓", "Tal Rasha's Tomb"),
+            false,
+            Some(10),
+            1_000,
+            "first".into(),
+        );
+        let repeat = tracker.observe_visual_location(
+            location("塔拉夏之墓", "Tomb"),
+            false,
+            Some(10),
+            2_000,
+            "repeat".into(),
+        );
+        assert!(!repeat.changed);
+        assert_eq!(
+            first.snapshot.current_run_key,
+            repeat.snapshot.current_run_key
+        );
+        assert_eq!(repeat.snapshot.timer_started_at_ms, Some(1_000));
+        // Both named locations have no Area Id. A reused token must still never
+        // refine a different scene as if it were a late TZ label on the first.
+        let next = tracker.observe_visual_location(
+            location("塔·拉夏的墓室", "Tal Rasha's Chamber"),
+            true,
+            Some(10),
+            5_000,
+            "chamber".into(),
+        );
+        assert_eq!(next.completed_segment.unwrap().timer_seconds, 4.0);
+        assert_eq!(next.snapshot.current_scene, "塔·拉夏的墓室");
         assert_eq!(next.snapshot.timer_started_at_ms, Some(5_000));
     }
 

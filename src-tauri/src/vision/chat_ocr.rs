@@ -17,20 +17,17 @@ pub struct ChatOcr {
     until: Option<Instant>,
     cache: VecDeque<([u8; 32], u32)>,
 }
-/// Accept only the explicit terminal ID, without guessing O/0 or I/1.
-pub fn parse_suffix(text: &str) -> Option<u32> {
+/// The layout gate already isolated the center; never guess O/0 or I/1.
+pub fn parse_number(text: &str) -> Option<u32> {
     let normalized: String = text
         .chars()
         .filter(|c| !c.is_whitespace())
         .map(|c| match c {
             '０'..='９' => char::from_u32(c as u32 - '０' as u32 + '0' as u32).unwrap(),
-            '＋' => '+',
             _ => c,
         })
         .collect();
-    let body = normalized.strip_suffix("++")?;
-    let start = body.rfind("++")?;
-    let digits = &body[start + 2..];
+    let digits = normalized.as_str();
     if digits.is_empty() || digits.len() > 10 || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -89,9 +86,9 @@ impl ChatOcr {
                 .as_array_mut()
                 .unwrap()
                 .push(serde_json::json!({"index":index,"analysis":report}));
-            if !report.matched {
+            let Some((x0, x1)) = report.number_bounds.filter(|_| report.matched) else {
                 continue;
-            }
+            };
             trace.fields["present"] = serde_json::json!(true);
             let signature = fingerprint(line);
             if let Some((_, token)) = self.cache.iter().find(|(key, _)| *key == signature) {
@@ -108,9 +105,10 @@ impl ChatOcr {
             self.until = Some(now + FAILURE_COOLDOWN);
             calls += 1;
             trace.fields["ocr_calls"] = serde_json::json!(calls);
-            let (text, score) = trace.measure_result("ocr", || recognize(line))?;
+            let center = image::imageops::crop_imm(line, x0, 0, x1 - x0, line.height()).to_image();
+            let (text, score) = trace.measure_result("ocr", || recognize(&center))?;
             trace.sample(&text, score, false);
-            let token = (score >= 0.90).then(|| parse_suffix(&text)).flatten();
+            let token = (score >= 0.90).then(|| parse_number(&text)).flatten();
             if let Some(token) = token {
                 if self.cache.len() >= 32 {
                     self.cache.pop_front();
@@ -154,10 +152,11 @@ mod tests {
         let reports: Vec<_> = lines.iter().map(processing::chat_analysis).collect();
         assert!(reports.iter().any(|report| report.matched), "{reports:?}");
         let tokens = ChatOcr::default()
-            .scan(
+            .scan_new(
                 &lines,
                 &reports,
                 Instant::now(),
+                u32::MAX,
                 |line| {
                     let result = ocr.recognize(line)?;
                     println!("OCR: {result:?}");
@@ -166,32 +165,43 @@ mod tests {
                 &mut Trace::new(false, "chat", 0),
             )
             .unwrap();
-        assert_eq!(tokens, vec![501]);
+        assert_eq!(
+            tokens,
+            vec![
+                std::env::var("D2RHUB_CHAT_OCR_EXPECT")
+                    .unwrap_or_else(|_| "14".into())
+                    .parse::<u32>()
+                    .unwrap();
+                lines.len()
+            ]
+        );
     }
-    fn marker() -> ChatAnalysis {
+    fn marker(width: u32) -> ChatAnalysis {
         ChatAnalysis {
             matched: true,
             glyph_runs: 7,
-            crosses: 4,
+            marker_runs: 22,
+            number_bounds: Some((0, width)),
             geometry_windows: 1,
             reason: "marker",
         }
     }
     #[test]
-    fn parses_only_a_complete_numeric_center_with_both_delimiters() {
-        assert_eq!(parse_suffix("Player: + + 501 + +"), Some(501));
-        assert_eq!(parse_suffix("＋ ＋５０１＋ ＋"), Some(501));
+    fn parses_only_the_isolated_numeric_center() {
+        assert_eq!(parse_number(" 077 "), Some(77));
+        assert_eq!(parse_number("０１４"), Some(14));
+        assert_eq!(parse_number("4294967295"), Some(u32::MAX));
         for text in [
-            "501",
-            "+501+ +",
-            "+ +501+",
-            "+ +5O1+ +",
-            "+ +0+ +",
-            "+ +4294967296+ +",
-            "+ + 501 + + extra",
-            "+ +ID:501+ +",
+            "",
+            "5O1",
+            "0",
+            "4294967296",
+            "501 extra",
+            "ID:501",
+            "***501***",
+            "+501",
         ] {
-            assert_eq!(parse_suffix(text), None, "{text}");
+            assert_eq!(parse_number(text), None, "{text}");
         }
     }
     #[test]
@@ -214,9 +224,9 @@ mod tests {
             state
                 .scan(
                     std::slice::from_ref(&line),
-                    &[marker()],
+                    &[marker(100)],
                     now,
-                    |_| Ok(("+ + 501 + +".into(), 0.99)),
+                    |_| Ok(("501".into(), 0.99)),
                     &mut trace
                 )
                 .unwrap(),
@@ -225,7 +235,7 @@ mod tests {
         assert!(state
             .scan(
                 std::slice::from_ref(&line),
-                &[marker()],
+                &[marker(100)],
                 now + Duration::from_secs(4),
                 |_| panic!("cooldown"),
                 &mut trace
@@ -236,7 +246,7 @@ mod tests {
             state
                 .scan(
                     std::slice::from_ref(&line),
-                    &[marker()],
+                    &[marker(100)],
                     now + Duration::from_secs(6),
                     |_| panic!("unchanged"),
                     &mut trace
@@ -249,9 +259,9 @@ mod tests {
             state
                 .scan(
                     &[changed],
-                    &[marker()],
+                    &[marker(100)],
                     now + Duration::from_secs(6),
-                    |_| Ok(("+ + 502 + +".into(), 0.99)),
+                    |_| Ok(("502".into(), 0.99)),
                     &mut trace
                 )
                 .unwrap(),
@@ -267,9 +277,9 @@ mod tests {
         assert!(state
             .scan(
                 std::slice::from_ref(&line),
-                &[marker()],
+                &[marker(100)],
                 now,
-                |_| Ok(("+ + 501 + +".into(), 0.89)),
+                |_| Ok(("501".into(), 0.89)),
                 &mut trace
             )
             .unwrap()
@@ -277,7 +287,7 @@ mod tests {
         assert!(state
             .scan(
                 std::slice::from_ref(&line),
-                &[marker()],
+                &[marker(100)],
                 now + Duration::from_secs(1),
                 |_| panic!("failure cooldown"),
                 &mut trace
@@ -287,9 +297,9 @@ mod tests {
         assert!(state
             .scan(
                 &[line],
-                &[marker()],
+                &[marker(100)],
                 now + Duration::from_secs(3),
-                |_| Ok(("+ +5O1+ +".into(), 0.99)),
+                |_| Ok(("5O1".into(), 0.99)),
                 &mut trace
             )
             .unwrap()
@@ -308,14 +318,14 @@ mod tests {
         let tokens = state
             .scan_new(
                 &lines,
-                &[marker(), marker(), marker()],
+                &[marker(100), marker(110), marker(120)],
                 now,
                 501,
                 |line| {
                     visited.push(line.width());
                     match line.width() {
-                        120 => Ok(("+ + 501 + +".into(), 0.99)),
-                        110 => Ok(("+ + 502 + +".into(), 0.99)),
+                        120 => Ok(("501".into(), 0.99)),
+                        110 => Ok(("502".into(), 0.99)),
                         _ => panic!("older rows must not be read after a new token"),
                     }
                 },
@@ -330,7 +340,7 @@ mod tests {
         let cached = state
             .scan_new(
                 &lines,
-                &[marker(), marker(), marker()],
+                &[marker(100), marker(110), marker(120)],
                 now + Duration::from_secs(6),
                 501,
                 |_| panic!("cached rows must not invoke OCR"),
@@ -341,16 +351,61 @@ mod tests {
         assert_eq!(trace.fields["line_analysis"].as_array().unwrap().len(), 2);
     }
     #[test]
+    fn real_marker_layout_sends_only_the_numeric_crop_to_ocr() {
+        for png in [
+            include_bytes!("../../tests/fixtures/chat-signal-1080p.png").as_slice(),
+            include_bytes!("../../tests/fixtures/chat-signal-720p.png").as_slice(),
+        ] {
+            let image = image::load_from_memory(png).unwrap().to_rgb8();
+            let lines = processing::chat_lines(&image);
+            let mut state = ChatOcr::default();
+            let mut calls = 0;
+            let mut trace = Trace::new(false, "chat", 0);
+            let now = Instant::now();
+            let tokens = state
+                .scan_new(
+                    &lines,
+                    &[],
+                    now,
+                    u32::MAX,
+                    |center| {
+                        calls += 1;
+                        assert!(center.width() < lines[0].width() / 3);
+                        Ok(("014".into(), 0.99))
+                    },
+                    &mut trace,
+                )
+                .unwrap();
+            assert_eq!(tokens, vec![14; 3]);
+            // Some screenshot rows have identical masks and are already cached
+            // within this scan, even when their backgrounds differ.
+            assert!((1..=3).contains(&calls));
+            assert_eq!(
+                state
+                    .scan_new(
+                        &lines,
+                        &[],
+                        now + Duration::from_secs(6),
+                        0,
+                        |_| panic!("identical rows must use the cache"),
+                        &mut trace
+                    )
+                    .unwrap(),
+                vec![14]
+            );
+        }
+    }
+    #[test]
     fn baseline_scans_all_candidates_without_short_circuiting() {
         let lines = vec![RgbImage::new(100, 20), RgbImage::new(110, 20)];
         let mut trace = Trace::new(false, "chat", 0);
         let tokens = ChatOcr::default()
             .scan_new(
                 &lines,
-                &[marker(), marker()],
+                &[marker(100), marker(110)],
                 Instant::now(),
                 u32::MAX,
-                |line| Ok((format!("+ + {} + +", line.width()), 0.99)),
+                |line| Ok((format!("{}", line.width()), 0.99)),
                 &mut trace,
             )
             .unwrap();

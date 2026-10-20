@@ -756,7 +756,7 @@ impl RoomAutomationManager {
     }
 
     pub(crate) fn requested_enabled(&self) -> bool {
-        self.snapshot.read().config.enabled
+        self.snapshot.read().config.runtime_enabled()
     }
 
     pub(crate) fn get_config(&self) -> RoomAutomationConfigSnapshot {
@@ -847,33 +847,34 @@ impl RoomAutomationManager {
         })?;
         self.bridge.publish_config(&saved);
 
-        let old_shortcut =
-            if previous.config.enabled && saved.config.enabled && self.lifecycle.lock().started {
-                match self.replace_shortcuts(&saved.config) {
-                    Ok(old) => old,
-                    Err(error) => {
-                        self.lifecycle.lock().last_error = Some(CapabilityFailure::new(
-                            "shortcut-reload-failed",
-                            error.clone(),
-                        ));
-                        drop(operation);
-                        let warning = self.pause_after_committed_apply_failure(format!(
-                            "快捷键重载失败：{error}"
-                        ));
-                        return Ok(RoomAutomationSaveOutcome {
-                            snapshot: saved,
-                            apply_warning: Some(warning),
-                        });
-                    }
+        let old_shortcut = if previous.config.runtime_enabled()
+            && saved.config.runtime_enabled()
+            && self.lifecycle.lock().started
+        {
+            match self.replace_shortcuts(&saved.config) {
+                Ok(old) => old,
+                Err(error) => {
+                    self.lifecycle.lock().last_error = Some(CapabilityFailure::new(
+                        "shortcut-reload-failed",
+                        error.clone(),
+                    ));
+                    drop(operation);
+                    let warning = self
+                        .pause_after_committed_apply_failure(format!("快捷键重载失败：{error}"));
+                    return Ok(RoomAutomationSaveOutcome {
+                        snapshot: saved,
+                        apply_warning: Some(warning),
+                    });
                 }
-            } else {
-                None
-            };
+            }
+        } else {
+            None
+        };
         drop(operation);
         join_shortcut(old_shortcut);
         let apply_warning = self
             .bridge
-            .apply_requested(saved.config.enabled)
+            .apply_requested(saved.config.runtime_enabled())
             .err()
             .map(|error| {
                 self.pause_after_committed_apply_failure(format!("配置生命周期应用失败：{error}"))
@@ -1208,12 +1209,13 @@ impl RoomAutomationManager {
         *self.snapshot.write() = snapshot.clone();
         self.bridge.publish_config(&snapshot);
         drop(operation);
-        self.bridge.apply_requested(snapshot.config.enabled)
+        self.bridge
+            .apply_requested(snapshot.config.runtime_enabled())
     }
 
     fn workflow_config_snapshot(&self) -> Result<RoomAutomationConfig, String> {
         let config = self.get_config().config;
-        if !config.enabled {
+        if !config.runtime_enabled() {
             return Err("自动跟房模块尚未启用".to_string());
         }
         Ok(config)
@@ -1832,7 +1834,7 @@ impl CapabilityDriver for RoomAutomationManager {
             *self.snapshot.write() = pruned.clone();
             self.bridge.publish_config(&pruned);
         }
-        if !pruned.config.enabled {
+        if !pruned.config.runtime_enabled() {
             return Err(CapabilityFailure::new(
                 "config-disabled-after-prune",
                 "自动跟房引用的账号已不存在，配置已安全停用",

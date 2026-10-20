@@ -64,12 +64,14 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
       const environment = group?.environment ? structuredClone(group.environment)
         : await invokeCommand<SchemeEnvironment>("get_launch_scheme_defaults");
       if (group && !group.id && config) {
-        const snapshot = await invokeCommand<RoomAutomationConfigSnapshot>("room_automation_get_config");
-        environment.room = structuredClone(snapshot.config);
+        if (config.installed_optional_modules?.includes("room-automation")) {
+          const { config: room } = await invokeCommand<RoomAutomationConfigSnapshot>("room_automation_get_config");
+          environment.room = { primary_account_id: room.primary_account_id, follower_account_ids: [...room.follower_account_ids] };
+        }
         for (const key of Object.keys(environment.settings) as (keyof SchemeEnvironment["settings"])[]) {
           if (config[key] !== undefined) Object.assign(environment.settings, { [key]: structuredClone(config[key]) });
         }
-        environment.settings.rune_audio_external_target = null;
+        if (config.rune_audio_external_target) environment.settings.rune_audio_target_account = "";
         environment.layout = structuredClone(config.window_layout_enabled ? config.window_layouts?.find(layout => layout.id === config.active_window_layout_id) ?? null : null);
       }
       if (request !== opening.current) return;
@@ -94,13 +96,13 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
     void Promise.allSettled(draft.members.filter(member => !member.snapshot).map(async member => {
       const account = accounts.find(account => account.id === member.account_id);
       if (!account) throw new Error(`账号 ${member.account_id} 已删除，请移除`);
-      const settings = await invokeCommand<Record<string, unknown>>("get_account_settings", { accountId: member.account_id });
+      const settings = await invokeCommand<Record<string, unknown>>("get_account_settings", { accountId: member.account_id, defaultsOnly: true });
       if (!Object.keys(settings).length) throw new Error(`${account.display_name} 游戏设置为空`);
       const position = account.position_presets?.find(position => position.id === member.position_preset_id);
       return { ...member, graphics_configured: true,
         resolution: member.graphics_configured ? member.resolution : String(settings["Screen Resolution (Windowed)"] ?? "1280x720"),
         fps: member.graphics_configured ? member.fps : readFramerateCap(settings, 30),
-        snapshot: { game_settings: settings, position: position ? [position.x, position.y] as [number, number] : null,
+        snapshot: { game_settings: {}, position: position ? [position.x, position.y] as [number, number] : null,
           region: normalizeAccountRegion(account.region) ?? firstConfiguredRegion(config, account.auth_mode === "token" ? "token" : "bnet"), language: account.language ?? null, voicelanguage: account.voicelanguage ?? null } };
     })).then(results => {
       if (cancelled) return;
@@ -156,7 +158,11 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
   };
 
   const clearSelection = () => {
-    setDraft(current => current ? { ...current, members: [] } : current);
+    setDraft(current => current ? { ...current, members: [], environment: { ...current.environment,
+      room: { primary_account_id: "", follower_account_ids: [] },
+      settings: { rune_audio_target_account: "", keep_battle_net_account_id: null },
+      layout: current.environment.layout ? { ...current.environment.layout, windows: [] } : null,
+    } } : current);
   };
 
   const toggleAccount = (accountId: string) => {
@@ -166,6 +172,9 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
         const environment = structuredClone(current.environment);
         const index = current.members.findIndex(member => member.account_id === accountId);
         environment.room.follower_account_ids = environment.room.follower_account_ids.filter(id => id !== accountId);
+        if (environment.room.primary_account_id === accountId) environment.room.primary_account_id = "";
+        if (environment.settings.rune_audio_target_account === accountId) environment.settings.rune_audio_target_account = "";
+        if (environment.settings.keep_battle_net_account_id === accountId) environment.settings.keep_battle_net_account_id = null;
         if (environment.layout) environment.layout.windows.splice(index, 1);
         return { ...current, environment, members: current.members.filter(member => member.account_id !== accountId) };
       }

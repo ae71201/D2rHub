@@ -1384,6 +1384,69 @@ fn room_tools_validate_default_hell_initialization() {
 }
 
 #[test]
+fn room_tools_processing_can_disable_and_restore_default_hell() {
+    let root = TemporaryDirectory::create(test_mods_directory("room_options")).unwrap();
+    let name = "Rooms";
+    let mut manifest = current_audio_manifest(name);
+    manifest["feature_groups"] = serde_json::json!([{
+        "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
+        "recipe_version": IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+        "fingerprint": format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}")
+    }]);
+    write_test_audio_mod(root.path(), name, manifest);
+    write_test_room_tool_layouts(root.path(), name);
+    let directory = root.path().join(name);
+    let layouts = directory
+        .join(format!("{name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let create = layouts.join("D2RHubInGameCreateGamehd.json");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&create).unwrap()).unwrap();
+    let join = std::fs::read(layouts.join("D2RHubInGameJoinGamehd.json")).unwrap();
+    assert!(super::room_tool_options::default_hell(&directory).unwrap());
+    for enabled in [false, false, true, true] {
+        super::room_tool_options::configure(root.path(), name, enabled).unwrap();
+        assert_eq!(
+            super::room_tool_options::default_hell(&directory).unwrap(),
+            enabled
+        );
+        validate_audio_mod(root.path(), name).unwrap();
+        let form: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&create).unwrap()).unwrap();
+        let mut expected = original.clone();
+        expected["children"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|child| child["name"] != "D2RHubDefaultHell");
+        let mut without_timer = form.clone();
+        without_timer["children"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|child| child["name"] != "D2RHubDefaultHell");
+        assert_eq!(without_timer, expected);
+        assert_eq!(
+            std::fs::read(layouts.join("D2RHubInGameJoinGamehd.json")).unwrap(),
+            join
+        );
+        assert_eq!(
+            installed_mods(root.path())[0].room_tools_default_hell,
+            enabled
+        );
+    }
+    super::room_tool_options::configure(root.path(), name, false).unwrap();
+    std::fs::write(&create, serde_json::to_vec(&original).unwrap()).unwrap();
+    assert!(validate_audio_mod(root.path(), name)
+        .unwrap_err()
+        .contains("默认地狱"));
+    let path = directory.join("audio-telemetry-manifest.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["room_tools_default_hell"] = "false".into();
+    std::fs::write(path, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert!(validate_audio_mod(root.path(), name).is_err());
+}
+
+#[test]
 fn claimed_room_tools_require_supported_metadata_and_complete_layouts() {
     let root = test_mods_directory("claimed_room_tools");
     let name = "room-tools";

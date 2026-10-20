@@ -155,6 +155,7 @@ pub fn validate_graphics_override(
                 game_settings: overrides
                     .snapshot
                     .as_ref()
+                    .filter(|snapshot| !snapshot.game_settings.is_empty())
                     .map(|snapshot| snapshot.game_settings.clone()),
                 resolution: resolution.to_string(),
                 fps,
@@ -185,7 +186,7 @@ fn apply_account_overrides(
             .map(crate::domain::account::GameRegion::parse)
             .transpose()?
             .unwrap_or(saved);
-        if saved.edition() != current.edition() || snapshot.game_settings.is_empty() {
+        if saved.edition() != current.edition() {
             return Err(AppError::ConfigReadError(
                 "账号身份已变化或方案快照无效，请编辑并保存方案".into(),
             ));
@@ -198,9 +199,9 @@ fn apply_account_overrides(
                 "战网账号区服已变化，请重新编辑方案；仅 Token 账号支持独立区服".into(),
             ));
         }
-        // The scheme supplies the complete game settings. Never read/copy the
-        // account's mutable Settings.json before applying this snapshot.
-        account.has_customized_settings = false;
+        if !snapshot.game_settings.is_empty() {
+            account.has_customized_settings = false;
+        }
         account.region = snapshot.region.clone();
         account.language = snapshot.language.clone();
         account.voicelanguage = snapshot.voicelanguage.clone();
@@ -309,6 +310,30 @@ mod tests {
             resolution: Some("1920x1080".to_string()),
             fps: Some(144),
         }
+    }
+
+    #[test]
+    fn empty_game_settings_inherit_account_defaults_while_retaining_launch_differences() {
+        let mut account = account();
+        account.region = Some("KR".into());
+        account.auth_mode = Some("token".into());
+        account.has_customized_settings = true;
+        let mut requested = overrides();
+        requested.snapshot = Some(crate::domain::launch_scheme::AccountLaunchSnapshot {
+            game_settings: Default::default(),
+            position: Some((10, 20)),
+            region: Some("KR".into()),
+            language: None,
+            voicelanguage: None,
+        });
+        let effective = apply_account_overrides(account, &requested, false).unwrap();
+        assert!(effective.has_customized_settings);
+        assert_eq!(effective.window_x, Some(10));
+        assert!(validate_graphics_override(&requested)
+            .unwrap()
+            .unwrap()
+            .game_settings
+            .is_none());
     }
 
     #[test]

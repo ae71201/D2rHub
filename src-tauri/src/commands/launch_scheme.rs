@@ -107,7 +107,7 @@ pub(crate) fn save_launch_scheme(
             .snapshot
             .as_mut()
             .ok_or_else(|| AppError::ConfigWriteError("请等待账号设置加载完成".into()))?;
-        if snapshot.game_settings.is_empty() || !member.graphics_configured {
+        if !member.graphics_configured {
             return Err(AppError::ConfigWriteError("账号游戏设置不完整".into()));
         }
         // Installation/identity migration belongs to account management.
@@ -204,11 +204,10 @@ pub(crate) fn get_launch_scheme_defaults(
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("配置尚未加载".into()))?;
     let mut settings = crate::domain::launch_scheme::settings_snapshot(&config);
-    settings.insert("rune_audio_enabled".into(), false.into());
     settings.insert("rune_audio_target_account".into(), "".into());
-    settings.insert("rune_audio_external_target".into(), serde_json::Value::Null);
     settings.insert("keep_battle_net_account_id".into(), serde_json::Value::Null);
     Ok(SchemeEnvironment {
+        schema_version: crate::domain::launch_scheme::SCHEME_SCHEMA_VERSION,
         settings,
         room: Default::default(),
         layout: None,
@@ -248,49 +247,60 @@ pub(crate) fn prepare_scheme_launch(
         ));
     }
     let manager = room_manager(app);
+    if manager.is_none()
+        && config
+            .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
+        && (!environment.room.primary_account_id.is_empty()
+            || !environment.room.follower_account_ids.is_empty())
+    {
+        return Err(AppError::ConfigReadError(
+            "无法读取公共跟房设置，请检查自动跟房模块".into(),
+        ));
+    }
     if manager
         .as_ref()
         .is_some_and(|manager| manager.get_status().running)
     {
         return Err(AppError::ConfigReadError("请先结束当前跟房任务".into()));
     }
-    if environment.room.enabled
-        && (manager.is_none()
-            || !config.optional_module_runtime_allowed(
+    let previous_room = manager.as_ref().map(|manager| manager.get_config());
+    let resolved_room = previous_room
+        .as_ref()
+        .filter(|_| {
+            config.optional_module_runtime_allowed(
                 crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
-            ))
-    {
-        return Err(AppError::ConfigReadError(
-            "方案需要自动跟房扩展，请先添加该扩展".into(),
-        ));
+            )
+        })
+        .map(|snapshot| environment.room.project(&snapshot.config));
+    if let Some(room) = &resolved_room {
+        room.validate(std::iter::empty::<&str>())
+            .map_err(|error| AppError::ConfigReadError(error.to_string()))?;
     }
     let mut projected = environment.project(&config)?;
+    let mut members = scheme.members.clone();
+    for member in &mut members {
+        let snapshot = member
+            .snapshot
+            .as_mut()
+            .ok_or_else(|| AppError::ConfigReadError("方案缺少账号配置，请重新编辑保存".into()))?;
+        if snapshot.game_settings.is_empty() {
+            snapshot.game_settings = crate::commands::settings::account_default_settings(
+                state.inner(),
+                &member.account_id,
+            )?
+            .into_iter()
+            .collect();
+        }
+    }
     let session = LaunchSession {
         id: uuid::Uuid::new_v4().to_string(),
         scheme: scheme.clone(),
         started_at: chrono::Utc::now().to_rfc3339(),
         processes: Vec::new(),
-        members: scheme.members.clone(),
+        members: members.clone(),
     };
     projected.launch_session = Some(session.clone());
-    if projected.rune_audio_enabled
-        && !projected
-            .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
-    {
-        return Err(AppError::ConfigReadError(
-            "方案需要识别扩展，请先添加该扩展".into(),
-        ));
-    }
-    if (projected.enable_stats_overlay || projected.enable_tz_overlay)
-        && !projected
-            .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-    {
-        return Err(AppError::ConfigReadError(
-            "方案需要悬浮窗扩展，请先添加扩展或在方案中关闭悬浮窗".into(),
-        ));
-    }
-    let entries = scheme
-        .members
+    let entries = members
         .iter()
         .map(|member| {
             if member.snapshot.is_none() {
@@ -310,8 +320,17 @@ pub(crate) fn prepare_scheme_launch(
             })
         })
         .collect::<Result<Vec<_>, AppError>>()?;
-    crate::commands::launch::preflight_scheme_entries(&projected, state.inner(), &entries)?;
-    let previous_room = manager.as_ref().map(|manager| manager.get_config());
+    crate::commands::launch::preflight_scheme_entries(
+        &projected,
+        state.inner(),
+        &entries,
+        resolved_room
+            .as_ref()
+            .is_some_and(|room| room.runtime_enabled())
+            && config.optional_module_runtime_allowed(
+                crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
+            ),
+    )?;
     crate::commands::launch_scheme_recovery::write(
         state.inner(),
         Some(crate::commands::launch_scheme_recovery::PendingApply {
@@ -323,9 +342,9 @@ pub(crate) fn prepare_scheme_launch(
     )?;
     // Commit room first; on any later failure restore only the fields this
     // operation owns. Configuration mutations merge with the latest snapshot.
-    if let Some(manager) = &manager {
+    if let (Some(manager), Some(room)) = (&manager, resolved_room) {
         let outcome = manager
-            .save_config(manager.get_config().generation, environment.room.clone())
+            .save_config(previous_room.as_ref().unwrap().generation, room)
             .map_err(AppError::ConfigWriteError)?;
         if let Some(warning) = outcome.apply_warning {
             if let Some(previous) = previous_room {

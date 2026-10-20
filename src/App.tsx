@@ -660,7 +660,7 @@ function App() {
           <div className="dashboard-workspace">
             {(launchGroupPanelOpen || launchGroupDraft) && (
               <LaunchGroupPanel
-                editor={launchGroupDraft ? <LaunchGroupEditor launchGroups={launchGroups} modCapsulePool={modCapsules.pool} /> : undefined}
+                editor={launchGroupDraft ? <LaunchGroupEditor launchGroups={launchGroups} modCapsulePool={modCapsules.pool} hidden={showSettings} onOpenSettings={tab => { setSettingsTab(tab); setSettingsAccountId(null); setShowSettings(true); setSettingsRequestRevision(revision => revision + 1); }} /> : undefined}
                 groups={config?.launch_groups ?? []}
                 accounts={accounts}
                 config={config}

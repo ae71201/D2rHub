@@ -361,6 +361,11 @@ pub enum RoomAutomationConfigError {
 }
 
 impl RoomAutomationConfig {
+    /// An empty account selection suspends this run without changing the public switch.
+    pub fn runtime_enabled(&self) -> bool {
+        self.enabled
+            && (!self.primary_account_id.is_empty() || !self.follower_account_ids.is_empty())
+    }
     /// Normalizes legacy strategies from the unversioned shape through v25.
     /// Unknown obsolete mouse/profile fields are ignored by Serde and disappear
     /// on the next serialization.
@@ -439,7 +444,7 @@ impl RoomAutomationConfig {
         I: IntoIterator<Item = &'a str>,
     {
         self.validate_supported_version()?;
-        if !self.enabled {
+        if !self.runtime_enabled() {
             return Ok(());
         }
         self.validate_for_activation(account_shortcuts)

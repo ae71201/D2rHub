@@ -401,8 +401,17 @@ mod validation_tests {
         policy.expected_session = Some(Some("old-run".into()));
         let current = GlobalConfig::default();
         assert!(policy
-            .apply_patch(&current, serde_json::json!({ "rune_audio_enabled": false }))
+            .apply_patch(
+                &current,
+                serde_json::json!({ "rune_audio_target_account": "a" })
+            )
             .is_err());
+        assert!(policy
+            .apply_patch(
+                &current,
+                serde_json::json!({ "rune_audio_enabled": false, "agent_delay_secs": 4.5 })
+            )
+            .is_ok());
         assert!(policy
             .apply_patch(&current, serde_json::json!({ "theme": "forest" }))
             .is_ok());
@@ -874,13 +883,16 @@ mod validation_tests {
     }
 
     #[test]
-    fn enabled_rune_audio_requires_a_selected_account() {
+    fn enabled_rune_audio_without_an_account_stays_dormant() {
         let config = GlobalConfig {
             rune_audio_enabled: true,
             ..GlobalConfig::default()
         };
 
-        assert!(config.resolve_rune_audio_target_account().is_err());
+        assert!(config
+            .resolve_rune_audio_target_account()
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -965,11 +977,67 @@ mod validation_tests {
     fn invalid_rune_audio_configuration_is_disabled() {
         let mut config = GlobalConfig {
             rune_audio_enabled: true,
+            rune_audio_target_account: "missing-account".into(),
             ..GlobalConfig::default()
         };
 
         assert!(config.normalize_rune_audio_configuration());
         assert!(!config.rune_audio_enabled);
+    }
+
+    #[test]
+    fn empty_recognition_selection_preserves_common_enablement_after_normalization() {
+        let mut config = GlobalConfig {
+            rune_audio_enabled: true,
+            ..Default::default()
+        };
+        config.normalize_rune_audio_configuration();
+        assert!(config.rune_audio_enabled);
+        assert!(config
+            .resolve_rune_audio_target_account()
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn migrating_saved_schemes_keeps_an_original_backup_and_current_public_settings() {
+        let root = temp_dir("shared_scheme_migration");
+        let mut raw = serde_json::to_value(GlobalConfig::default()).unwrap();
+        raw["agent_delay_secs"] = serde_json::json!(4.5);
+        raw["launch_groups"] = serde_json::json!([{
+            "id": "daily", "name": "daily", "account_ids": ["a"],
+            "members": [{"account_id": "a", "snapshot": {
+                "game_settings": {"Quality": 1}, "position": null, "region": "KR", "language": null, "voicelanguage": null
+            }}],
+            "environment": {
+                "settings": {"rune_audio_enabled": false, "rune_audio_target_account": "a", "agent_delay_secs": 9},
+                "room": {"enabled": false, "primary_account_id": "a", "follower_account_ids": ["b"], "next_sequence": 1},
+                "layout": null
+            }
+        }]);
+        let content = serde_json::to_string_pretty(&raw).unwrap();
+        std::fs::write(root.join("global_config.json"), &content).unwrap();
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.agent_delay_secs, 4.5);
+        assert_eq!(
+            loaded.launch_groups[0]
+                .environment
+                .as_ref()
+                .unwrap()
+                .schema_version,
+            2
+        );
+        assert!(loaded.launch_groups[0].members[0]
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .game_settings
+            .is_empty());
+        let backup = root.join("global_config.before-shared-schemes.json");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), content);
+        GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), content);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2287,9 +2355,9 @@ impl GlobalConfig {
 
         let account_id = self.rune_audio_target_account.trim();
         if account_id.is_empty() {
-            return Err(AppError::ConfigWriteError(
-                "启用符文声纹识别前请先选择目标账号".to_string(),
-            ));
+            // A scheme without a recognition account remains dormant while
+            // preserving the common enable switch for the next scheme.
+            return Ok(None);
         }
 
         let account = AccountManager::load_meta(&self.accounts_dir, account_id)
@@ -2558,6 +2626,8 @@ impl GlobalConfig {
                 });
             }
         }
+        let schemes_migrated = crate::domain::launch_scheme::migrate_schemes(&mut value);
+        migrated |= schemes_migrated;
         let mut config: GlobalConfig = match serde_json::from_value(value) {
             Ok(config) => config,
             Err(_error)
@@ -2568,6 +2638,34 @@ impl GlobalConfig {
             }
             Err(error) => return Err(error.into()),
         };
+        if schemes_migrated {
+            use std::io::Write;
+            let backup = Path::new(app_data_dir).join("global_config.before-shared-schemes.json");
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&backup)
+            {
+                Ok(mut file) => {
+                    if let Err(error) = file
+                        .write_all(content.as_bytes())
+                        .and_then(|_| file.sync_all())
+                    {
+                        drop(file);
+                        let _ = std::fs::remove_file(&backup);
+                        return Err(AppError::ConfigWriteError(format!(
+                            "备份旧方案失败：{error}"
+                        )));
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(AppError::ConfigWriteError(format!(
+                        "备份旧方案失败：{error}"
+                    )))
+                }
+            }
+        }
         let persisted_pending_paths = config.legacy_path_migration.take();
         config.legacy_path_migration = pending_legacy_paths.or({
             if had_raw_legacy_paths {

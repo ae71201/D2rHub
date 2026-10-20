@@ -700,6 +700,7 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                             feature_groups: Vec::new(),
                             audio_reusable: false,
                             auto_exit_on_death_enabled: false,
+                            room_tools_default_hell: true,
                         });
                     }
                 }
@@ -717,6 +718,7 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                     feature_groups: Vec::new(),
                     audio_reusable: false,
                     auto_exit_on_death_enabled: false,
+                    room_tools_default_hell: true,
                 });
             }
             if !mpq.is_dir() {
@@ -788,6 +790,8 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 feature_groups,
                 audio_reusable,
                 auto_exit_on_death_enabled,
+                room_tools_default_hell: super::room_tool_options::default_hell(&entry.path())
+                    .unwrap_or(true),
             })
         })
         .collect::<Vec<_>>();

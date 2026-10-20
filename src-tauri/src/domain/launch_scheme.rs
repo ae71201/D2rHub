@@ -1,4 +1,4 @@
-//! Saved launch recipes own values, never live references to mutable preferences.
+//! Recipes own account choices and launch differences; operational preferences are shared.
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -9,34 +9,37 @@ use super::{
 use crate::{domain::room_automation::RoomAutomationConfig, error::AppError};
 
 pub const RUNTIME_LAYOUT_ID: &str = "__launch_session_layout__";
-pub const SETTING_KEYS: &[&str] = &[
-    "rune_audio_enabled",
-    "rune_audio_target_account",
-    "rune_audio_external_target",
-    "rune_audio_detection_threshold",
-    "rune_audio_tracked_categories",
-    "rune_audio_min_rune_number",
-    "rune_audio_min_gem_level",
-    "rune_audio_tracked_charm_codes",
-    "enable_tz_overlay",
-    "enable_stats_overlay",
-    "launch_trim_memory",
-    "keep_battle_net_account_id",
-    "auto_close_browser",
-    "agent_mode",
-    "agent_delay_secs",
-    "agent_threshold",
-];
+pub const SETTING_KEYS: &[&str] = &["rune_audio_target_account", "keep_battle_net_account_id"];
+pub const SCHEME_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SchemeRoomAccounts {
+    pub primary_account_id: String,
+    pub follower_account_ids: Vec<String>,
+}
+
+impl SchemeRoomAccounts {
+    pub fn project(&self, common: &RoomAutomationConfig) -> RoomAutomationConfig {
+        let mut room = common.clone();
+        room.primary_account_id = self.primary_account_id.clone();
+        room.follower_account_ids = self.follower_account_ids.clone();
+        room.join_only = false;
+        room
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemeEnvironment {
+    #[serde(default)]
+    pub schema_version: u32,
     pub settings: Map<String, Value>,
-    pub room: RoomAutomationConfig,
+    pub room: SchemeRoomAccounts,
     pub layout: Option<WindowLayout>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountLaunchSnapshot {
+    /// Empty recipes inherit account defaults. Sessions resolve a complete map at launch.
     pub game_settings: Map<String, Value>,
     pub position: Option<(i32, i32)>,
     pub region: Option<String>,
@@ -75,6 +78,77 @@ pub fn settings_snapshot(config: &GlobalConfig) -> Map<String, Value> {
         .collect()
 }
 
+/// Run on raw JSON before deserialization so a durable backup can retain every old value.
+pub fn migrate_schemes(value: &mut Value) -> bool {
+    let mut changed = false;
+    if let Some(groups) = value.get_mut("launch_groups").and_then(Value::as_array_mut) {
+        for group in groups {
+            let Some(env) = group.get_mut("environment").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            if env
+                .get("schema_version")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                >= u64::from(SCHEME_SCHEMA_VERSION)
+            {
+                continue;
+            }
+            if let Some(settings) = env.get_mut("settings").and_then(Value::as_object_mut) {
+                if settings.get("rune_audio_enabled").and_then(Value::as_bool) == Some(false)
+                    || settings
+                        .get("rune_audio_external_target")
+                        .is_some_and(|target| !target.is_null())
+                {
+                    settings.insert("rune_audio_target_account".into(), "".into());
+                }
+                settings.retain(|key, _| SETTING_KEYS.contains(&key.as_str()));
+                settings
+                    .entry("rune_audio_target_account")
+                    .or_insert_with(|| "".into());
+                settings
+                    .entry("keep_battle_net_account_id")
+                    .or_insert(Value::Null);
+            }
+            if let Some(room) = env.get_mut("room").and_then(Value::as_object_mut) {
+                if room.get("enabled").and_then(Value::as_bool) == Some(false) {
+                    room.insert("primary_account_id".into(), "".into());
+                    room.insert("follower_account_ids".into(), Value::Array(vec![]));
+                }
+                room.retain(|key, _| {
+                    matches!(key.as_str(), "primary_account_id" | "follower_account_ids")
+                });
+            }
+            env.insert("schema_version".into(), SCHEME_SCHEMA_VERSION.into());
+            // Previously these were implicit full copies, rather than explicit overrides.
+            if let Some(members) = group.get_mut("members").and_then(Value::as_array_mut) {
+                for member in members {
+                    if let Some(snapshot) =
+                        member.get_mut("snapshot").and_then(Value::as_object_mut)
+                    {
+                        snapshot.insert("game_settings".into(), Value::Object(Map::new()));
+                    }
+                }
+            }
+            changed = true;
+        }
+    }
+    // Active sessions retain their already resolved settings until they finish.
+    if let Some(session) = value
+        .get_mut("launch_session")
+        .and_then(Value::as_object_mut)
+    {
+        if let Some(scheme) = session.get_mut("scheme") {
+            let mut wrapper = serde_json::json!({"launch_groups": [scheme.clone()]});
+            if migrate_schemes(&mut wrapper) {
+                *scheme = wrapper["launch_groups"][0].take();
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// The working copy lives beside library templates for compatibility with the
 /// layout UI. Give only that copy a distinct display name, using the same
 /// whitespace/case rules and 40-character bound as layout validation.
@@ -104,7 +178,8 @@ fn runtime_layout_name(source: &str, library: &[WindowLayout]) -> String {
 
 impl SchemeEnvironment {
     pub fn project(&self, current: &GlobalConfig) -> Result<GlobalConfig, AppError> {
-        if self.settings.len() != SETTING_KEYS.len()
+        if self.schema_version != SCHEME_SCHEMA_VERSION
+            || self.settings.len() != SETTING_KEYS.len()
             || self
                 .settings
                 .keys()
@@ -117,6 +192,7 @@ impl SchemeEnvironment {
         let mut value = serde_json::to_value(current)?;
         value.as_object_mut().unwrap().extend(self.settings.clone());
         let mut config: GlobalConfig = serde_json::from_value(value)?;
+        config.rune_audio_external_target = None;
         config
             .window_layouts
             .retain(|layout| layout.id != RUNTIME_LAYOUT_ID);
@@ -141,9 +217,8 @@ impl SchemeEnvironment {
     pub fn validate(&self, group: &LaunchGroup, current: &GlobalConfig) -> Result<(), AppError> {
         let config = self.project(current)?;
         let contains = |id: &str| group.members.iter().any(|m| m.account_id == id);
-        if config.rune_audio_enabled
-            && (config.rune_audio_external_target.is_some()
-                || !contains(&config.rune_audio_target_account))
+        if !config.rune_audio_target_account.is_empty()
+            && !contains(&config.rune_audio_target_account)
         {
             return Err(AppError::ConfigReadError("请选择方案内的识别账号".into()));
         }
@@ -156,7 +231,7 @@ impl SchemeEnvironment {
                 "保留战网的账号必须属于本方案".into(),
             ));
         }
-        if self.room.enabled {
+        {
             if (!self.room.primary_account_id.is_empty()
                 && !contains(&self.room.primary_account_id))
                 || self
@@ -169,9 +244,12 @@ impl SchemeEnvironment {
                     "跟房主号和小号必须属于本方案".into(),
                 ));
             }
-            self.room
-                .validate(std::iter::empty::<&str>())
-                .map_err(|error| AppError::ConfigReadError(error.to_string()))?;
+            let mut seen = std::collections::HashSet::new();
+            for id in &self.room.follower_account_ids {
+                if id == &self.room.primary_account_id || !seen.insert(id) {
+                    return Err(AppError::ConfigReadError("跟随账号重复或与主号相同".into()));
+                }
+            }
         }
         if let Some(layout) = &self.layout {
             super::window_layout::validate_layout_configuration(
@@ -338,6 +416,7 @@ mod tests {
 
     fn environment(config: &GlobalConfig) -> SchemeEnvironment {
         SchemeEnvironment {
+            schema_version: SCHEME_SCHEMA_VERSION,
             settings: settings_snapshot(config),
             room: Default::default(),
             layout: None,
@@ -345,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_launch_uses_recipe_values_not_last_runtime_changes() {
+    fn repeated_launch_uses_account_choices_and_latest_common_preferences() {
         let defaults = GlobalConfig {
             rune_audio_target_account: "a".into(),
             ..Default::default()
@@ -358,7 +437,7 @@ mod tests {
         assert_eq!(next_launch.rune_audio_target_account, "a");
         assert_eq!(
             next_launch.rune_audio_tracked_categories,
-            defaults.rune_audio_tracked_categories
+            runtime.rune_audio_tracked_categories
         );
         assert_eq!(recipe.settings["rune_audio_target_account"], "a");
     }
@@ -387,7 +466,7 @@ mod tests {
     fn missing_or_injected_fields_fail_closed() {
         let config = GlobalConfig::default();
         let mut recipe = environment(&config);
-        recipe.settings.remove("rune_audio_enabled");
+        recipe.settings.remove("rune_audio_target_account");
         assert!(recipe.project(&config).is_err());
         recipe
             .settings
@@ -402,16 +481,101 @@ mod tests {
         let scheme = LaunchGroup::default();
         recipe
             .settings
-            .insert("rune_audio_enabled".into(), json!(true));
-        recipe
-            .settings
             .insert("rune_audio_target_account".into(), json!("outside"));
         assert!(recipe.validate(&scheme, &config).is_err());
         recipe
             .settings
-            .insert("rune_audio_enabled".into(), json!(false));
-        recipe.room.enabled = true;
+            .insert("rune_audio_target_account".into(), json!(""));
         recipe.room.primary_account_id = "outside".into();
         assert!(recipe.validate(&scheme, &config).is_err());
+    }
+
+    #[test]
+    fn launching_preserves_all_public_preferences_even_with_no_accounts_selected() {
+        let mut common = GlobalConfig::default();
+        let recipe = environment(&common);
+        common.rune_audio_enabled = true;
+        common.rune_audio_detection_threshold = 0.73;
+        common.rune_audio_min_rune_number = 24;
+        common.auto_close_browser = false;
+        common.agent_delay_secs = 4.5;
+        common.enable_stats_overlay = true;
+        let projected = recipe.project(&common).unwrap();
+        assert!(projected.rune_audio_enabled);
+        assert!(projected.rune_audio_target_account.is_empty());
+        assert_eq!(projected.rune_audio_detection_threshold, 0.73);
+        assert_eq!(projected.rune_audio_min_rune_number, 24);
+        assert_eq!(projected.auto_close_browser, common.auto_close_browser);
+        assert_eq!(projected.agent_delay_secs, common.agent_delay_secs);
+        assert!(projected.enable_stats_overlay);
+    }
+
+    #[test]
+    fn room_selection_preserves_public_rules_timing_switch_and_live_sequence() {
+        let common = RoomAutomationConfig {
+            enabled: true,
+            next_sequence: 42,
+            auto_followers_delay_secs: 6.5,
+            shortcut: "Ctrl+F9".into(),
+            ..Default::default()
+        };
+        let empty = SchemeRoomAccounts::default().project(&common);
+        assert!(empty.enabled);
+        assert!(!empty.runtime_enabled());
+        empty.validate(std::iter::empty::<&str>()).unwrap();
+        let selected = SchemeRoomAccounts {
+            primary_account_id: "a".into(),
+            follower_account_ids: vec!["c".into(), "b".into()],
+        }
+        .project(&empty);
+        assert!(selected.runtime_enabled());
+        assert_eq!(selected.next_sequence, 42);
+        assert_eq!(selected.auto_followers_delay_secs, 6.5);
+        assert_eq!(selected.shortcut, "Ctrl+F9");
+        assert_eq!(selected.flow, common.flow);
+        assert_eq!(selected.follower_account_ids, ["c", "b"]);
+    }
+
+    #[test]
+    fn migration_removes_copied_parameters_but_preserves_active_session_settings() {
+        let old = json!({
+            "id": "one", "name": "daily", "account_ids": ["a"],
+            "members": [{"account_id": "a", "snapshot": {"game_settings": {"Quality": 1}}}],
+            "environment": {
+                "settings": {"rune_audio_enabled": true, "rune_audio_target_account": "a", "agent_delay_secs": 9},
+                "room": {"enabled": true, "primary_account_id": "a", "follower_account_ids": ["b"], "next_sequence": 1, "shortcut": "F9"},
+                "layout": null
+            }
+        });
+        let mut value = json!({"launch_groups": [old.clone()], "launch_session": {"scheme": old, "members": [{"snapshot": {"game_settings": {"Quality": 3}}}]}});
+        assert!(migrate_schemes(&mut value));
+        let env: SchemeEnvironment =
+            serde_json::from_value(value["launch_groups"][0]["environment"].clone()).unwrap();
+        assert_eq!(env.settings.len(), 2);
+        assert_eq!(env.settings["rune_audio_target_account"], "a");
+        assert_eq!(env.room.follower_account_ids, ["b"]);
+        assert_eq!(
+            value["launch_groups"][0]["members"][0]["snapshot"]["game_settings"],
+            json!({})
+        );
+        assert_eq!(
+            value["launch_session"]["members"][0]["snapshot"]["game_settings"]["Quality"],
+            3
+        );
+        assert!(!migrate_schemes(&mut value));
+    }
+
+    #[test]
+    fn migration_keeps_disabled_features_unselected() {
+        let mut value = json!({"launch_groups": [{"environment": {
+            "settings": {"rune_audio_enabled": false, "rune_audio_target_account": "a"},
+            "room": {"enabled": false, "primary_account_id": "a", "follower_account_ids": ["b"]}, "layout": null
+        }}]});
+        assert!(migrate_schemes(&mut value));
+        let env: SchemeEnvironment =
+            serde_json::from_value(value["launch_groups"][0]["environment"].clone()).unwrap();
+        assert_eq!(env.settings["rune_audio_target_account"], "");
+        assert!(env.room.primary_account_id.is_empty());
+        assert!(env.room.follower_account_ids.is_empty());
     }
 }

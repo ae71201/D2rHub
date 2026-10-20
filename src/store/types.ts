@@ -1,4 +1,3 @@
-import type { RoomAutomationConfig } from "../features/roomAutomation/types";
 // ── 数据模型 ──
 
 export interface LegacyPathMigration {
@@ -8,8 +7,9 @@ export interface LegacyPathMigration {
 }
 
 export interface SchemeEnvironment {
-  settings: Pick<GlobalConfig, "rune_audio_enabled" | "rune_audio_target_account" | "rune_audio_external_target" | "rune_audio_detection_threshold" | "rune_audio_tracked_categories" | "rune_audio_min_rune_number" | "rune_audio_min_gem_level" | "rune_audio_tracked_charm_codes" | "enable_tz_overlay" | "enable_stats_overlay" | "launch_trim_memory" | "keep_battle_net_account_id" | "auto_close_browser" | "agent_mode" | "agent_delay_secs" | "agent_threshold">;
-  room: RoomAutomationConfig;
+  schema_version: 2;
+  settings: Pick<GlobalConfig, "rune_audio_target_account" | "keep_battle_net_account_id">;
+  room: { primary_account_id: string; follower_account_ids: string[] };
   layout: WindowLayout | null;
 }
 
@@ -293,6 +293,7 @@ export interface TrackingSnapshot {
   source_id?: string;
   revision: number;
   account_id: string;
+  /** Legacy compatibility field; name-based OCR scenes leave this null. */
   current_area_id: number | null;
   current_scene: string;
   current_scene_en: string;
@@ -379,6 +380,7 @@ export interface InstalledAudioMod {
   feature_groups: string[];
   audio_reusable: boolean;
   auto_exit_on_death_enabled: boolean;
+  room_tools_default_hell?: boolean;
 }
 
 export interface AudioModFeatureGroup {

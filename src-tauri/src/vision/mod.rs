@@ -1,5 +1,6 @@
 //! Shared, bounded visual evidence worker. Audio never waits for image inference.
 mod area;
+mod area_names;
 pub mod audio;
 mod capture;
 mod chat_ocr;
@@ -21,7 +22,6 @@ use crate::state::SharedState;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use std::{
-    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, OnceLock,
@@ -90,7 +90,7 @@ pub struct Candidate {
     pub name: String,
     pub name_en: String,
     pub aliases: Vec<String>,
-    pub location: Option<crate::rune_audio::catalog::ResolvedLocation>,
+    pub location: Option<crate::rune_audio::catalog::NamedLocation>,
     pub tz: bool,
     pub confidence: f32,
     pub announcement: Option<u64>,
@@ -211,7 +211,7 @@ impl CapabilityDriver for Vision {
         let app = self.app.clone();
         let config = effective_configuration(&app);
         let chat_follow = config.chat_follow;
-        let root = PathBuf::from(&app.state::<SharedState>().app_data_dir).join("resources/vision");
+        let root = resources::resource_root(&app.state::<SharedState>().app_data_dir);
         let preferred = crate::downloads::cached_preference(&app, &app.state::<SharedState>());
         let (tx, rx) = mpsc::sync_channel(8);
         let handle=std::thread::Builder::new().name("visual-recognition".into()).spawn(move||{
@@ -477,6 +477,9 @@ fn evaluate_area(
     });
     if let Some(skip) = gate.last_skip {
         trace.fields["ocr_skip"] = serde_json::json!(skip);
+    }
+    if let Some(reason) = gate.last_rejection {
+        trace.fields["name_rejection"] = serde_json::json!(reason);
     }
     result
 }

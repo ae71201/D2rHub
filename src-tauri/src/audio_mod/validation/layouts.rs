@@ -845,6 +845,7 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
     mod_name: &str,
     room_recipe_version: u32,
 ) -> Result<(), String> {
+    let default_hell = super::super::room_tool_options::default_hell(mod_directory)?;
     // Old recipes remain readable as upgrade sources. r26 separates the lobby
     // and in-game forms, and queues exit + submit at the same time like JCY.
     let requires_input_safety = room_recipe_version >= 24;
@@ -1361,7 +1362,7 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
                         == Some("D2RHubDefaultHell")
                 })
                 .collect();
-            if name == "D2RHubInGameCreateGamehd.json" {
+            if name == "D2RHubInGameCreateGamehd.json" && default_hell {
                 let expected = serde_json::json!({
                     "type": "TimerWidget",
                     "name": "D2RHubDefaultHell",
@@ -1373,7 +1374,7 @@ pub(in crate::audio_mod) fn validate_in_game_room_tool_layouts_for_version(
                     ));
                 }
             } else if !timers.is_empty() {
-                return Err(format!("默认地狱初始化只能用于局内创建表单：{name}"));
+                return Err(format!("默认地狱初始化已停用或不适用于此表单：{name}"));
             }
         }
         let is_lobby_form = separate_in_game_forms && !name.starts_with("D2RHubInGame");

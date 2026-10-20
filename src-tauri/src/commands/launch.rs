@@ -2006,20 +2006,11 @@ pub(crate) async fn launch_saved_scheme(
         .iter()
         .any(|account| account.is_running);
     if !survivors {
-        if let Some(manager) = crate::commands::launch_scheme::room_manager(&app) {
-            let snapshot = manager.get_config();
-            let mut disabled = snapshot.config;
-            disabled.enabled = false;
-            manager
-                .save_config(snapshot.generation, disabled)
-                .map_err(AppError::ConfigWriteError)?;
-        }
         crate::commands::global_config::mutate_loaded_global_config(
             state.inner(),
             &app,
             |config| {
                 config.launch_session = None;
-                config.rune_audio_enabled = false;
                 Ok(true)
             },
         )?;
@@ -2031,6 +2022,7 @@ pub(crate) fn preflight_scheme_entries(
     config: &GlobalConfig,
     state: &SharedState,
     entries: &[LaunchAccountEntry],
+    room_enabled: bool,
 ) -> Result<(), AppError> {
     let plan = LaunchBatchPlan::from_request(None, Some(entries.to_vec()))?;
     if plan.is_empty() {
@@ -2043,7 +2035,11 @@ pub(crate) fn preflight_scheme_entries(
         preflight_account_meta(config, &account, ContextPurpose::LaunchGame)?;
         let context = LaunchContext::for_account(config, &account, ContextPurpose::LaunchGame)?;
         preflight_scheme_mod(&account, &context)?;
-        if config.rune_audio_enabled && config.rune_audio_target_account == *id {
+        if config.rune_audio_enabled
+            && config.rune_audio_target_account == *id
+            && config
+                .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+        {
             crate::audio_mod::validate_runtime_audio_mod(config, &account, &account.mod_args)
                 .map_err(AppError::ConfigReadError)?;
         }
@@ -2052,7 +2048,7 @@ pub(crate) fn preflight_scheme_entries(
             .as_ref()
             .and_then(|session| session.scheme.environment.as_ref())
             .is_some_and(|environment| {
-                environment.room.enabled
+                room_enabled
                     && (environment.room.primary_account_id == *id
                         || environment.room.follower_account_ids.contains(id))
             })

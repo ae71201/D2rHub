@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, Layers3, PackageOpen } from "lucid
 import { Button } from "../../../components/ui/Button";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { ModPageHeader } from "./ModPageHeader";
+import { RoomToolProcessingOptions } from "./RoomToolProcessingOptions";
 import { ModFeatureChoice } from "./ModFeatureChoice";
 import type { ModWorkflowController } from "../../mods/workflow/useModWorkflow";
 import type { AudioModFeatureSelection } from "../../mods/featureContract";
@@ -53,8 +54,12 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
       </section>
       {batch.mode !== "rebuild" && <fieldset className="mod-processing-section mod-batch-features">
         <legend>{en ? "Modules for this batch" : "本批次添加的模块"}</legend>
-        <div className="mod-feature-grid">{featureLabels.map(([key, title, detail]) => <ModFeatureChoice key={key} title={title} detail={detail}
-          checked={!!batch.features[key]} onChange={checked => batch.changeFeatures({ ...batch.features, [key]: checked })} />)}</div>
+        <div className="mod-feature-grid">{featureLabels.map(([key, title, detail]) => <div key={key} className="mod-feature-with-options"><ModFeatureChoice title={title} detail={detail}
+          checked={!!batch.features[key]} onChange={checked => batch.changeFeatures({ ...batch.features, [key]: checked })} />
+          {key === "includeRoomTools" && batch.features.includeRoomTools && <RoomToolProcessingOptions en={en}
+            enabled={batch.features.roomToolsDefaultHell ?? true} disabled={batch.busy}
+            onChange={enabled => batch.changeFeatures({ ...batch.features, roomToolsDefaultHell: enabled })} />}
+          </div>)}</div>
       </fieldset>}
       <section className="mod-processing-section mod-batch-selection">
         <div className="mod-section-toolbar">
@@ -81,7 +86,9 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
         <span className="mod-batch-summary" role="status"><CheckCircle2 size={15} aria-hidden="true" />{en ? `${completed} of ${batch.rows.length} complete` : `${batch.rows.length} 项，已成功 ${completed} 项`}</span>
       </div>
       <div className="mod-batch-table-wrap"><table className="mod-batch-table"><thead><tr><th>{en ? "Source / original" : "来源／原始 Mod"}</th><th>{en ? "Target" : "目标"}</th><th>{en ? "Operation" : "操作"}</th><th>{en ? "Result" : "结果"}</th></tr></thead>
-        <tbody>{batch.rows.map(row => <tr key={row.source} data-state={row.state}><td>{row.sourceModName ?? (en ? "Original game" : "原版游戏")}</td><td><strong>{row.name}</strong></td><td>{labels[row.mode]}<p className="micro-meta">{featureLabels.filter(([key]) => row.features[key]).map(([, label]) => label).join(en ? ", " : "、")}</p></td><td><span className="mod-batch-state" data-state={row.state}>{states[row.state]}</span>{row.message && <p>{row.message}</p>}
+        <tbody>{batch.rows.map(row => <tr key={row.source} data-state={row.state}><td>{row.sourceModName ?? (en ? "Original game" : "原版游戏")}</td><td><strong>{row.name}</strong></td><td>{labels[row.mode]}<p className="micro-meta">{featureLabels.filter(([key]) => row.features[key]).map(([, label]) => label).join(en ? ", " : "、")}</p>{row.features.includeRoomTools && <p className="micro-meta">{row.features.roomToolsDefaultHell
+            ? (en ? "Create game: default to Hell" : "创建房间：默认地狱")
+            : (en ? "Create game: choose difficulty manually" : "创建房间：手动选择难度")}</p>}</td><td><span className="mod-batch-state" data-state={row.state}>{states[row.state]}</span>{row.message && <p>{row.message}</p>}
           {row.state === "running" && batch.progress && <><p>{batch.progress.message}</p><ProgressBar value={batch.progress.percent} label={row.name} /></>}</td></tr>)}</tbody></table></div>
       <div className="mod-action-footer">
         {batch.busy ? <><span role="status">{en ? "Processing in order" : "正在依次处理"}</span><Button variant="secondary" disabled={batch.stopping} onClick={batch.stop}>{batch.stopping ? (en ? "Stopping after current item…" : "当前项完成后停止…") : (en ? "Stop after current item" : "当前项完成后停止")}</Button></> : <>

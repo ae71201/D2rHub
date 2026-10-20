@@ -38,9 +38,9 @@ pub fn binary(image: &RgbImage, kind: Mask) -> RgbImage {
         })
     })
 }
-// V3: the marker is detected geometrically; only the short suffix is read by OCR.
+// The repeated marker is a cheap layout gate; OCR reads only the numeric center.
 pub fn chat_signal(sequence: u32) -> String {
-    format!("+ + {sequence} + +")
+    format!("*********** {sequence:03} ***********")
 }
 
 pub fn chat_lines(image: &RgbImage) -> Vec<RgbImage> {
@@ -94,11 +94,9 @@ fn lines_with_gap(image: &RgbImage, kind: Mask, limit: usize, gap: usize) -> Vec
                     }
                 }
             }
-            if n >= 3
-                && (y1 - y0 >= 3 || (gap >= 3 && x1 - x0 >= 3))
-                && y1 - y0 <= h.min(100)
-                && x1 - x0 <= 200
-            {
+            // At 720p a star can be just a 2x2 component. Keep it so both
+            // marker trains remain attached to the taller chat text.
+            if n >= 3 && (y1 > y0 || x1 > x0) && y1 - y0 <= h.min(100) && x1 - x0 <= 200 {
                 boxes.push((x0, y0, x1 + 1, y1 + 1));
             }
             if boxes.len() > 8000 {
@@ -145,13 +143,14 @@ pub fn normalize(text: &str) -> String {
         .flat_map(char::to_lowercase)
         .collect()
 }
-/// Confirm spaced pairs of crosses on both sides before OCR reads the middle.
+/// Loose repeated-symbol layout gate, independent of each star's stroke shape.
 #[derive(Debug, serde::Serialize)]
 pub struct ChatAnalysis {
     pub matched: bool,
     pub glyph_runs: usize,
-    pub crosses: usize,
+    pub marker_runs: usize,
     pub geometry_windows: usize,
+    pub number_bounds: Option<(u32, u32)>,
     pub reason: &'static str,
 }
 #[cfg(test)]
@@ -159,123 +158,110 @@ pub fn chat_hint(image: &RgbImage) -> bool {
     chat_analysis(image).matched
 }
 pub fn chat_analysis(image: &RgbImage) -> ChatAnalysis {
-    let (w, h) = (image.width(), image.height());
-    let columns: Vec<bool> = (0..w)
-        .map(|x| (0..h).any(|y| selected(image.get_pixel(x, y).0, Mask::Text)))
-        .collect();
-    let mut crosses = Vec::new();
+    // White/grey signal ink only: colored player names must not distort the
+    // projection or be mistaken for the numeric center.
+    let white = |x, y| {
+        let [r, g, b] = image.get_pixel(x, y).0;
+        r.min(g).min(b) > 150 && r.max(g).max(b) - r.min(g).min(b) < 65
+    };
+    let (w, h) = image.dimensions();
     let mut runs = Vec::new();
     let mut x = 0;
     while x < w {
-        if !columns[x as usize] {
+        if !(0..h).any(|y| white(x, y)) {
             x += 1;
             continue;
         }
         let start = x;
-        while x < w && columns[x as usize] {
+        let (mut top, mut bottom) = (h, 0);
+        while x < w && (0..h).any(|y| white(x, y)) {
+            for y in 0..h {
+                if white(x, y) {
+                    top = top.min(y);
+                    bottom = bottom.max(y + 1);
+                }
+            }
             x += 1;
         }
-        let width = x - start;
-        runs.push((start, x));
-        crosses.push(None);
-        if !(3..=50).contains(&width) {
-            continue;
-        }
-        let rows: Vec<u32> = (0..h)
-            .filter(|y| (start..x).any(|px| selected(image.get_pixel(px, *y).0, Mask::Text)))
-            .collect();
-        let (Some(top), Some(bottom)) = (rows.first(), rows.last()) else {
-            continue;
-        };
-        let height = bottom - top + 1;
-        if width * 2 < height || height * 2 < width || height < 3 {
-            continue;
-        }
-        // Antialiasing/shadow pixels can shift the bounding box by a pixel.
-        // Search only the central half for the actual horizontal/vertical bars.
-        let cy = (*top + height / 4..=*bottom - height / 4)
-            .max_by_key(|y| {
-                (start..x)
-                    .filter(|px| selected(image.get_pixel(*px, *y).0, Mask::Text))
-                    .count()
-            })
-            .unwrap_or((top + bottom) / 2);
-        let cx = (start + width / 4..x - width / 4)
-            .max_by_key(|px| {
-                (*top..=*bottom)
-                    .filter(|y| selected(image.get_pixel(*px, *y).0, Mask::Text))
-                    .count()
-            })
-            .unwrap_or((start + x - 1) / 2);
-        let horizontal = (start..x)
-            .filter(|px| selected(image.get_pixel(*px, cy).0, Mask::Text))
-            .count();
-        let vertical = (*top..=*bottom)
-            .filter(|py| selected(image.get_pixel(cx, *py).0, Mask::Text))
-            .count();
-        if horizontal * 4 >= width as usize * 3 && vertical * 4 >= height as usize * 3 {
-            let ink = (*top..=*bottom)
-                .flat_map(|y| (start..x).map(move |x| (x, y)))
-                .filter(|(x, y)| selected(image.get_pixel(*x, *y).0, Mask::Text))
-                .count();
-            if ink * 100 <= (width * height) as usize * 65 {
-                *crosses.last_mut().expect("glyph slot") = Some((start, x, *top, *bottom + 1));
-            }
-        }
+        runs.push((start, x, top, bottom));
     }
-    let mut geometry_windows = 0;
-    let mut matched = false;
-    'search: for left in 0..crosses.len().saturating_sub(3) {
-        let (Some(a), Some(b)) = (crosses[left], crosses[left + 1]) else {
-            continue;
-        };
-        for right in left + 3..(left + 13).min(crosses.len().saturating_sub(1)) {
-            let (Some(c), Some(d)) = (crosses[right], crosses[right + 1]) else {
-                continue;
-            };
-            let glyphs = [a, b, c, d];
-            let width = a.1 - a.0;
-            let height = a.3 - a.2;
-            let tolerance = (height / 4).max(2);
-            if glyphs.iter().any(|g| {
-                (g.1 - g.0).abs_diff(width) > tolerance
-                    || (g.3 - g.2).abs_diff(height) > tolerance
-                    || (g.2 + g.3).abs_diff(a.2 + a.3) > tolerance * 2
-            }) {
-                continue;
-            }
-            geometry_windows += 1;
-            let first = b.0 - a.0;
-            let last = d.0 - c.0;
-            if first * 10 >= width * 18
-                && first <= width * 5
-                && last * 10 >= width * 18
-                && last <= width * 5
-                && first.abs_diff(last) <= (first / 4).max(2)
-                && c.0 > b.1
-                && c.0 - b.1 <= width * 24
-                && (runs[left + 2].0 - b.1) * 2 >= width
-                && (c.0 - runs[right - 1].1) * 2 >= width
+    // Group adjacent small glyphs by approximate height and alignment. No
+    // cross/diagonal template, exact star count, or fixed pixel spacing.
+    let mut trains = Vec::new();
+    let max_height = runs.iter().map(|g| g.3 - g.2).max().unwrap_or(0);
+    let mut i = 0;
+    while i < runs.len() {
+        let start = i;
+        let anchor = runs[i];
+        let height = anchor.3 - anchor.2;
+        i += 1;
+        while i < runs.len() {
+            let glyph = runs[i];
+            let gh = glyph.3 - glyph.2;
+            if height < 2
+                || gh.abs_diff(height) > (height / 2).max(1)
+                || glyph.1 - glyph.0 > height * 3
+                || glyph.2.abs_diff(anchor.2) > (height / 2).max(1)
+                || glyph.0 - runs[i - 1].1 > height * 4
             {
-                matched = true;
-                break 'search;
+                break;
             }
+            i += 1;
+        }
+        if i - start >= 4
+            && height >= 2
+            && height * 3 <= max_height * 2
+            && anchor.1 - anchor.0 <= height * 3
+        {
+            trains.push((start, i, height));
         }
     }
-    let cross_count = crosses.iter().filter(|g| g.is_some()).count();
+    let marker_runs = trains.iter().map(|(start, end, _)| end - start).sum();
+    let mut geometry_windows = 0;
+    let mut number_bounds = None;
+    for pair in trains.windows(2) {
+        let (_, left_end, lh) = pair[0];
+        let (right_start, _, rh) = pair[1];
+        let center = &runs[left_end..right_start];
+        if center.is_empty() || center.len() > 10 {
+            continue;
+        }
+        geometry_windows += 1;
+        let marker_height = lh.max(rh);
+        let center_top = center.iter().map(|g| g.2).min().unwrap();
+        let center_bottom = center.iter().map(|g| g.3).max().unwrap();
+        let center_height = center_bottom - center_top;
+        let left = runs[left_end - 1];
+        let right = runs[right_start];
+        if lh.abs_diff(rh) <= (marker_height / 2).max(1)
+            && left.2.abs_diff(right.2) <= marker_height.max(2)
+            && center_height * 2 >= marker_height * 3
+            && center_height <= marker_height * 12
+            && center_top <= left.3 + marker_height
+            && center_bottom >= left.2
+            && center[0].0 - left.1 <= center_height * 3
+            && right.0 - center.last().unwrap().1 <= center_height * 3
+            && center.last().unwrap().1 - center[0].0 <= center_height * 20
+        {
+            // Keep a little original background, bounded by the marker gaps.
+            let x0 = center[0].0.saturating_sub(2).max(left.1);
+            let x1 = (center.last().unwrap().1 + 2).min(right.0);
+            number_bounds = Some((x0, x1));
+            break;
+        }
+    }
     ChatAnalysis {
-        matched,
-        glyph_runs: crosses.len(),
-        crosses: cross_count,
+        matched: number_bounds.is_some(),
+        glyph_runs: runs.len(),
+        marker_runs,
         geometry_windows,
-        reason: if matched {
+        number_bounds,
+        reason: if number_bounds.is_some() {
             "marker"
-        } else if cross_count < 4 {
-            "too_few_crosses"
-        } else if geometry_windows == 0 {
-            "alignment_or_shape"
+        } else if trains.len() < 2 {
+            "too_few_marker_trains"
         } else {
-            "pair_spacing"
+            "no_numeric_center"
         },
     }
 }
@@ -290,8 +276,9 @@ mod tests {
     use super::*;
     #[test]
     fn signal_has_short_readable_dedup_suffix() {
-        assert_eq!(chat_signal(501), "+ + 501 + +");
-        assert_eq!(chat_signal(u32::MAX), "+ + 4294967295 + +");
+        assert_eq!(chat_signal(77), "*********** 077 ***********");
+        assert_eq!(chat_signal(501), "*********** 501 ***********");
+        assert_eq!(chat_signal(u32::MAX), "*********** 4294967295 ***********");
     }
     fn frame(text: &str, scale: u32, stagger: bool) -> RgbImage {
         let mut image = RgbImage::new((text.len() as u32 * 10 + 8) * scale, 24 * scale);
@@ -301,8 +288,8 @@ mod tests {
             }
             for y in 0..7 * scale {
                 for x in 0..7 * scale {
-                    let pixel = if ch == '+' {
-                        (3 * scale..4 * scale).contains(&x) || (3 * scale..4 * scale).contains(&y)
+                    let pixel = if ch == '*' {
+                        x < 3 * scale && y < 3 * scale
                     } else {
                         true
                     };
@@ -319,22 +306,50 @@ mod tests {
         image
     }
     #[test]
-    fn requires_both_spaced_pairs_on_same_baseline() {
+    fn loose_marker_trains_gate_only_a_taller_center() {
         for scale in [1, 2, 3] {
-            let image = frame(&chat_signal(501), scale, false);
-            assert!(chat_lines(&image).iter().any(chat_hint));
             for text in [
-                "+501+ +",
-                "+ +501+",
-                "+ +501",
-                "501+ +",
-                "++501++",
-                "+ +501+ +",
+                chat_signal(501),
+                "**** 077 ******".into(),
+                "******** 4294967295 ********".into(),
+            ] {
+                let image = frame(&text, scale, false);
+                assert!(chat_hint(&image), "{text} at {scale}x");
+                assert!(
+                    chat_lines(&image).iter().any(chat_hint),
+                    "segmentation: {text}"
+                );
+            }
+            for text in [
+                "*** 501 ***",
+                "**** 501",
+                "501 ****",
+                "***********",
+                "hello 501 world",
                 "501",
+                "+ + 501 + +",
             ] {
                 assert!(!chat_hint(&frame(text, scale, false)), "{text}");
             }
-            assert!(!chat_hint(&frame("+ + 501 + +", scale, true)));
+            assert!(!chat_hint(&frame("**** 501 ****", scale, true)));
+        }
+    }
+    #[test]
+    fn real_1080p_and_720p_signals_keep_all_three_rows() {
+        for png in [
+            include_bytes!("../../tests/fixtures/chat-signal-1080p.png").as_slice(),
+            include_bytes!("../../tests/fixtures/chat-signal-720p.png").as_slice(),
+        ] {
+            let image = image::load_from_memory(png).unwrap().to_rgb8();
+            let lines = chat_lines(&image);
+            assert_eq!(lines.len(), 3, "{}x{}", image.width(), image.height());
+            for line in lines {
+                let report = chat_analysis(&line);
+                assert!(report.matched, "{report:?}");
+                let (x0, x1) = report.number_bounds.unwrap();
+                assert!(x1 > x0 && x1 <= line.width());
+                assert!(report.marker_runs >= 8, "{report:?}");
+            }
         }
     }
     #[test]

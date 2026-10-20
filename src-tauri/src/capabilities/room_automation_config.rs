@@ -644,6 +644,7 @@ mod tests {
 
         let mut incomplete = initial.config.clone();
         incomplete.enabled = true;
+        incomplete.primary_account_id = "primary".into();
         assert!(matches!(
             controller.save(initial.generation, incomplete, &[]),
             Err(RoomAutomationConfigControllerError::InvalidConfig(

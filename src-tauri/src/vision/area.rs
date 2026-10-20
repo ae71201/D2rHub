@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 pub fn red([r, g, b]: [u8; 3]) -> bool {
     let (r, g, b) = (r as u32, g as u32, b as u32);
-    r >= 65 && r >= g * 3 / 2 && r >= b * 3 / 2 && r - g >= 35 && r - b >= 30
+    // The supplied entry screenshots have a vivid red core around (202, 24, 0).
+    // Require bright, saturated red instead of accepting dim red scenery.
+    r >= 120 && g <= 60 && b <= 60 && r >= g * 4 && r >= b * 4
 }
 #[derive(Debug, serde::Serialize)]
 pub struct Feature {
@@ -16,9 +18,10 @@ pub struct Feature {
     pub bounds: Option<(u32, u32, u32, u32)>,
 }
 pub fn feature(image: &RgbImage) -> Feature {
-    feature_color(image, red)
+    // A strict color mask selects glyph cores; keep thin strokes eligible.
+    feature_color(image, red, 0.045)
 }
-fn feature_color(image: &RgbImage, color: impl Fn([u8; 3]) -> bool) -> Feature {
+fn feature_color(image: &RgbImage, color: impl Fn([u8; 3]) -> bool, min_density: f32) -> Feature {
     let (w, h) = image.dimensions();
     let mut columns = vec![0usize; w as usize];
     let mut rows = vec![0usize; h as usize];
@@ -65,7 +68,7 @@ fn feature_color(image: &RgbImage, color: impl Fn([u8; 3]) -> bool) -> Feature {
             && bw >= bh * 3
             && bw <= bh * 45
             && strokes >= 3
-            && (0.045..=0.72).contains(&density)
+            && (min_density..=0.72).contains(&density)
     });
     Feature {
         present,
@@ -88,7 +91,7 @@ pub fn tz_crop(image: &RgbImage, entry: &Feature) -> Option<RgbImage> {
     }
     let below =
         imageops::crop_imm(image, 0, bottom, image.width(), image.height() - bottom).to_image();
-    let feature = feature_color(&below, purple);
+    let feature = feature_color(&below, purple, 0.045);
     crop(&below, &feature)
 }
 fn terror_text(text: &str) -> bool {
@@ -118,22 +121,36 @@ pub fn crop(image: &RgbImage, feature: &Feature) -> Option<RgbImage> {
         .to_image(),
     )
 }
+#[cfg(test)]
 pub fn resolve(text: &str, candidates: &[Candidate]) -> Option<Candidate> {
+    resolve_name(text, candidates).ok()
+}
+
+fn resolve_name(text: &str, candidates: &[Candidate]) -> Result<Candidate, &'static str> {
     let text = text.trim();
     // A map-entry announcement must contain its explicit prefix. Never accept
     // arbitrary red chat, health text, or a best-effort nearest catalog name.
     let body = text
         .strip_prefix("进入")
         .or_else(|| text.strip_prefix("進入"))
-        .or_else(|| text.strip_prefix("Entering "))?;
+        .or_else(|| text.strip_prefix("Entering "))
+        .ok_or("missing_entry_prefix")?;
+    let name = processing::normalize(body);
     let mut found = candidates.iter().filter(|candidate| {
         candidate
             .aliases
             .iter()
-            .any(|alias| processing::normalize(alias) == processing::normalize(body))
+            .any(|alias| processing::normalize(alias) == name)
     });
-    let candidate = found.next()?.clone();
-    found.next().is_none().then_some(candidate)
+    let candidate = found.next().ok_or("unknown_scene_name")?;
+    if found.any(|other| {
+        processing::normalize(&other.name) != processing::normalize(&candidate.name)
+            || other.location.as_ref().map(|v| v.kind)
+                != candidate.location.as_ref().map(|v| v.kind)
+    }) {
+        return Err("ambiguous_scene_name");
+    }
+    Ok(candidate.clone())
 }
 #[derive(Default)]
 pub struct Gate {
@@ -141,6 +158,7 @@ pub struct Gate {
     result: Option<Candidate>,
     retry: Option<Instant>,
     pub last_skip: Option<&'static str>,
+    pub last_rejection: Option<&'static str>,
     entry_name: Option<String>,
     entry_id: Option<u64>,
     tz_seen: bool,
@@ -152,6 +170,7 @@ impl Gate {
         self.entry_name = None;
         self.entry_id = None;
         self.tz_seen = false;
+        self.last_rejection = None;
     }
     pub fn read(
         &mut self,
@@ -162,6 +181,7 @@ impl Gate {
         mut recognize: impl FnMut(&RgbImage) -> Result<(String, f32), String>,
     ) -> Result<Option<Candidate>, String> {
         self.last_skip = None;
+        self.last_rejection = None;
         let mut hash = Sha256::new();
         hash.update(image.width().to_le_bytes());
         hash.update(image.height().to_le_bytes());
@@ -193,7 +213,10 @@ impl Gate {
         self.retry = Some(now + Duration::from_secs(2));
         let (text, score) = recognize(image)?;
         if score >= 0.90 {
-            self.result = resolve(&text, candidates);
+            match resolve_name(&text, candidates) {
+                Ok(candidate) => self.result = Some(candidate),
+                Err(reason) => self.last_rejection = Some(reason),
+            }
             if let Some(result) = self.result.as_mut() {
                 result.confidence = score;
             }
@@ -212,6 +235,7 @@ impl Gate {
                     if let Some(tz) = tz {
                         let (text, score) = recognize(tz)?;
                         if score < 0.90 || !terror_text(&text) {
+                            self.last_rejection = Some("unconfirmed_terror_text");
                             self.result = None;
                         } else if let Some(result) = self.result.as_mut() {
                             self.tz_seen = true;
@@ -221,6 +245,8 @@ impl Gate {
                     }
                 }
             }
+        } else {
+            self.last_rejection = Some("low_ocr_confidence");
         }
         Ok(self.result.clone())
     }
@@ -229,6 +255,135 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejection_reasons_distinguish_unknown_names_from_conflicting_aliases() {
+        let candidate = Candidate {
+            name: "古墓".into(),
+            aliases: vec!["古墓".into(), "共用译名".into()],
+            ..Default::default()
+        };
+        let duplicate = Candidate {
+            name: "古·墓".into(),
+            ..candidate.clone()
+        };
+        assert!(resolve_name("进入古墓", &[candidate.clone(), duplicate]).is_ok());
+        assert_eq!(
+            resolve_name("古墓", std::slice::from_ref(&candidate)).err(),
+            Some("missing_entry_prefix")
+        );
+        assert_eq!(
+            resolve_name("进入未登记地点", std::slice::from_ref(&candidate)).err(),
+            Some("unknown_scene_name")
+        );
+        let conflicting = Candidate {
+            name: "另一处地点".into(),
+            ..candidate.clone()
+        };
+        assert_eq!(
+            resolve_name("进入共用译名", &[candidate, conflicting]).err(),
+            Some("ambiguous_scene_name")
+        );
+    }
+
+    #[test]
+    fn muted_scenery_is_rejected_but_sparse_bright_strokes_and_purple_pass() {
+        let mut noise = RgbImage::new(384, 97);
+        for y in 4..68 {
+            for x in 20..360 {
+                if (x - 20) % 40 < 20 && (x + y) % 7 == 0 {
+                    noise.put_pixel(x, y, image::Rgb([100, 45, 30]));
+                }
+            }
+        }
+        assert!(!feature(&noise).present);
+
+        for pixel in noise.pixels_mut() {
+            if pixel.0 != [0, 0, 0] {
+                *pixel = image::Rgb([160, 0, 0]);
+            }
+        }
+        assert!(feature(&noise).present);
+        for pixel in noise.pixels_mut() {
+            if red(pixel.0) {
+                *pixel = image::Rgb([140, 40, 200]);
+            }
+        }
+        // Red color changes must not hide thin purple TZ lettering.
+        let entry = Feature {
+            present: true,
+            pixels: 0,
+            strokes: 0,
+            bounds: Some((0, 0, 1, 1)),
+        };
+        assert!(tz_crop(&noise, &entry).is_some());
+    }
+
+    #[test]
+    fn red_requires_bright_saturated_pixels_and_accepts_screenshot_glyph_cores() {
+        for pixel in [[202, 24, 0], [170, 21, 1], [120, 15, 3], [255, 60, 60]] {
+            assert!(red(pixel), "glyph core {pixel:?}");
+        }
+        for pixel in [
+            [65, 0, 0],      // dark red
+            [119, 15, 2],    // below the brightness floor
+            [180, 60, 0],    // orange
+            [160, 45, 30],   // muted red
+            [240, 61, 0],    // too much green
+            [240, 0, 61],    // too much blue
+            [140, 40, 200],  // purple TZ text
+            [200, 200, 200], // neutral scenery
+        ] {
+            assert!(!red(pixel), "background {pixel:?}");
+        }
+    }
+
+    #[test]
+    #[ignore = "Read-only color gate probe; set D2RHUB_AREA_COLOR_SAMPLE to an entry ROI PNG"]
+    fn screenshot_color_gate_probe() {
+        let image = image::open(std::env::var("D2RHUB_AREA_COLOR_SAMPLE").unwrap())
+            .unwrap()
+            .to_rgb8();
+        for image in [
+            image.clone(),
+            imageops::resize(&image, 384, 97, imageops::FilterType::Triangle),
+        ] {
+            let entry = feature(&image);
+            println!("{}x{}: {entry:?}", image.width(), image.height());
+            assert!(entry.present);
+            let entry_crop = crop(&image, &entry).unwrap();
+            let has_tz = std::env::var("D2RHUB_AREA_COLOR_TZ").is_ok_and(|v| v == "1");
+            assert_eq!(tz_crop(&image, &entry).is_some(), has_tz);
+            // Gating selects a rectangle and must preserve every RGB pixel.
+            assert!(entry_crop.pixels().any(|pixel| !red(pixel.0)));
+        }
+    }
+
+    #[test]
+    fn compact_entry_glyphs_pass_at_multiple_capture_scales() {
+        for scale in [1, 2, 3] {
+            let mut image = RgbImage::new(384 * scale, 97 * scale);
+            for glyph in 0..7 {
+                for y in 0..28 {
+                    for x in 0..20 {
+                        if !(2..18).contains(&x) || y < 2 || (13..15).contains(&y) || y >= 26 {
+                            for dy in 0..scale {
+                                for dx in 0..scale {
+                                    image.put_pixel(
+                                        (60 + glyph * 30 + x) * scale + dx,
+                                        (4 + y) * scale + dy,
+                                        image::Rgb([160, 0, 0]),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(feature(&image).present, "scale {scale}");
+        }
+    }
+
     #[test]
     fn tz_is_bound_to_one_announcement_and_does_not_disappear_when_purple_fades() {
         let candidates = vec![Candidate {
@@ -300,6 +455,7 @@ mod tests {
             )))
             .unwrap()
             .is_none());
+        assert_eq!(gate.last_rejection, Some("low_ocr_confidence"));
         assert!(gate
             .read(
                 &image,

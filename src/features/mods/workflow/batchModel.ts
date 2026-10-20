@@ -22,7 +22,10 @@ export function batchPlan(mods: InstalledAudioMod[], selected: string[], mode: B
     const effectiveMode = mode === "augment" && mod?.update_required ? "rebuild" : mode;
     const name = mode === "create" ? (names[source] ?? `${source}-Hub`).trim() : source;
     const groups = mod?.feature_groups ?? [];
+    const roomToolsDefaultHell = mode === "rebuild" || !features.includeRoomTools
+      ? mod?.room_tools_default_hell ?? true : features.roomToolsDefaultHell ?? true;
     const selection = mode === "rebuild" ? {
+      roomToolsDefaultHell,
       includeAudioTelemetry: groups.includes("audio_telemetry") || (!groups.length && !!mod?.update_required),
       includeRoomTools: groups.includes("in_game_room_tools"),
       includeSceneShortcuts: groups.includes("scene_shortcuts"),
@@ -31,6 +34,7 @@ export function batchPlan(mods: InstalledAudioMod[], selected: string[], mode: B
       includeEscNextGame: groups.includes("esc_next_game"),
       includeAutoExitOnDeath: groups.includes("auto_exit_on_death"),
     } : {
+      roomToolsDefaultHell,
       includeAudioTelemetry: features.includeAudioTelemetry || groups.includes("audio_telemetry") || (!!mod?.update_required && !groups.length),
       includeRoomTools: features.includeRoomTools || groups.includes("in_game_room_tools"),
       includeSceneShortcuts: features.includeSceneShortcuts || groups.includes("scene_shortcuts"),
@@ -46,7 +50,8 @@ export function batchPlan(mods: InstalledAudioMod[], selected: string[], mode: B
       : (mode === "create" || mode === "replace-source") && !mod.source_eligible ? (en ? "Source is unavailable" : "该 Mod 不能作为加工来源")
       : mode !== "create" && mode !== "replace-source" && !groups.length && !mod.update_required ? (en ? "Not a processed Mod" : "不是已加工 Mod")
       : !hasSelectedAudioModFeature(selection) ? (en ? "Choose at least one module" : "请至少选择一个模块")
-      : mode === "augment" && !mod.update_required && !selectedAudioModFeatureAddsCapability(features, groups)
+      : mode === "augment" && !mod.update_required && !(selection.includeRoomTools && roomToolsDefaultHell !== (mod.room_tools_default_hell ?? true))
+        && !selectedAudioModFeatureAddsCapability(features, groups)
         ? (en ? "Selected modules already installed" : "已包含所选模块，无需增补")
       : "";
     if (!message && (mode === "create" || mode === "replace-source")) message = validateAudioModName(name, mode === "replace-source" ? [] : occupied) ?? "";

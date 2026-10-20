@@ -15,6 +15,7 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
   const selected = state?.installed_mods.find(mod => mod.name.toLocaleLowerCase() === selectedName?.toLocaleLowerCase());
   const inherited = selected?.feature_groups ?? [];
   const selection = {
+    roomToolsDefaultHell: draft.features.roomToolsDefaultHell ?? selected?.room_tools_default_hell ?? true,
     includeAudioTelemetry: draft.features.includeAudioTelemetry || draft.origin === "recognition" || inherited.includes(AUDIO_TELEMETRY_FEATURE_ID) || (!!selected?.update_required && !inherited.length),
     includeRoomTools: draft.features.includeRoomTools || draft.origin === "room-automation" || inherited.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
     includeSceneShortcuts: draft.features.includeSceneShortcuts || inherited.includes("scene_shortcuts"),
@@ -23,6 +24,8 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
     includeEscNextGame: draft.features.includeHostileAutoRestart || inherited.includes("hostile_auto_restart") || draft.features.includeEscNextGame || inherited.includes(ESC_NEXT_GAME_FEATURE_ID),
     includeAutoExitOnDeath: draft.features.includeAutoExitOnDeath || inherited.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID),
   };
+  const roomOptionsChanged = selection.includeRoomTools
+    && selection.roomToolsDefaultHell !== (selected?.room_tools_default_hell ?? true);
   const augment = draft.recipe.kind === "augment";
   const updating = draft.recipe.kind === "augment" && (!!selected?.update_required || !!draft.recipe.rebuild);
   const originalName = draft.recipe.kind === "augment"
@@ -44,7 +47,7 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
         : augment && !selected?.feature_groups.length && !selected?.update_required ? (en ? "Select a processed Mod to augment" : "请选择一个已加工 Mod")
           : originalUnavailable ? (en ? "Original source Mod is unavailable or already processed. Select an unpacked, unprocessed source." : "原始源 Mod 不可用或已经加工，请重新选择已解压且未经加工的来源。")
           : !hasSelectedAudioModFeature(selection) ? (en ? "Select at least one Mod feature" : "请至少选择一个 Mod 功能")
-            : augment && !updating && !selectedAudioModFeatureAddsCapability(selection, inherited) ? (en ? "This Mod already contains every selected feature" : "当前 Mod 已包含所选功能，请选择一个尚未安装的功能")
+            : augment && !updating && !roomOptionsChanged && !selectedAudioModFeatureAddsCapability(selection, inherited) ? (en ? "This Mod already contains every selected feature" : "当前 Mod 已包含所选功能，请选择一个尚未安装的功能")
               : nameError || "";
-  return { selected, inherited, selection, augment, updating, nameError, blockedReason };
+  return { selected, inherited, selection, augment, updating, roomOptionsChanged, nameError, blockedReason };
 }

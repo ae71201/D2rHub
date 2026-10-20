@@ -6,8 +6,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 fn resource_root(app: &tauri::AppHandle) -> std::path::PathBuf {
-    std::path::PathBuf::from(&app.state::<crate::state::SharedState>().app_data_dir)
-        .join("resources/vision")
+    super::resources::resource_root(&app.state::<crate::state::SharedState>().app_data_dir)
 }
 
 // Resource management is available independently of the recognition service.

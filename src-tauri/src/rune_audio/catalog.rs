@@ -20,7 +20,7 @@ pub enum TelemetryMarker {
     Hostile,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocationKind {
     Town,
@@ -61,6 +61,22 @@ pub struct ResolvedLocation {
     pub scene_name: String,
     pub scene_name_en: String,
     pub kind: LocationKind,
+}
+
+/// OCR identifies a named scene, not an individual game Area Id. Several game
+/// areas can intentionally share this identity (the seven tombs, both sewers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedLocation {
+    pub scene_name: String,
+    pub scene_name_en: String,
+    pub kind: LocationKind,
+}
+
+pub fn scene_name_identity(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// Locations with localized product behavior. Every other valid Area Id is
@@ -172,6 +188,25 @@ pub struct LocationCatalog {
 }
 
 impl LocationCatalog {
+    /// Adapt the legacy directory at the boundary. No Area Id or area-specific
+    /// scene key is carried into OCR, matching, or visual timing.
+    pub fn named_locations(&self) -> Vec<NamedLocation> {
+        let mut names: Vec<_> = (1..=MAX_AREA_ID)
+            .filter(|id| self.has_name(*id))
+            .filter_map(|area_id| self.resolve(TelemetryMarker::Area { area_id }))
+            .map(|location| NamedLocation {
+                scene_name: location.scene_name,
+                scene_name_en: location.scene_name_en,
+                kind: location.kind,
+            })
+            .collect();
+        names.sort_by(|a, b| {
+            (&a.scene_name, &a.scene_name_en).cmp(&(&b.scene_name, &b.scene_name_en))
+        });
+        names.dedup();
+        names
+    }
+
     pub fn has_name(&self, area_id: u32) -> bool {
         self.areas.contains_key(&area_id)
             || location_definition(TelemetryMarker::Area { area_id }).is_some()

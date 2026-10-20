@@ -8,6 +8,12 @@ import {
 } from "./featureContract";
 
 describe("audio feature group truth", () => {
+  it("only sends default-Hell preferences when processing room tools", () => {
+    const selection = { includeAudioTelemetry: false, includeRoomTools: true, includeAutoExitOnDeath: false, roomToolsDefaultHell: false };
+    expect(audioModFeatureInvokeOptions(selection).roomToolsDefaultHell).toBe(false);
+    expect(audioModFeatureInvokeOptions({ ...selection, includeRoomTools: false }).roomToolsDefaultHell).toBeUndefined();
+    expect(hasSelectedAudioModFeature({ ...selection, includeRoomTools: false })).toBe(false);
+  });
   it("supports scene restart independently and forwards the opt-in", () => {
     const selection = { includeAudioTelemetry: false, includeRoomTools: false, includeAutoExitOnDeath: false, includeSceneShortcuts: true };
     expect(hasSelectedAudioModFeature(selection)).toBe(true);

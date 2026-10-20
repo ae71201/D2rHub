@@ -15,7 +15,7 @@ interface Config {
   area_enabled: boolean; area_roi: Roi; drops_enabled: boolean; drops_enforce: boolean;
   labels_visible: boolean; drop_threshold: number;
 }
-interface Preview { image_url: string; mask_url: string; tz_image_url?: string | null; candidate_lines: number; line_analysis: Array<{matched: boolean; crosses: number; reason: string}> }
+interface Preview { image_url: string; mask_url: string; tz_image_url?: string | null; candidate_lines: number; line_analysis: Array<{matched: boolean; marker_runs: number; reason: string}> }
 interface Snapshot { generation: number; config: Config }
 interface Status { running: boolean; ready: boolean; message: string; checked: number; matched: number; rejected: number; unavailable: number }
 
@@ -108,7 +108,7 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
           <div className="feature-setting-row feature-account"><div><strong>{en ? "Listening account" : "接收信号的账号"}</strong><p>{en ? "Shared follower listens to the primary account. The primary and followers join using the local room rule." : "拼房跟随监听本机主号聊天框，主号与小号按本机规则一起加入。"}</p></div>
             <span className="feature-listening-account">{accounts.find(account => account.id === primaryAccountId)?.display_name || primaryAccountId || (en ? "Choose a primary account" : "请先配置主号")}</span>
           </div>
-          <p className="feature-note">{en ? "Signal: + + 501 + +. Detect spaced plus pairs on both sides, then OCR the numeric center for deduplication only. Successful reads pause OCR for 5 seconds; unchanged masks are cached. Update both computers and synchronize room rules yourself." : "信号示例：+ + 501 + +。先检测左右两侧的加号对，再 OCR 中间的数字后缀，仅用于持久去重，仍按本机规则跟房。读取成功后冷却 5 秒，已识别且掩膜未变化时跳过 OCR。两端需更新并自行同步规则。"}</p>
+          <p className="feature-note">{en ? "Signal: *********** 077 ***********, sent three times. Detect repeated symbols on both sides, then OCR only the numeric center for deduplication. Successful reads pause OCR for 5 seconds; unchanged masks are cached. Update both computers and synchronize room rules yourself." : "信号示例：*********** 077 ***********，主机连发三条。宽松检测两侧连续符号，再仅 OCR 中间数字用于持久去重，仍按本机规则跟房。读取成功后冷却 5 秒，已识别且掩膜未变化时跳过 OCR。两端需更新并自行同步规则。"}</p>
         </> : <>
           {toggle("area_enabled", en ? "Recognize scenes and time runs" : "场景识别与计时", en ? "OCR alone identifies scenes and starts, splits or stops run timers. Red entry text and purple Terror Zone text are read separately every second." : "仅通过 OCR 识别场景并开始、切换或停止计时；每秒检查红字地区名和下方紫色 TZ 文字，分行用原图识别。")}
           <p className="feature-help">{en ? "Turning scene OCR off disables automatic scene timing and drop attribution." : "关闭场景 OCR 后，不再自动识别地点、切换计时或确定掉落归属。"}</p>
@@ -123,7 +123,7 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
         </>}
         <details className="feature-disclosure"><summary><Settings2 size={14} aria-hidden="true" />{en ? "Capture and timing" : "截图与识别参数"}<ChevronDown size={14} className="feature-chevron" aria-hidden="true" /></summary><div className="feature-disclosure-body">
           {mode === "chat" && <div className="feature-field-row"><label htmlFor="vision-poll">{en ? "Check interval" : "检查间隔"}</label><div className="feature-unit-input"><input id="vision-poll" className="settings-input" type="number" min="1000" max="10000" step="500" value={draft.poll_ms} disabled={busy} onChange={e => { if (Number.isFinite(e.target.valueAsNumber)) update({ poll_ms: e.target.valueAsNumber }); }} onBlur={() => { if (dirty) void save(draft); }} /><span>ms</span></div></div>}
-          <p className="feature-help">{mode === "chat" ? (en ? "Include both plus pairs and the numeric center on the same line." : "范围应覆盖同一行的左右加号和中间数字。") : (en ? "Include the red entry title and purple Terror Zone line below it; a 9% height is recommended. Drops use a separate capture." : "范围应覆盖红字地区名及下方紫色恐怖／恐惧区域文字，高度建议 9%；掉落使用独立截图。")}</p>
+          <p className="feature-help">{mode === "chat" ? (en ? "Include both star groups and the numeric center on the same line." : "范围应覆盖同一行的左右星号串和中间数字。") : (en ? "Include the red entry title and purple Terror Zone line below it; a 9% height is recommended. Drops use a separate capture." : "范围应覆盖红字地区名及下方紫色恐怖／恐惧区域文字，高度建议 9%；掉落使用独立截图。")}</p>
           {roi(mode === "chat" ? "chat_roi" : "area_roi")}
           <Button size="sm" disabled={busy || (mode === "chat" && !primaryAccountId)} onClick={async () => {
             setBusy(true); setPreviewing(true); setError("");
@@ -134,7 +134,7 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
             <figure className="feature-preview"><img src={preview.image_url} alt={en ? "Current capture region" : "当前截图区域"} onError={() => setError(en ? "Preview image could not load. Restart the updated app and retry capture." : "预览图片加载失败，请重启更新后的软件并重新截图。")} /><figcaption>{en ? "Current capture · local preview" : "当前截图 · 仅本机预览"}</figcaption></figure>
             <figure className="feature-preview"><img src={preview.mask_url} alt={mode === "chat" ? (en ? "Color mask" : "颜色掩膜") : (en ? "Original OCR crop" : "OCR 原图裁片")} /><figcaption>{mode === "chat" ? (en ? "Color mask · candidate lines" : "颜色掩膜 · 候选行") : (en ? "Original OCR crop · red-text candidates" : "OCR 原图裁片 · 红字候选")}：{preview.candidate_lines}</figcaption></figure>
             {mode === "audio" && preview.tz_image_url && <figure className="feature-preview"><img src={preview.tz_image_url} alt={en ? "Terror Zone OCR crop" : "TZ 原图裁片"} /><figcaption>{en ? "Terror Zone original OCR crop" : "恐怖／恐惧区域 · OCR 原图裁片"}</figcaption></figure>}
-            {mode === "chat" && <p className="feature-help">{en ? "Signal" : "信号"}：{preview.line_analysis.some(line => line.matched) ? (en ? "Detected" : "加号特征已检测到（后缀由运行时 OCR 读取）") : (en ? "Not detected" : "未检测到")} · {preview.line_analysis.map((line,i) => `${i+1}: ${line.crosses} (${({marker: "加号特征匹配",too_few_crosses: "两侧加号不足4个",alignment_or_shape: "尺寸或同行排列不符",pair_spacing: "两侧加号间距不符"} as Record<string,string>)[line.reason] ?? line.reason})`).join("; ")}</p>}
+            {mode === "chat" && <p className="feature-help">{en ? "Signal" : "信号"}：{preview.line_analysis.some(line => line.matched) ? (en ? "Detected" : "星号串特征已检测到（数字由运行时 OCR 读取）") : (en ? "Not detected" : "未检测到")} · {preview.line_analysis.map((line,i) => `${i+1}: ${line.marker_runs} (${({marker: "星号串布局匹配",too_few_marker_trains: "未找到两侧连续符号",no_numeric_center: "未找到符号包围的数字区域"} as Record<string,string>)[line.reason] ?? line.reason})`).join("; ")}</p>}
           </>}
         </div></details>
         <details className="feature-disclosure"><summary><Bug size={14} aria-hidden="true" />{en ? "Diagnostics and resources" : "诊断与资源"}<ChevronDown size={14} className="feature-chevron" aria-hidden="true" /></summary><div className="feature-disclosure-body">

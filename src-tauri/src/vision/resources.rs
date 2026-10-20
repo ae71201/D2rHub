@@ -12,6 +12,11 @@ const ONLINE: &str =
 static PREPARATION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static PACKAGE: parking_lot::Mutex<Option<PackageStatus>> = parking_lot::Mutex::new(None);
 
+pub(super) fn resource_root(app_data_dir: &str) -> PathBuf {
+    // Explorer needs native separators even though filesystem APIs accept mixed ones.
+    Path::new(app_data_dir).join("resources").join("vision")
+}
+
 #[derive(Clone, Serialize)]
 pub struct PackageStatus {
     pub ready: bool,
@@ -476,6 +481,17 @@ async fn ensure_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn resource_directory_uses_native_separators_for_explorer() {
+        let root = resource_root(r"C:\Users\测试 用户\AppData\Roaming\D2RHub");
+        // Compare the actual argument, since Path equality also accepts forward slashes.
+        assert_eq!(
+            root.as_os_str(),
+            std::ffi::OsStr::new(r"C:\Users\测试 用户\AppData\Roaming\D2RHub\resources\vision")
+        );
+    }
 
     fn pinned() -> Manifest {
         serde_json::from_str(include_str!("../../../resources/vision-resources-v1.json")).unwrap()

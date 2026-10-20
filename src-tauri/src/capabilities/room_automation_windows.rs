@@ -198,27 +198,24 @@ pub(crate) fn prepare_background_room(
     if !config.join_only
         && config.collaboration_mode == crate::domain::room_automation::CollaborationMode::Host
     {
-        input.key_down(VK_RETURN)?;
-        wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
-        input.release_last()?;
-        wait(cancel, Duration::from_millis(200))?;
-        paste_group(
-            &mut input,
-            &[],
-            &crate::vision::processing::chat_signal(
-                room_name
-                    .strip_prefix(&config.name_prefix)
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .ok_or("聊天信号房间序号无效")?,
-            ),
-            flow,
-            cancel,
-            "chat.signal",
-        )?;
-        input.key_down(VK_RETURN)?;
-        wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
-        input.release_last()?;
-        wait(cancel, Duration::from_millis(300))?;
+        let signal = crate::vision::processing::chat_signal(
+            room_name
+                .strip_prefix(&config.name_prefix)
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or("聊天信号房间序号无效")?,
+        );
+        for _ in 0..3 {
+            cancel.check()?;
+            input.key_down(VK_RETURN)?;
+            wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
+            input.release_last()?;
+            wait(cancel, Duration::from_millis(50))?;
+            paste_group(&mut input, &[], &signal, flow, cancel, "chat.signal")?;
+            input.key_down(VK_RETURN)?;
+            wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
+            input.release_last()?;
+            wait(cancel, Duration::from_millis(50))?;
+        }
     }
     let forms = PREPARED_FORMS.get_or_init(|| Mutex::new(HashMap::new()));
     let passwords = ENTERED_PASSWORDS.get_or_init(|| Mutex::new(HashMap::new()));

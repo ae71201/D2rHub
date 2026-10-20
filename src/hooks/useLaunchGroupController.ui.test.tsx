@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useLaunchGroupController } from "./useLaunchGroupController";
 import { useAccounts } from "../store/accounts";
@@ -6,17 +6,15 @@ import { useGlobalConfig } from "../store/globalConfig";
 import { useLaunch } from "../store/launch";
 import type { AccountMeta, GlobalConfig, LaunchGroup, SchemeEnvironment } from "../store/types";
 import { invokeCommand } from "../platform/tauri";
+import { LaunchGroupEditor } from "../components/dashboard/LaunchGroupEditor";
 
 vi.mock("../platform/tauri", () => ({ invokeCommand: vi.fn(), listenEvent: vi.fn(), emitEvent: vi.fn() }));
 vi.mock("../components/ui/Toast", () => ({ showToast: vi.fn() }));
 
 const environment: SchemeEnvironment = {
-  settings: { rune_audio_enabled: false, rune_audio_target_account: "", rune_audio_external_target: null,
-    rune_audio_tracked_categories: ["runes"], enable_stats_overlay: false, enable_tz_overlay: false, auto_close_browser: false },
-  room: { enabled: false, primary_account_id: "", follower_account_ids: [], auto_followers_enabled: false,
-    auto_followers_delay_secs: 3, shortcut: "F9", join_shortcut: "F10", name_prefix: "run", password: "",
-    next_sequence: 1, sequence_width: 3, background_text_strategy: "post_keys", strategy_version: 26,
-    flow: { step_delay_ms: 50, character_delay_ms: 50 } },
+  schema_version: 2,
+  settings: { rune_audio_target_account: "", keep_battle_net_account_id: null },
+  room: { primary_account_id: "", follower_account_ids: [] },
   layout: null,
 };
 const accounts = ["a", "b"].map((id, order) => ({ id, display_name: id, initialized: true, order, region: "KR", auth_mode: "token", mod_args: "", position_presets: [] })) as unknown as AccountMeta[];
@@ -43,9 +41,9 @@ describe("independent launch scheme drafts", () => {
     const before = structuredClone(useGlobalConfig.getState().config);
     const { result } = renderHook(() => useLaunchGroupController());
     await act(async () => result.current.edit(scheme));
-    act(() => result.current.updateEnvironment(env => { env.room.password = "draft"; env.settings.rune_audio_tracked_categories.push("gems"); }));
+    act(() => result.current.updateEnvironment(env => { env.room.primary_account_id = "a"; env.settings.rune_audio_target_account = "b"; }));
     act(() => result.current.updateMember("a", { fps: 144 }));
-    expect(environment.room.password).toBe("");
+    expect(environment.room.primary_account_id).toBe("");
     expect(useGlobalConfig.getState().config).toEqual(before);
     act(() => result.current.cancelDraft());
     expect(result.current.draft).toBeNull();
@@ -62,18 +60,18 @@ describe("independent launch scheme drafts", () => {
     expect(useGlobalConfig.getState().config?.launch_groups[0]).toEqual(scheme);
   });
 
-  it("copies game settings when adding an account and keeps a duplicate independent", async () => {
+  it("inherits account game settings when adding an account and keeps a duplicate independent", async () => {
     const { result } = renderHook(() => useLaunchGroupController());
     await act(async () => result.current.create());
     act(() => result.current.toggleAccount("a"));
     await waitFor(() => expect(result.current.draft?.members[0].snapshot).toBeTruthy());
-    expect(result.current.draft?.members[0]).toMatchObject({ resolution: "1920x1080", fps: 60, snapshot: { game_settings: { Quality: 3 } } });
+    expect(result.current.draft?.members[0]).toMatchObject({ resolution: "1920x1080", fps: 60, snapshot: { game_settings: {} } });
     await act(async () => result.current.edit(scheme));
     act(() => result.current.duplicate());
     expect(result.current.draft?.id).toBeNull();
     expect(result.current.draft?.revision).toBeNull();
-    act(() => result.current.updateEnvironment(env => { env.room.next_sequence = 42; }));
-    expect(scheme.environment?.room.next_sequence).toBe(1);
+    act(() => result.current.updateEnvironment(env => { env.room.primary_account_id = "a"; }));
+    expect(scheme.environment?.room.primary_account_id).toBe("");
   });
 
   it("launches by saved identity and never projects settings from the frontend", () => {
@@ -87,7 +85,43 @@ describe("independent launch scheme drafts", () => {
     const { result } = renderHook(() => useLaunchGroupController());
     await act(async () => result.current.launch({ ...scheme, environment: null }));
     expect(useLaunch.getState().startSavedScheme).not.toHaveBeenCalled();
-    expect(result.current.draft?.environment.room.enabled).toBe(false);
+    expect(result.current.draft?.environment.room.follower_account_ids).toEqual([]);
     expect(mutatingCalls()).toEqual([]);
+  });
+
+  it("clears role references when removing an account without touching public settings", async () => {
+    const { result } = renderHook(() => useLaunchGroupController());
+    await act(async () => result.current.edit(scheme));
+    act(() => result.current.updateEnvironment(env => {
+      env.room.primary_account_id = "a";
+      env.settings.rune_audio_target_account = "a";
+      env.settings.keep_battle_net_account_id = "a";
+    }));
+    act(() => result.current.toggleAccount("a"));
+    expect(result.current.draft?.environment).toMatchObject({ room: { primary_account_id: "", follower_account_ids: [] },
+      settings: { rune_audio_target_account: "", keep_battle_net_account_id: null } });
+    expect(mutatingCalls()).toEqual([]);
+  });
+
+  it("shows account-only room and recognition controls and links to shared settings", async () => {
+    const { result } = renderHook(() => useLaunchGroupController());
+    await act(async () => result.current.edit(scheme));
+    const openSettings = vi.fn();
+    const view = render(<LaunchGroupEditor launchGroups={result.current} onOpenSettings={openSettings} />);
+    fireEvent.click(screen.getByRole("button", { name: "跟房" }));
+    expect(screen.getByLabelText("主号")).toBeTruthy();
+    expect(screen.queryByLabelText("启用自动跟房")).toBeNull();
+    expect(screen.queryByLabelText("房名前缀")).toBeNull();
+    expect(screen.queryByText("快捷键与输入时序")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "前往公共跟房设置" }));
+    expect(openSettings).toHaveBeenCalledWith("room-automation");
+    fireEvent.click(screen.getByRole("button", { name: "识别" }));
+    expect(screen.getByLabelText("识别账号")).toBeTruthy();
+    expect(screen.queryByLabelText("启用识别")).toBeNull();
+    expect(screen.queryByText("记录内容")).toBeNull();
+    expect(screen.queryByLabelText("统计悬浮窗")).toBeNull();
+    view.rerender(<LaunchGroupEditor launchGroups={result.current} onOpenSettings={openSettings} hidden />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(result.current.draft).toBeTruthy();
   });
 });

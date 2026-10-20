@@ -1335,6 +1335,7 @@ mod tests {
                 feature_groups: Vec::new(),
                 audio_reusable: false,
                 auto_exit_on_death_enabled: false,
+                room_tools_default_hell: true,
             },
             default_arguments: "-mod Sample -txt -assettestmode 1".to_string(),
             lightweight_profile: None,

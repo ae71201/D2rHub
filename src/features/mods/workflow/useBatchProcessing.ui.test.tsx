@@ -12,6 +12,18 @@ const features = { includeAudioTelemetry: false, includeRoomTools: true, include
 beforeEach(() => { vi.mocked(invokeCommand).mockReset(); vi.mocked(listenEvent).mockReset().mockResolvedValue(() => {}); });
 
 describe("batch processing", () => {
+  it("applies room processing choices and preserves them during rebuilds", () => {
+    const tools = { ...plain("Tools"), feature_groups: ["in_game_room_tools"], room_tools_default_hell: false };
+    const rebuild = batchPlan([tools], ["Tools"], "rebuild", features, {}, false)[0];
+    expect(rebuild.features.roomToolsDefaultHell).toBe(false);
+    const updated = batchPlan([tools], ["Tools"], "augment", { ...features, roomToolsDefaultHell: true }, {}, false)[0];
+    expect(updated.state).toBe("pending");
+    expect(updated.features.roomToolsDefaultHell).toBe(true);
+    const disabled = batchPlan([plain("Plain")], ["Plain"], "create", { ...features, roomToolsDefaultHell: false }, {}, false)[0];
+    expect(disabled.features.roomToolsDefaultHell).toBe(false);
+    const inherited = batchPlan([tools], ["Tools"], "augment", { ...features, includeRoomTools: false, includePartyLoot: true }, {}, false)[0];
+    expect(inherited.features.roomToolsDefaultHell).toBe(false);
+  });
   it("processes raw sources under their own names with explicit backups", async () => {
     vi.mocked(invokeCommand).mockResolvedValue(state as never);
     const { result } = renderHook(() => useBatchProcessing([testAccount], testCatalog(), { current: false }, false));

@@ -7,6 +7,7 @@ mod generator;
 mod modification;
 mod rebuild;
 mod replacement;
+mod room_tool_options;
 mod source_replace;
 mod validation;
 
@@ -45,6 +46,7 @@ pub struct InstalledMod {
     pub feature_groups: Vec<String>,
     pub audio_reusable: bool,
     pub auto_exit_on_death_enabled: bool,
+    pub room_tools_default_hell: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -533,6 +535,7 @@ pub async fn prepare_audio_mod(
     replace_source: Option<bool>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
     include_scene_shortcuts: Option<bool>,
     include_party_loot: Option<bool>,
@@ -550,6 +553,7 @@ pub async fn prepare_audio_mod(
             replace_source,
             include_audio_telemetry,
             include_room_tools,
+            room_tools_default_hell,
             include_esc_next_game,
             include_scene_shortcuts,
             include_party_loot,
@@ -575,6 +579,7 @@ async fn prepare_audio_mod_task(
         replace_source,
         include_audio_telemetry,
         include_room_tools,
+        room_tools_default_hell,
         include_esc_next_game,
         include_scene_shortcuts,
         include_party_loot,
@@ -592,6 +597,7 @@ async fn prepare_audio_mod_task(
         replace_source,
         include_audio_telemetry,
         include_room_tools,
+        room_tools_default_hell,
         include_esc_next_game,
         include_scene_shortcuts,
         include_party_loot,
@@ -622,6 +628,7 @@ async fn prepare_audio_mod_task(
             replace_source,
             include_audio_telemetry,
             include_room_tools,
+            room_tools_default_hell,
             include_esc_next_game,
             include_scene_shortcuts,
             include_party_loot,
@@ -653,6 +660,7 @@ struct PrepareAudioModRequest {
     replace_source: Option<bool>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
     include_scene_shortcuts: Option<bool>,
     include_party_loot: Option<bool>,
@@ -674,6 +682,7 @@ async fn prepare_audio_mod_impl(
         replace_source,
         include_audio_telemetry,
         include_room_tools,
+        room_tools_default_hell,
         include_esc_next_game,
         include_scene_shortcuts,
         include_party_loot,
@@ -759,6 +768,14 @@ async fn prepare_audio_mod_impl(
         },
     )
     .await?;
+    let default_hell = room_tools_default_hell.unwrap_or(
+        source_directory
+            .as_deref()
+            .map(room_tool_options::default_hell)
+            .transpose()?
+            .unwrap_or(true),
+    );
+    room_tool_options::configure(output_directory, &mod_name, default_hell)?;
     let mut generated = validate_generator_output(
         output_directory,
         &mod_name,
@@ -832,6 +849,7 @@ pub async fn upgrade_audio_mod(
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
     include_scene_shortcuts: Option<bool>,
     include_party_loot: Option<bool>,
@@ -850,6 +868,7 @@ pub async fn upgrade_audio_mod(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            room_tools_default_hell,
             include_esc_next_game,
             include_scene_shortcuts,
             include_party_loot,
@@ -875,6 +894,7 @@ async fn upgrade_audio_mod_task(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        room_tools_default_hell,
         include_esc_next_game,
         include_scene_shortcuts,
         include_party_loot,
@@ -892,6 +912,7 @@ async fn upgrade_audio_mod_task(
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
         include_room_tools,
+        room_tools_default_hell,
         include_esc_next_game,
         include_scene_shortcuts,
         include_party_loot,
@@ -922,6 +943,7 @@ async fn upgrade_audio_mod_task(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            room_tools_default_hell,
             include_esc_next_game,
             include_scene_shortcuts,
             include_party_loot,
@@ -959,6 +981,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         replace_source: Option<bool>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
+        room_tools_default_hell: Option<bool>,
         include_esc_next_game: Option<bool>,
         include_scene_shortcuts: Option<bool>,
         include_party_loot: Option<bool>,
@@ -973,6 +996,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
+        room_tools_default_hell: Option<bool>,
         include_esc_next_game: Option<bool>,
         include_scene_shortcuts: Option<bool>,
         include_party_loot: Option<bool>,
@@ -1010,6 +1034,7 @@ struct UpgradeAudioModRequest {
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
     include_scene_shortcuts: Option<bool>,
     include_party_loot: Option<bool>,
@@ -1031,6 +1056,7 @@ async fn upgrade_audio_mod_impl(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        room_tools_default_hell,
         include_esc_next_game,
         include_scene_shortcuts,
         include_party_loot,
@@ -1105,7 +1131,12 @@ async fn upgrade_audio_mod_impl(
     } else {
         current_validated.as_ref().unwrap().feature_groups.clone()
     };
+    let default_hell =
+        room_tools_default_hell.unwrap_or(room_tool_options::default_hell(&old_directory)?);
+    let room_options_changed = requested_features.room_tools
+        && default_hell != room_tool_options::default_hell(&old_directory)?;
     if !rebuilding
+        && !room_options_changed
         && current_validated
             .as_ref()
             .is_some_and(|v| requested_features.all_present(&v.feature_groups))
@@ -1157,6 +1188,7 @@ async fn upgrade_audio_mod_impl(
         },
     )
     .await?;
+    room_tool_options::configure(temporary_output.path(), mod_name, default_hell)?;
     let generated = validate_generator_output(
         temporary_output.path(),
         mod_name,

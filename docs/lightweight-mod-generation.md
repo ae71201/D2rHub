@@ -17,3 +17,7 @@ LiteHub、BoHub、NullHub 直接制作、验证并发布成品。用户从“设
 加工兼容性回归：设置 `D2RHUB_MOD_PROCESSOR` 为独立加工器 EXE，`D2RHUB_LIGHTWEIGHT_GAME_ROOT` 为游戏目录，`D2RHUB_MOD_PRODUCTS_ROOT` 为包含 LiteHub、BoHub、NullHub 成品的父目录，再运行 `cargo test --manifest-path src-tauri/Cargo.toml lightweight_all_processing_combinations --lib -- --ignored --nocapture`。测试直接读取现有成品作为来源，覆盖三个方案各 15 种功能组合及逐步增补、重复加工，不再调用生成命令。结果写入 `artifacts/lightweight-processing-<UUID>`，原成品保持不变。
 
 矩阵通过后，将 `D2RHUB_PROCESSING_TEST_RESUME` 设置为结果目录，运行 `cargo test --manifest-path src-tauri/Cargo.toml lightweight_processed_same_name_replacement --lib -- --ignored --nocapture`，验证已加工成品的同名更新事务。测试不启动游戏或修改账号，游戏内效果仍需实机验证。
+
+房间工具加工时可设置其子选项“创建房间默认地狱”，默认开启。关闭后，Hub 在安装前移除局内创建表单中的 `D2RHubDefaultHell` 初始化定时器，保留手动选择难度、创建与加入的原生流程。单个加工与批量加工使用相同选项；已有成品可以只修改此项，再校验并更新。
+
+选项以布尔字段 `room_tools_default_hell` 写入加工清单，旧清单未记录时按开启处理。创建副本继承来源的选择，更新与重做保留已有选择；批量添加房间工具时采用本批次设置，批量模块更新保留各成品自身设置。布局校验同时核对清单和定时器状态，关闭状态若残留初始化定时器会被拒绝。

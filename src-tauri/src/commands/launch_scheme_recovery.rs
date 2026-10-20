@@ -126,24 +126,8 @@ pub(crate) fn recover_processes(
         }
     }
     if restored == 0 {
-        let controller =
-            crate::capabilities::room_automation_config::RoomAutomationConfigController::new(
-                &state.app_data_dir,
-            )
-            .map_err(|error| AppError::ConfigReadError(error.to_string()))?;
-        let snapshot = controller
-            .load_or_initialize(None, &[])
-            .map_err(|error| AppError::ConfigReadError(error.to_string()))?;
-        if snapshot.config.enabled {
-            let mut disabled = snapshot.config;
-            disabled.enabled = false;
-            controller
-                .save(snapshot.generation, disabled, &[])
-                .map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
-        }
         crate::commands::global_config::mutate_loaded_global_config(state, app, |config| {
             config.launch_session = None;
-            config.rune_audio_enabled = false;
             Ok(true)
         })?;
     }

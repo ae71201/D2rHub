@@ -10,6 +10,30 @@ vi.mock("../../../platform/tauri", () => ({ invokeCommand: vi.fn(async () => ({ 
 afterEach(cleanup);
 
 describe("ModProcessingPanel", () => {
+  it("offers default Hell as an editable room-tool option and preserves saved choices", async () => {
+    const workflow = workflowFixture();
+    const view = render(<ModProcessingPanel workflow={workflow} />);
+    const option = screen.getByRole("checkbox", { name: "创建房间默认地狱" }) as HTMLInputElement;
+    expect(option.checked).toBe(true);
+    expect(option.disabled).toBe(false);
+    await userEvent.click(option);
+    expect(workflow.actions.changeFeatures).toHaveBeenCalledWith({ roomToolsDefaultHell: false });
+    const state = { ...modState, installed_mods: [{ ...modState.installed_mods[0], room_tools_default_hell: false }] };
+    const saved = workflowFixture({ state, draft: { recipe: { kind: "augment", modName: "MyExistingMod" } } });
+    view.rerender(<ModProcessingPanel workflow={saved} />);
+    expect(option.checked).toBe(false);
+    const changed = workflowFixture({ state, draft: { recipe: { kind: "augment", modName: "MyExistingMod" },
+      features: { ...initialModFeatures("recognition"), roomToolsDefaultHell: true } } });
+    expect(changed.blockedReason).toBe("");
+    view.rerender(<ModProcessingPanel workflow={changed} />);
+    expect((screen.getByRole("button", { name: "校验并更新" }) as HTMLButtonElement).disabled).toBe(false);
+    view.rerender(<ModProcessingPanel workflow={{ ...changed, busy: true }} />);
+    expect(option.disabled).toBe(true);
+    view.rerender(<ModProcessingPanel workflow={workflowFixture({ draft: {
+      recipe: { kind: "create", source: null, name: "AudioOnly" },
+    } })} />);
+    expect(screen.queryByRole("checkbox", { name: "创建房间默认地狱" })).toBeNull();
+  });
   it("offers native loot buttons and same-name processing with retained backups", async () => {
     const workflow = workflowFixture({ draft: { recipe: { kind: "create", source: "MyExistingMod", name: "Unused", replaceSource: true } } });
     render(<ModProcessingPanel workflow={workflow} />);
