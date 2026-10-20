@@ -339,8 +339,9 @@ fn normalize_online_catalog(mut catalog: Catalog) -> Result<Catalog, String> {
         // A future or malformed range must not become compatible by rewriting it.
         let known_pairing_range = catalog.hub_min == "0.9.111"
             && catalog.hub_max_exclusive == "0.9.112"
-            // These releases bundle beta.21 and validate the same Mod protocols.
-            && matches!(env!("CARGO_PKG_VERSION"), "0.9.112" | "0.9.113" | "0.9.114");
+            // These releases accept the same three unprocessed Mod archives.
+            // The retired processor entry is never carried across.
+            && matches!(env!("CARGO_PKG_VERSION"), "0.9.112" | "0.9.113" | "0.9.114" | "0.9.115");
         if !known_pairing_range
             && !crate::downloads::compatible(&catalog.hub_min, &catalog.hub_max_exclusive)
         {
