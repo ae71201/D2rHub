@@ -239,7 +239,7 @@ fn rgba_to_rgb(raw: &[u8], pitch: usize, width: u32, height: u32) -> Result<RgbI
     }
     let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
     for row in raw.chunks(pitch).take(height as usize) {
-        for pixel in row[..width as usize * 4].chunks_exact(4) {
+        for pixel in row[..width as usize * 4].as_chunks::<4>().0 {
             rgb.extend_from_slice(&pixel[..3]);
         }
     }
