@@ -58,6 +58,7 @@ jobs:
           python scripts/test_release_workflow.py
           python scripts/test_release_platforms.py
           python scripts/test_publish_vision_resources.py
+          python scripts/test_generate_area_name_aliases.py
 
       - name: TypeScript check
         run: npm exec tsc -- --noEmit

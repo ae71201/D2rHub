@@ -1,7 +1,7 @@
 {
   "name": "d2rhub",
   "private": true,
-  "version": "0.9.116",
+  "version": "0.9.117",
   "description": "Windows multi-account manager and audio telemetry run tracker for Diablo II: Resurrected",
   "license": "MIT",
   "repository": {
@@ -15,7 +15,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "check": "tsc --noEmit && npm test && npm run check:guide && npm run test:publisher",
+    "check": "tsc --noEmit && npm test && npm run check:guide && npm run test:publisher && python scripts/test_generate_area_name_aliases.py",
     "build": "tsc && vite build",
     "package:mod-resources": "python scripts/release-workflow.py --target mods",
     "build:desktop": "tauri build",
