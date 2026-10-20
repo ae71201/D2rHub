@@ -6,7 +6,6 @@ import {
   AlertCircle,
   Copy,
   ClipboardPaste,
-  Check,
   ChevronDown,
   DoorOpen,
   LoaderCircle,
@@ -54,10 +53,7 @@ interface QuickEditCopy {
   password: string;
   passwordPlaceholder: string;
   fullSettings: string;
-  cancel: string;
-  save: string;
   saving: string;
-  saved: string;
   savedWithWarning: string;
   saveFailed: string;
   invalidRoomText: string;
@@ -78,10 +74,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     password: "房间密码",
     passwordPlaceholder: "无密码",
     fullSettings: "完整设置",
-    cancel: "取消",
-    save: "应用",
     saving: "应用中",
-    saved: "房间规则与拼房模式已更新",
     savedWithWarning: "房间规则与模式已保存，但运行配置未能立即应用",
     saveFailed: "无法更新下一局房间",
     invalidRoomText: "房名前缀不能为空；支持中文和可粘贴的特殊字符，不支持换行或控制字符。",
@@ -100,10 +93,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     password: "Room password",
     passwordPlaceholder: "No password",
     fullSettings: "Full settings",
-    cancel: "Cancel",
-    save: "Apply",
     saving: "Applying",
-    saved: "Room rule and collaboration mode updated",
     savedWithWarning: "Room rule and mode were saved, but the runtime could not apply them immediately",
     saveFailed: "Could not update the next room",
     invalidRoomText: "A room name prefix is required. Chinese and pasteable special characters are supported; line breaks and control characters are not.",
@@ -158,6 +148,14 @@ export function RoomAutomationQuickEdit({
   const openRef = useRef(false);
   const draftDirtyRef = useRef(false);
   const resetChatHistoryRef = useRef(false);
+  const draftRef = useRef<RoomNamingDraft | null>(null);
+  const editedFields = useRef(new Set<keyof RoomNamingDraft>());
+  const closingRef = useRef<Promise<boolean> | null>(null);
+  const pastePending = useRef<Promise<void> | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const mountedRef = useRef(true);
+  const flushRef = useRef<() => Promise<boolean>>(async () => true);
   const [snapshot, setSnapshot] = useState<RoomAutomationConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<RoomNamingDraft | null>(null);
   const [open, setOpen] = useState(false);
@@ -165,14 +163,18 @@ export function RoomAutomationQuickEdit({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    openRef.current = open;
-  }, [open]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      void flushRef.current();
+    };
+  }, []);
 
   useEffect(() => {
     if (!active) {
+      void flushRef.current();
       setSnapshot(null);
       setDraft(null);
-      draftDirtyRef.current = false;
       setOpen(false);
       return;
     }
@@ -184,12 +186,13 @@ export function RoomAutomationQuickEdit({
         setSnapshot((current) => !current || next.generation >= current.generation ? next : current);
         // Keep an untouched open popover live when the settings page commits
         // an edit. Once the user starts typing, preserve that local draft until
-        // it is explicitly applied or the editor is reopened.
-        if (!openRef.current || !draftDirtyRef.current) {
-          setDraft(namingDraft(next.config));
+        // it is saved when the editor closes.
+        if (!draftDirtyRef.current) {
+          draftRef.current = namingDraft(next.config);
+          setDraft(draftRef.current);
           draftDirtyRef.current = false;
         }
-        if (!next.config.enabled) setOpen(false);
+        if (!next.config.enabled) void flushRef.current();
       },
       onStatus: () => undefined,
     }).then((stop) => {
@@ -214,60 +217,87 @@ export function RoomAutomationQuickEdit({
     return `${draft.prefix}${String(nextSequence).padStart(previewWidth, "0")}`;
   }, [draft]);
 
-  if (!active || !snapshot?.config.enabled) return null;
-
   const updateDraft = (patch: Partial<RoomNamingDraft>) => {
-    setDraft((current) => current ? { ...current, ...patch } : current);
+    if (!draftRef.current) return;
+    draftRef.current = { ...draftRef.current, ...patch };
+    Object.keys(patch).forEach(key => editedFields.current.add(key as keyof RoomNamingDraft));
     draftDirtyRef.current = true;
-    setError(null);
+    if (mountedRef.current) { setDraft(draftRef.current); setError(null); }
   };
+
+  const closeEditor = (): Promise<boolean> => {
+    if (closingRef.current) return closingRef.current;
+    if (pastePending.current) return pastePending.current.then(() => flushRef.current());
+    const pending = draftRef.current;
+    if (!pending || !draftDirtyRef.current) {
+      openRef.current = false;
+      if (mountedRef.current) setOpen(false);
+      return Promise.resolve(true);
+    }
+    const fail = (message: string) => {
+      if (mountedRef.current && activeRef.current) { setError(message); setOpen(true); openRef.current = true; }
+      else showToast("error", message);
+      return false;
+    };
+    const invalid = validateDraft(pending, copy);
+    if (invalid) return Promise.resolve(fail(invalid));
+    const fields = new Set(editedFields.current);
+    const reset = resetChatHistoryRef.current;
+    if (mountedRef.current) { setSaving(true); setError(null); }
+    const task = (async () => {
+      try {
+        const latest = await roomAutomationGateway.getConfig();
+        // Preserve live sequence updates and settings this editor did not change.
+        const candidate: RoomAutomationConfig = { ...latest.config };
+        if (fields.has("collaborationMode")) candidate.collaboration_mode = pending.collaborationMode;
+        if (fields.has("prefix")) candidate.name_prefix = pending.prefix;
+        if (fields.has("password")) candidate.password = pending.password;
+        if (fields.has("nextSequence")) candidate.next_sequence = Number(pending.nextSequence);
+        if (fields.has("sequenceWidth")) candidate.sequence_width = Number(pending.sequenceWidth);
+        const mergedError = validateDraft(namingDraft(candidate), copy);
+        if (mergedError) return fail(mergedError);
+        const outcome = reset
+          ? await roomAutomationGateway.saveConfig(latest.generation, candidate, true)
+          : await roomAutomationGateway.saveConfig(latest.generation, candidate);
+        resetChatHistoryRef.current = false;
+        draftDirtyRef.current = false;
+        editedFields.current.clear();
+        draftRef.current = namingDraft(outcome.snapshot.config);
+        openRef.current = false;
+        if (mountedRef.current) {
+          setSnapshot(outcome.snapshot);
+          setDraft(draftRef.current);
+          setOpen(false);
+        }
+        if (outcome.apply_warning) showToast("warning", `${copy.savedWithWarning}: ${outcome.apply_warning}`);
+        return true;
+      } catch (saveError) {
+        return fail(`${copy.saveFailed}: ${errorMessage(saveError)}`);
+      } finally {
+        closingRef.current = null;
+        if (mountedRef.current) setSaving(false);
+      }
+    })();
+    closingRef.current = task;
+    return task;
+  };
+  flushRef.current = closeEditor;
 
   const openEditor = () => {
+    if (openRef.current) { void closeEditor(); return; }
+    if (!snapshot || closingRef.current) return;
+    if (draftDirtyRef.current) { openRef.current = true; setOpen(true); return; }
     setError(null);
     resetChatHistoryRef.current = false;
-    setDraft(namingDraft(snapshot.config));
+    editedFields.current.clear();
+    draftRef.current = namingDraft(snapshot.config);
+    setDraft(draftRef.current);
     draftDirtyRef.current = false;
-    setOpen((current) => !current);
+    openRef.current = true;
+    setOpen(true);
   };
 
-  const save = async () => {
-    if (!draft || saving) return;
-    const validationError = validateDraft(draft, copy);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const latest = await roomAutomationGateway.getConfig();
-      const candidate: RoomAutomationConfig = {
-        ...latest.config,
-        collaboration_mode: draft.collaborationMode,
-        name_prefix: draft.prefix,
-        password: draft.password,
-        next_sequence: Number(draft.nextSequence),
-        sequence_width: Number(draft.sequenceWidth),
-      };
-      const outcome = resetChatHistoryRef.current
-        ? await roomAutomationGateway.saveConfig(latest.generation, candidate, true)
-        : await roomAutomationGateway.saveConfig(latest.generation, candidate);
-      resetChatHistoryRef.current = false;
-      setSnapshot(outcome.snapshot);
-      setDraft(namingDraft(outcome.snapshot.config));
-      draftDirtyRef.current = false;
-      setOpen(false);
-      if (outcome.apply_warning) {
-        showToast("warning", `${copy.savedWithWarning}: ${outcome.apply_warning}`);
-      } else {
-        showToast("success", copy.saved);
-      }
-    } catch (saveError) {
-      setError(`${copy.saveFailed}: ${errorMessage(saveError)}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+  if (!active || !snapshot?.config.enabled) return null;
 
   return (
     <div className="room-automation-quick">
@@ -290,12 +320,12 @@ export function RoomAutomationQuickEdit({
 
       {draft && (
         <AnchoredPanel open={open} anchor={triggerRef} title={copy.title} width={420}
-          className="room-naming-panel" closeLabel={locale === "en-US" ? "Close" : "关闭"} onClose={() => { if (!saving) setOpen(false); }}>
+          className="room-naming-panel" closeLabel={locale === "en-US" ? "Close" : "关闭"} onClose={() => { void closeEditor(); }}>
         <form
           className="room-automation-quick-popover"
           onSubmit={(event) => {
             event.preventDefault();
-            void save();
+            void closeEditor();
           }}
         >
           <header className="room-automation-quick-header">
@@ -308,6 +338,7 @@ export function RoomAutomationQuickEdit({
             </div>
           </header>
 
+          <fieldset className="room-quick-edit-fields" disabled={saving}>
           <RoomCollaborationMode compact value={draft.collaborationMode} onChange={collaborationMode => updateDraft({ collaborationMode })} disabled={saving} en={locale === "en-US"} />
           <div className="room-quick-toolbar">
             <span>{locale === "en-US" ? "Room rule" : "房间规则"}</span>
@@ -322,12 +353,14 @@ export function RoomAutomationQuickEdit({
               } catch (e) { setError(errorMessage(e)); }
             }}><Copy size={13} aria-hidden="true" />{locale === "en-US" ? "Copy" : "复制"}</Button>
             <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={async () => {
+              let finishPaste!: () => void;
+              pastePending.current = new Promise(resolve => { finishPaste = resolve; });
               setSaving(true); setError(null);
               try {
                 const rule = parseRoomRule(await readText());
                 resetChatHistoryRef.current = true;
                 updateDraft({ prefix: rule.name_prefix, password: rule.password, nextSequence: String(rule.next_sequence), sequenceWidth: String(rule.sequence_width) });
-              } catch (e) { setError(errorMessage(e)); } finally { setSaving(false); }
+              } catch (e) { setError(errorMessage(e)); } finally { pastePending.current = null; finishPaste(); if (mountedRef.current) setSaving(false); }
             }}><ClipboardPaste size={13} aria-hidden="true" />{locale === "en-US" ? "Paste" : "粘贴"}</Button>
             </div>
           </div>
@@ -379,6 +412,7 @@ export function RoomAutomationQuickEdit({
             </label>
           </div>
 
+          </fieldset>
           {error && (
             <p className="room-automation-quick-error" role="alert">
               <AlertCircle size={13} aria-hidden="true" />
@@ -386,30 +420,16 @@ export function RoomAutomationQuickEdit({
             </p>
           )}
 
-          <p className="room-quick-save-hint">{locale === "en-US" ? "Apply to save this rule and mode." : "点击应用，保存规则与跟房模式。"}</p>
           <footer className="room-automation-quick-footer">
-            <button
-              type="button"
-              className="room-automation-quick-settings"
-              onClick={() => {
-                setOpen(false);
-                onOpenSettings();
-              }}
-            >
+            <span className="room-quick-save-status" role="status">
+              {saving && <LoaderCircle className="animate-spin" size={12} aria-hidden="true" />}
+              {saving ? copy.saving : locale === "en-US" ? "Saves when you leave" : "离开时自动保存"}
+            </span>
+            <button type="button" className="room-automation-quick-settings" disabled={saving}
+              onClick={async () => { if (await closeEditor()) onOpenSettings(); }}>
               <Settings2 size={12} strokeWidth={1.9} aria-hidden="true" />
               {copy.fullSettings}
             </button>
-            <div>
-              <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setOpen(false)}>
-                {copy.cancel}
-              </Button>
-              <Button type="submit" size="sm" variant="primary" disabled={saving}>
-                {saving
-                  ? <LoaderCircle className="animate-spin" size={12} aria-hidden="true" />
-                  : <Check size={12} strokeWidth={2} aria-hidden="true" />}
-                {saving ? copy.saving : copy.save}
-              </Button>
-            </div>
           </footer>
         </form>
         </AnchoredPanel>

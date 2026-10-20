@@ -50,7 +50,6 @@ const stepLabels: Record<string, string> = {
 };
 
 export interface GridItemProps {
-  dragHandle?: React.ReactNode;
   runtimeStatus?: Omit<AccountStatusLightProps, "name" | "running">;
   account: AccountMeta;
   onRename: (id: string, name: string) => Promise<boolean>;
@@ -176,7 +175,7 @@ export function AccountGridItem({
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
   modCapsuleLoading, modCapsuleError, onRequestModCapsules,
-  getPositionSchemeUsage, onUpdateToken, onReinitialize, config, runtimeStatus, dragHandle,
+  getPositionSchemeUsage, onUpdateToken, onReinitialize, config, runtimeStatus,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -652,9 +651,7 @@ export function AccountGridItem({
                   />
 
                 </>
-              ) : (
-                <>{dragHandle}</>
-              )}
+              ) : null}
             </div>
 
             <div className="title-mod-row">

@@ -111,6 +111,7 @@ export function RoomAutomationPanel({
   const copy = ROOM_AUTOMATION_COPY[locale];
   const eligibleAccounts = useMemo(() => accounts.filter((account) => account.initialized), [accounts]);
   const [snapshot, setSnapshot] = useState<RoomAutomationConfigSnapshot | null>(null);
+  const [section, setSection] = useState("room");
   const [draft, setDraft] = useState<RoomAutomationConfig | null>(null);
   const [status, setStatus] = useState<RoomAutomationWorkflowStatus | null>(null);
   const [ruleMessage, setRuleMessage] = useState("");
@@ -413,7 +414,7 @@ export function RoomAutomationPanel({
       ? copy.disabled
       : copy.ready;
   return (
-    <div className="room-automation-panel">
+    <div className="room-automation-panel settings-guided-page">
       <header className="spatial-panel room-automation-header">
         <div className="room-automation-header-main">
           <div className="min-w-0">
@@ -458,8 +459,10 @@ export function RoomAutomationPanel({
           </p>
         )}
       </header>
-      <RoomCollaborationMode value={draft.collaboration_mode} onChange={collaboration_mode => updateDraft(current => ({ ...current, collaboration_mode }))} disabled={editorDisabled} en={locale === "en-US"} />
-      <VisualRecognitionSettings mode="chat" language={language} accounts={eligibleAccounts} primaryAccountId={snapshot?.config.primary_account_id} collaborationMode={snapshot?.config.collaboration_mode} />
+      <nav className="settings-section-tabs" aria-label={locale === "en-US" ? "Room automation sections" : "跟房设置分页"}>
+        {[["room", locale === "en-US" ? "Room & actions" : "房间与操作"], ["accounts", locale === "en-US" ? "Accounts & Mods" : "参与账号"], ["advanced", locale === "en-US" ? "Advanced timing" : "高级时序"]].map(([id, label]) =>
+          <button type="button" key={id} aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}>{label}{id === "accounts" && <span className="settings-section-count"> {participantAccountIds.length}{(validation?.fieldErrors.primary || validation?.fieldErrors.followers || participantsMissingRoomTools.length > 0) && <span className="text-warning"> · {locale === "en-US" ? "Setup needed" : "待完善"}</span>}</span>}</button>)}
+      </nav>
 
       {(stale || operationError) && (
         <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">
@@ -474,7 +477,7 @@ export function RoomAutomationPanel({
         </div>
       )}
 
-      <div className="room-automation-setup">
+      <div className="room-automation-setup settings-section-body" hidden={section !== "accounts"}>
       <section className="spatial-panel room-automation-pane room-automation-section" aria-labelledby="room-participants-title">
         <div className="room-automation-section-heading">
           <UsersRound size={16} aria-hidden="true" />
@@ -511,7 +514,7 @@ export function RoomAutomationPanel({
             <fieldset className="room-automation-followers" disabled={editorDisabled}>
               <legend>{copy.followers}</legend>
               <div className="room-automation-followers-toolbar">
-                <span>{copy.followersSelected(draft.follower_account_ids.length)}</span>
+                <span>{locale === "en-US" ? "Followers" : "跟随"} · {copy.followersSelected(draft.follower_account_ids.length)}</span>
                 <div>
                   <Button size="sm" variant="ghost"
                     disabled={eligibleAccounts.every((account) => account.id === draft.primary_account_id
@@ -664,11 +667,61 @@ export function RoomAutomationPanel({
         )}
       </section>
 
+      </div>
+      <div className="settings-section-body room-daily-settings" hidden={section !== "room"}>
+        <button type="button" className="settings-context-link" onClick={() => setSection("accounts")}>
+          <UsersRound size={14} aria-hidden="true" /><span>{locale === "en-US" ? "Primary" : "主号"} · {eligibleAccounts.find(account => account.id === draft.primary_account_id)?.display_name || draft.primary_account_id || (locale === "en-US" ? "Choose an account" : "尚未选择")}</span>
+          <span>{locale === "en-US" ? "Followers" : "跟随"} · {copy.followersSelected(draft.follower_account_ids.length)}</span><span className="settings-context-action">{locale === "en-US" ? "Configure" : "配置账号"} →</span>
+        </button>
+      <RoomCollaborationMode compact value={draft.collaboration_mode} onChange={collaboration_mode => updateDraft(current => ({ ...current, collaboration_mode }))} disabled={editorDisabled} en={locale === "en-US"} />
       <section className="spatial-panel room-automation-pane room-automation-section" aria-labelledby="room-mode-title">
         <div className="room-automation-section-heading">
           <KeyRound size={16} aria-hidden="true" />
           <div><h3 id="room-mode-title">{copy.modeAndRoom}</h3></div>
         </div>
+        <div className="room-automation-room-builder">
+          <div className="room-automation-room-builder-heading">
+            <div><strong>{copy.roomNaming}</strong><span>{copy.roomNamingHelp}</span></div>
+            <code aria-label={copy.preview} title={copy.preview}>{generatedRoomName(draft)}</code>
+          </div>
+          <div className="room-rule-sharing">
+            <p>{language === "en-US" ? "Share before creating the next room. Includes the password." : "建房前分享规则，双方使用相同序号。复制内容包含密码。"}</p>
+            <div>
+              <Button size="sm" disabled={editorDisabled} onClick={() => void writeText(copyRoomRule(draft))
+                .then(() => setRuleMessage("规则已复制"), () => setRuleMessage("复制失败，请重试"))}>{language === "en-US" ? "Copy" : "复制"}</Button>
+              <Button size="sm" disabled={editorDisabled} onClick={async () => {
+                try { const rule = parseRoomRule(await readText());
+                  resetChatHistoryRef.current += 1;
+                  setResetChatHistory(resetChatHistoryRef.current);
+                  updateDraft(current => ({ ...current, ...rule }));
+                  setRuleMessage("规则已粘贴，保存后重新同步聊天信号，请确认跟随账号");
+                } catch (error) { setRuleMessage(error instanceof Error ? error.message : "粘贴失败"); }
+              }}>{language === "en-US" ? "Paste" : "粘贴"}</Button>
+            </div>
+          </div>
+          {ruleMessage && <p className="text-xs text-text-muted" role="status">{ruleMessage}</p>}
+          <div className="room-automation-room-name-fields">
+            <TextField label={copy.prefix} value={draft.name_prefix} maxLength={15} disabled={editorDisabled}
+            invalid={!!validation?.fieldErrors.prefix}
+            onChange={(name_prefix) => updateDraft((current) => ({ ...current, name_prefix }))} />
+            <NumberField label={copy.sequence} value={draft.next_sequence} min={0} max={4_294_967_295} disabled={editorDisabled}
+            invalid={!!validation?.fieldErrors.sequence}
+            onChange={(next_sequence) => updateDraft((current) => ({ ...current, next_sequence }))} />
+            <ChoiceField label={copy.width} value={String(draft.sequence_width)}
+              options={[1, 2, 3, 4, 5, 6].map((width) => ({ value: String(width), label: String(width) }))}
+              disabled={editorDisabled} invalid={!!validation?.fieldErrors.sequence}
+              onChange={(value) => updateDraft((current) => ({ ...current, sequence_width: Number(value) }))} />
+          </div>
+          <div className="room-automation-password-row">
+            <TextField label={copy.password} value={draft.password} maxLength={15} disabled={editorDisabled}
+            invalid={!!validation?.fieldErrors.password}
+            onChange={(password) => updateDraft((current) => ({ ...current, password }))} />
+            <span>{copy.passwordOptional}</span>
+          </div>
+        </div>
+        <details className="settings-help-disclosure room-join-options">
+          <summary><span>{locale === "en-US" ? "Shortcuts & join behavior" : "快捷键与进房方式"}<small>{draft.shortcut} · {draft.join_shortcut}</small></span><ChevronDown size={14} aria-hidden="true" /></summary>
+          <div className="settings-disclosure-content">
         <p className="room-automation-consent-copy">{sharedFollower ? (locale === "en-US" ? "A new chat signal starts a group join after 1 second plus the configured wait. Both shortcuts can also join manually." : "识别到新聊天信号后，等待 1 秒加下方等待时间，再让本机主号和小号加入。两个快捷键也可手动触发加入。") : copy.backgroundMethodHelp}</p>
         <div className="room-automation-behavior-fields">
           {!sharedFollower && <ChoiceField label={copy.followTrigger} value={draft.auto_followers_enabled ? "auto" : "manual"}
@@ -738,46 +791,8 @@ export function RoomAutomationPanel({
           />
         </div>
 
-        <div className="room-automation-room-builder">
-          <div className="room-automation-room-builder-heading">
-            <div><strong>{copy.roomNaming}</strong><span>{copy.roomNamingHelp}</span></div>
-            <code aria-label={copy.preview} title={copy.preview}>{generatedRoomName(draft)}</code>
           </div>
-          <div className="room-rule-sharing">
-            <p>{language === "en-US" ? "Share before creating the next room. Includes the password." : "建房前分享规则，双方使用相同序号。复制内容包含密码。"}</p>
-            <div>
-              <Button size="sm" disabled={editorDisabled} onClick={() => void writeText(copyRoomRule(draft))
-                .then(() => setRuleMessage("规则已复制"), () => setRuleMessage("复制失败，请重试"))}>{language === "en-US" ? "Copy" : "复制"}</Button>
-              <Button size="sm" disabled={editorDisabled} onClick={async () => {
-                try { const rule = parseRoomRule(await readText());
-                  resetChatHistoryRef.current += 1;
-                  setResetChatHistory(resetChatHistoryRef.current);
-                  updateDraft(current => ({ ...current, ...rule }));
-                  setRuleMessage("规则已粘贴，保存后重新同步聊天信号，请确认跟随账号");
-                } catch (error) { setRuleMessage(error instanceof Error ? error.message : "粘贴失败"); }
-              }}>{language === "en-US" ? "Paste" : "粘贴"}</Button>
-            </div>
-          </div>
-          {ruleMessage && <p className="text-xs text-text-muted" role="status">{ruleMessage}</p>}
-          <div className="room-automation-room-name-fields">
-            <TextField label={copy.prefix} value={draft.name_prefix} maxLength={15} disabled={editorDisabled}
-            invalid={!!validation?.fieldErrors.prefix}
-            onChange={(name_prefix) => updateDraft((current) => ({ ...current, name_prefix }))} />
-            <NumberField label={copy.sequence} value={draft.next_sequence} min={0} max={4_294_967_295} disabled={editorDisabled}
-            invalid={!!validation?.fieldErrors.sequence}
-            onChange={(next_sequence) => updateDraft((current) => ({ ...current, next_sequence }))} />
-            <ChoiceField label={copy.width} value={String(draft.sequence_width)}
-              options={[1, 2, 3, 4, 5, 6].map((width) => ({ value: String(width), label: String(width) }))}
-              disabled={editorDisabled} invalid={!!validation?.fieldErrors.sequence}
-              onChange={(value) => updateDraft((current) => ({ ...current, sequence_width: Number(value) }))} />
-          </div>
-          <div className="room-automation-password-row">
-            <TextField label={copy.password} value={draft.password} maxLength={15} disabled={editorDisabled}
-            invalid={!!validation?.fieldErrors.password}
-            onChange={(password) => updateDraft((current) => ({ ...current, password }))} />
-            <span>{copy.passwordOptional}</span>
-          </div>
-        </div>
+        </details>
         {(validation?.fieldErrors.shortcuts || validation?.fieldErrors.prefix || validation?.fieldErrors.password || validation?.fieldErrors.sequence) && (
           <p className="room-automation-field-error" role="alert">
             {validation.fieldErrors.shortcuts || validation.fieldErrors.prefix || validation.fieldErrors.password || validation.fieldErrors.sequence}
@@ -787,7 +802,9 @@ export function RoomAutomationPanel({
       </section>
       </div>
 
-      <details className="spatial-panel room-automation-advanced">
+      <div className="settings-section-body" hidden={section !== "advanced"}>
+      <VisualRecognitionSettings mode="chat" language={language} accounts={eligibleAccounts} primaryAccountId={snapshot?.config.primary_account_id} collaborationMode={snapshot?.config.collaboration_mode} />
+      <details open className="spatial-panel room-automation-advanced">
         <summary>
           <span><strong>{copy.advanced}</strong><small>{copy.advancedHelp}</small></span>
           <ChevronDown size={15} aria-hidden="true" />
@@ -832,6 +849,7 @@ export function RoomAutomationPanel({
           {validation?.fieldErrors.timing && <p className="room-automation-field-error" role="alert">{validation.fieldErrors.timing}</p>}
         </fieldset>
       </details>
+      </div>
     </div>
   );
 }

@@ -38,7 +38,7 @@ describe("visual settings", () => {
     });
     const user=userEvent.setup();
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Visual recognition"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
     await screen.findByText("Capture and timing");
     await user.click(screen.getByText("Capture and timing"));
     await user.click(screen.getByRole("button",{name:"Preview capture region"}));
@@ -61,7 +61,7 @@ describe("visual settings", () => {
     });
     const user = userEvent.setup();
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Visual recognition"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
     expect(screen.queryByRole("switch", { name: "Record confirmed drops only" })).toBeNull();
     await user.click(await screen.findByRole("switch", { name: "Verify low-score drops" }));
     await screen.findByText("Saved");
@@ -89,7 +89,7 @@ describe("visual settings", () => {
     });
     const user = userEvent.setup();
     const view = render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Visual recognition"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
     await screen.findByRole("switch", { name: "Verify low-score drops" });
     await user.click(screen.getByText("Diagnostics and resources"));
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
@@ -113,7 +113,7 @@ describe("visual settings", () => {
     const view = render(<VisualRecognitionSettings mode="audio" language="en-US" />);
     expect(invokeCommand).not.toHaveBeenCalled();
     const user = userEvent.setup();
-    await user.click(screen.getByText("Visual recognition"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
     await user.click(await screen.findByLabelText("Verify low-score drops"));
     await screen.findByText("Saved");
     // Another page changes an unrelated field before the next save.
@@ -126,7 +126,7 @@ describe("visual settings", () => {
     expect(stored.config.drops_enforce).toBe(false);
     view.unmount();
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Visual recognition"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
     expect((await screen.findByLabelText("Diagnostic logging")).getAttribute("aria-checked")).toBe("true");
     expect((screen.getByLabelText("Verify low-score drops")).getAttribute("aria-checked")).toBe("true");
   });
@@ -138,13 +138,13 @@ describe("visual settings", () => {
     });
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
     const user = userEvent.setup();
-    await user.click(screen.getByText("Visual recognition"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
     await screen.findByRole("switch", { name: "Verify low-score drops" });
     await user.click(screen.getByText("Diagnostics and resources"));
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
     expect((await screen.findByRole("alert")).textContent).toContain("disk error");
-    await user.click(screen.getByText("Visual recognition"));
-    await user.click(screen.getByText("Visual recognition"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
+    await user.click(screen.getByText("Scene timing & drop verification"));
     expect((screen.getByLabelText("Diagnostic logging")).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByText("Save needs attention")).toBeTruthy();
     await user.click(screen.getByText("Save changes"));

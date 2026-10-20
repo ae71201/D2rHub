@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import type { AccountMeta, GlobalConfig } from "../../../store/types";
 import { AutomationPanel } from "./AutomationPanel";
 import { ModProcessingPanel } from "./ModProcessingPanel";
 import { useModWorkflow } from "../../mods/workflow/useModWorkflow";
+import { invokeCommand } from "../../../platform/tauri";
 import { modState, testCatalog } from "../../mods/workflow/testFixtures";
 
 vi.mock("../../../platform/tauri", () => ({
@@ -53,8 +54,8 @@ describe("Recognition onboarding", () => {
       hasInitializedAudioAccount: true, hasAudioTarget: true,
     })} />);
     expect(screen.getByText("Track drops and run times for the selected account.")).toBeTruthy();
-    expect(screen.getByText("Drops to record")).toBeTruthy();
-    expect(screen.getByText("7 drop categories · Runes #20+")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Drops to record/ })).toBeTruthy();
+    expect(screen.getAllByText("7 drop categories · Runes #20+").length).toBeGreaterThan(0);
     expect(screen.getByRole("combobox", { name: "Choose a Mod" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Choose a Mod to prepare" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Prepare Mod" })).toBeTruthy();
@@ -71,10 +72,10 @@ describe("Recognition onboarding", () => {
     })} />);
     expect(screen.getByText("已启用，等待游戏运行")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "立即开启" })).toBeNull();
-    expect(screen.getByText("诊断工具").closest("details")?.open).toBe(false);
-    expect(screen.getByText("音频峰值").closest("details")?.open).toBe(false);
-    expect(screen.getByText("记录哪些掉落").closest("details")?.open).toBe(false);
-    expect(screen.getByText(/记录 7 类掉落/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "诊断与高级" }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getByText("音频峰值").closest("section[hidden]")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "记录内容" }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getAllByText(/记录 7 类掉落/).length).toBeGreaterThan(0);
   });
   it("shows every prerequisite and opens account initialization when no account exists", async () => {
     const props = panelProps();
@@ -126,8 +127,23 @@ describe("Recognition onboarding", () => {
     render(<RecognitionFlow pendingEnable />);
     expect(screen.getByText("开启尚未完成：准备识别 Mod")).toBeTruthy();
     expect(screen.getByRole("switch", { name: "启用音频声纹自动识别" }).getAttribute("aria-checked")).toBe("true");
-    await userEvent.click(screen.getByRole("button", { name: "开始准备" }));
+    await userEvent.click(screen.getByRole("button", { name: "前往加工" }));
     expect(screen.getByRole("heading", { name: "Mod 加工" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "新 Mod 名称" })).toBeTruthy();
   });
+});
+
+it("keeps daily settings concise and lets filters apply without opening diagnostics", async () => {
+  const props = panelProps();
+  render(<AutomationPanel {...props} />);
+  expect(screen.queryByRole("checkbox", { name: "符文" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "记录内容" }));
+  expect(screen.getByRole("checkbox", { name: "符文" })).toBeTruthy();
+  expect(screen.getByText("场景计时与掉落核验")).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "监听目标" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "应用掉落过滤" }));
+  await waitFor(() => expect(props.persistConfig).toHaveBeenCalledWith(props.config, true));
+  expect(invokeCommand).toHaveBeenCalledWith("restart_rune_audio_monitor");
+  await userEvent.click(screen.getByRole("button", { name: "监听设置" }));
+  expect(screen.getByRole("combobox", { name: "监听目标" })).toBeTruthy();
 });

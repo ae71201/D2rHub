@@ -252,6 +252,7 @@ describe("RoomAutomationPanel", () => {
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
+    await user.click(await screen.findByText("Shortcuts & join behavior"));
     const shortcut = await screen.findByRole("button", { name: "Create-room shortcut" });
     await user.click(shortcut);
     expect(shortcut.textContent).toBe("Press a key combination…");
@@ -319,6 +320,7 @@ describe("RoomAutomationPanel", () => {
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
+    await user.click(await screen.findByRole("button", { name: "Advanced timing" }));
     const stepDelay = await screen.findByLabelText("Step delay (ms)") as HTMLInputElement;
     expect(stepDelay.value).toBe("80");
     const timeout = screen.getByLabelText("Synchronous key timeout (ms)") as HTMLInputElement;
@@ -350,6 +352,7 @@ describe("RoomAutomationPanel", () => {
   it("persists a custom synchronous key timeout from advanced input timing", async () => {
     const { gateway, saveConfig } = makeGateway();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Advanced timing" }));
     const timeout = await screen.findByLabelText("Synchronous key timeout (ms)") as HTMLInputElement;
     expect(timeout.min).toBe("250");
     expect(timeout.max).toBe("5000");
@@ -378,4 +381,18 @@ it("switches to shared follower with primary listening and join-only shortcut la
   expect(screen.queryByText("建房后等待手动确认。")).toBeNull();
   expect(screen.getByText(/无需将主号重复勾选为小号/)).toBeTruthy();
   await waitFor(() => expect(saveConfig).toHaveBeenCalledWith(4, expect.objectContaining({ collaboration_mode: "follower", primary_account_id: "one", follower_account_ids: ["two"] })));
+});
+
+it("retains the room draft across sections while isolating account and timing controls", async () => {
+  const { gateway, saveConfig } = makeGateway(); const user = userEvent.setup();
+  render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
+  const prefix = await screen.findByLabelText("房名开头");
+  fireEvent.change(prefix, { target: { value: "changed-" } });
+  expect(screen.queryByRole("radio", { name: "Leader" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: /参与账号/ }));
+  expect(screen.getByRole("radio", { name: "Leader" })).toBeTruthy();
+  expect(prefix.closest("[hidden]")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "房间与操作" }));
+  expect((screen.getByLabelText("房名开头") as HTMLInputElement).value).toBe("changed-");
+  await waitFor(() => expect(saveConfig.mock.lastCall?.[1].name_prefix).toBe("changed-"));
 });

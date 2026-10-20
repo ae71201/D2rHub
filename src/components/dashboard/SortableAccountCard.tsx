@@ -1,6 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical } from "lucide-react";
+import type { SyntheticEvent } from "react";
 
 import { useLaunch } from "../../store/launch";
 import { AccountGridItem, type GridItemProps } from "./AccountCard";
@@ -16,7 +16,6 @@ export function SortableAccountCard({
     attributes,
     listeners,
     setNodeRef,
-    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -25,11 +24,26 @@ export function SortableAccountCard({
     disabled: sortingDisabled,
   });
   const { progress } = useLaunch();
+  const canStartDrag = (event: SyntheticEvent<HTMLElement>) => {
+    if (sortingDisabled || !(event.target instanceof Element)) return false;
+    // Portalled editors also bubble through this component's React tree.
+    if (!event.currentTarget.contains(event.target)) return false;
+    return !event.target.closest("button, input, select, textarea, a, label, summary, [contenteditable]:not([contenteditable='false']), [role='button'], [role='switch'], [role='checkbox'], [role='combobox'], [data-no-drag]");
+  };
 
   return (
     <div
       ref={setNodeRef}
+      {...attributes}
+      role="group"
+      tabIndex={sortingDisabled ? -1 : 0}
+      aria-label={`${account.display_name || account.id} · ${english ? "Drag empty areas to reorder; press Space then arrow keys" : "拖动空白区域排序；键盘按空格后使用方向键移动"}`}
+      className="sortable-account-card"
+      data-sortable-disabled={sortingDisabled || undefined}
       data-sortable-account-id={account.id}
+      onMouseDown={event => { if (canStartDrag(event)) listeners?.onMouseDown?.(event); }}
+      onTouchStart={event => { if (canStartDrag(event)) listeners?.onTouchStart?.(event); }}
+      onKeyDown={event => { if (!sortingDisabled && event.target === event.currentTarget) listeners?.onKeyDown?.(event); }}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -43,14 +57,6 @@ export function SortableAccountCard({
         account={account}
         progress={progress[account.id] || null}
         isSelectionMode={isSelectionMode}
-        dragHandle={!isSelectionMode && <button type="button" ref={setActivatorNodeRef}
-          className="account-drag-handle" {...attributes} {...listeners}
-          disabled={sortingDisabled}
-          aria-label={`${english ? "Reorder" : "拖动排序"} ${account.display_name || account.id}`}
-          title={english ? "Drag to reorder; or press Space, then use arrow keys" : "拖动排序；键盘按空格后使用方向键移动"}
-          onClick={event => event.stopPropagation()}>
-          <GripVertical size={12} aria-hidden="true" />
-        </button>}
       />
     </div>
   );

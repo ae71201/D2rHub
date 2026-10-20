@@ -95,7 +95,7 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
   return <details className="feature-settings spatial-panel" onToggle={e => { if (e.target === e.currentTarget) setOpened(e.currentTarget.open); }}>
     <summary className="feature-settings-heading">
       <ScanLine size={17} aria-hidden="true" />
-      <span><strong>{mode === "chat" ? (en ? "Cross-PC room signals" : "跨电脑聊天信号") : (en ? "Visual recognition" : "视觉辅助识别")}</strong>
+      <span><strong>{mode === "chat" ? (en ? "Cross-PC room signals" : "跨电脑聊天信号") : (en ? "Scene timing & drop verification" : "场景计时与掉落核验")}</strong>
         <small>{mode === "chat" ? (en ? "Follow another player's next room" : "通过聊天信号，跟随另一台电脑进入下一局") : (en ? "Supplement area names and verify uncertain drops" : "补充地区名称，核验低分掉落")}</small></span>
       <ChevronDown className="feature-chevron" size={15} aria-hidden="true" />
     </summary>

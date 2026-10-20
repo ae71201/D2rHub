@@ -41,6 +41,7 @@ export function LaunchGroupPanel({
   onToggleFavorite,
 }: LaunchGroupPanelProps) {
   const { t } = useI18n();
+  const english = config?.app_language === "en-US";
   const editTrigger = useRef<HTMLButtonElement | null>(null);
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -80,6 +81,7 @@ export function LaunchGroupPanel({
           </div>
         ) : orderedGroups.map((group) => {
           const availability = inspectLaunchGroup(group, accounts, config, modCapsulePool);
+          const canLaunch = !!group.environment && availability.can_launch;
           const memberCount = launchGroupAccountIds(group).length;
           const isFavorite = favorites.has(group.id);
           const status = memberCount === 0
@@ -91,54 +93,52 @@ export function LaunchGroupPanel({
           return (
             <article
               className="launch-group-panel-row"
-              data-warning={!availability.can_launch ? "true" : undefined}
+              data-warning={!canLaunch ? "true" : undefined}
               key={group.id}
             >
-              <button
-                type="button"
-                className="launch-group-panel-launch"
-                disabled={disabled}
-                title={issueTitle || (!group.environment ? `补全启动方案“${group.name}”` : `启动方案“${group.name}”`)}
-                onClick={() => {
-                  if (!group.environment || !availability.can_launch) onEdit(group);
-                  else onLaunch(group);
-                }}
-              >
-                <span className="launch-group-play" aria-hidden="true">
-                  {availability.can_launch
-                    ? <Play size={12} fill="currentColor" />
-                    : <AlertTriangle size={12} />}
-                </span>
-                <span className="launch-group-copy">
-                  <strong data-i18n-skip>{group.name}</strong>
-                  <span>{!group.environment ? "待补全 · 请编辑并保存" : `${status} · ${group.environment.room.enabled ? "跟房开启" : "跟房关闭"} · ${group.environment.settings.rune_audio_enabled ? "识别开启" : "识别关闭"} · ${group.environment.layout?.name ?? "独立位置"}`}</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="launch-group-panel-favorite"
-                data-active={isFavorite ? "true" : undefined}
-                aria-label={t(isFavorite ? "launch.favorite.removeLabel" : "launch.favorite.addLabel", { name: group.name })}
-                title={t(isFavorite
-                  ? "launch.favorite.removeTitle"
-                  : favoriteLimitReached
-                    ? "launch.favorite.limitTitle"
-                    : "launch.favorite.addTitle")}
-                disabled={disabled || (!isFavorite && favoriteLimitReached)}
-                onClick={() => onToggleFavorite(group)}
-              >
-                <Star size={13} fill={isFavorite ? "currentColor" : "none"} />
-              </button>
-              <button
-                type="button"
-                className="launch-group-panel-edit"
-                aria-label={t("launch.scheme.editLabel", { name: group.name })}
-                title={t("launch.scheme.editTitle", { name: group.name })}
-                disabled={disabled}
-                onClick={event => { editTrigger.current = event.currentTarget; onEdit(group); }}
-              >
-                <Pencil size={12} />
-              </button>
+              <div className="launch-scheme-heading">
+                <h3 data-i18n-skip>{group.name}</h3>
+                <div className="launch-scheme-tools">
+                  <button
+                    type="button"
+                    className="launch-group-panel-favorite"
+                    data-active={isFavorite ? "true" : undefined}
+                    aria-label={t(isFavorite ? "launch.favorite.removeLabel" : "launch.favorite.addLabel", { name: group.name })}
+                    title={t(isFavorite
+                      ? "launch.favorite.removeTitle"
+                      : favoriteLimitReached
+                        ? "launch.favorite.limitTitle"
+                        : "launch.favorite.addTitle")}
+                    disabled={disabled || (!isFavorite && favoriteLimitReached)}
+                    onClick={() => onToggleFavorite(group)}
+                  >
+                    <Star size={13} fill={isFavorite ? "currentColor" : "none"} />
+                  </button>
+                  <button
+                    type="button"
+                    className="launch-group-panel-edit"
+                    aria-label={t("launch.scheme.editLabel", { name: group.name })}
+                    title={t("launch.scheme.editTitle", { name: group.name })}
+                    disabled={disabled}
+                    onClick={event => { editTrigger.current = event.currentTarget; onEdit(group); }}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                </div>
+              </div>
+              <p className="launch-scheme-status" title={issueTitle || undefined}>{!group.environment ? (english ? "Complete setup before launching" : "完善配置后即可启动") : status}</p>
+              <div className="launch-scheme-footer">
+                <button type="button" className="launch-group-panel-launch" disabled={disabled}
+                  title={issueTitle || (!group.environment ? `补全启动方案“${group.name}”` : `启动方案“${group.name}”`)}
+                  aria-label={`${canLaunch ? (english ? "Launch" : "启动") : (english ? "Configure" : "完善")} ${group.name}`}
+                  onClick={() => { if (!canLaunch) onEdit(group); else onLaunch(group); }}>
+                  {canLaunch ? <Play size={12} aria-hidden="true" /> : <AlertTriangle size={12} aria-hidden="true" />}
+                  {canLaunch ? (english ? "Launch" : "启动") : (english ? "Configure" : "完善配置")}
+                </button>
+                <span className="launch-scheme-summary">{group.environment
+                  ? [group.environment.room.enabled && (english ? "Follow" : "跟房"), group.environment.settings.rune_audio_enabled && (english ? "Recognition" : "识别"), group.environment.layout?.name || (english ? "Individual positions" : "独立位置")].filter(Boolean).join(" · ")
+                  : (english ? "Accounts, recognition & layout" : "账号、识别与布局")}</span>
+              </div>
             </article>
           );
         })}

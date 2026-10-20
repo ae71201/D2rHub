@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Package,
-  Play,
   RotateCw,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -111,6 +110,7 @@ export function AutomationPanel({
       ? `${trackedCategories.length} drop categories${trackedCategories.includes("runes") ? ` · Runes #${config.rune_audio_min_rune_number ?? 1}+` : ""}`
       : `记录 ${trackedCategories.length} 类掉落${trackedCategories.includes("runes") ? ` · 符文 #${config.rune_audio_min_rune_number ?? 1} 起` : ""}`
     : isEnglish ? "Drops off; scene tracking and run timing remain on." : "暂不记录掉落，场景与刷图计时不受影响";
+  const [section, setSection] = useState("listening");
   const [modSelectionRequired, setModSelectionRequired] = useState(false);
   useEffect(() => {
     if (selectedAudioReady) setModSelectionRequired(false);
@@ -126,12 +126,11 @@ export function AutomationPanel({
     });
   };
   return (
-<div className="settings-content-grid recognition-layout">
-  <HostileRestartSettings config={config} persist={persistGlobalDraft} error={audioStatus?.last_error} />
-  <div className="spatial-panel recognition-control-panel">
+<div className="recognition-settings settings-guided-page">
+  <header className="recognition-overview">
     <div className="flex items-center justify-between py-1">
       <div className="min-w-0 pr-4">
-        <span className="text-sm font-bold text-text-secondary">音频声纹自动识别</span>
+        <span className="text-sm font-bold text-text-secondary">{isEnglish ? "Audio recognition" : "音频声纹自动识别"}</span>
         <p className="text-xs text-text-muted">{external ? (isEnglish ? "Track drops and run times for the selected game." : "记录所选游戏的掉落与刷图用时。") : isEnglish ? "Track drops and run times for the selected account." : "记录所选账号的掉落与刷图用时。"}</p>
       </div>
       <Toggle
@@ -142,116 +141,13 @@ export function AutomationPanel({
         onChange={requestAudioToggle}
       />
     </div>
+  </header>
+  <nav className="settings-section-tabs" aria-label={isEnglish ? "Recognition sections" : "识别设置分页"}>
+    {[["listening", isEnglish ? "Listening settings" : "监听设置"], ["filters", isEnglish ? "Recording" : "记录内容"], ["advanced", isEnglish ? "Diagnostics & advanced" : "诊断与高级"]].map(([id, label]) =>
+      <button type="button" key={id} aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}>{label}</button>)}
+  </nav>
+  <section className="settings-section-body recognition-control-panel" hidden={section !== "listening"} aria-label={isEnglish ? "Listening settings" : "监听设置"}>
 
-    {!external && (
-    <div
-      id="rune-audio-readiness"
-      className="recognition-readiness"
-      data-state={isAudioRecognitionActive ? "running" : hasReadyAudioMod ? "ready" : "attention"}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
-          {isAudioRecognitionActive || hasReadyAudioMod
-            ? <CheckCircle2 size={16} className={`mt-0.5 shrink-0 ${isAudioRecognitionActive ? "text-success" : "text-accent"}`} />
-            : <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />}
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-text-primary">
-              {isAudioRecognitionActive
-                ? "声纹识别已开启"
-                : isAudioEnableRequested && hasReadyAudioMod
-                  ? audioModState?.restart_required ? (isEnglish ? "Enabled · restart the game" : "已启用，等待游戏重启")
-                    : audioStatus?.last_error ? (isEnglish ? "Recognition is unavailable" : "识别暂时不可用") : (isEnglish ? "Enabled · waiting for the game" : "已启用，等待游戏运行")
-                : !hasInitializedAudioAccount
-                  ? isAudioEnableRequested ? "开启尚未完成：初始化账号" : "先初始化一个游戏账号"
-                  : !hasAudioTarget
-                    ? isAudioEnableRequested ? "开启尚未完成：选择监听账号" : "第 2 步：选择监听账号"
-                    : audioModStateLoading
-                      ? "正在检查识别 Mod"
-                      : !hasReadyAudioMod
-                        ? isAudioEnableRequested ? "开启尚未完成：准备识别 Mod" : "还差一步：准备识别 Mod"
-                        : "准备完成，可以开启识别"}
-            </p>
-            <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
-              {isAudioRecognitionActive
-                ? audioModState?.restart_required
-                  ? "配置已完成；请重启该账号的游戏，让新的 Mod 启动参数生效。"
-                  : "D2RHub 会锁定所选账号的 D2R 进程，不会录制其他应用声音。"
-                : isAudioEnableRequested && hasReadyAudioMod
-                  ? audioModState?.restart_required
-                    ? (isEnglish ? "Restart the selected account's game. Recognition starts when the updated Mod is loaded." : "重启所选账号的游戏，新 Mod 生效后会自动开始识别。")
-                    : audioStatus?.last_error
-                      ? (isEnglish ? "Game audio is not being recognized. Open diagnostics to inspect the issue and retry." : "当前未在识别游戏声音。可展开诊断工具查看原因并重试。")
-                      : (isEnglish ? "Recognition starts automatically when this account enters the game." : "所选账号进入游戏后会自动开始识别，无需再次开启。")
-                : !hasInitializedAudioAccount
-                  ? "声纹需要绑定一个可启动的账号。点击右侧按钮完成初始化，再回来选择账号和准备 Mod。"
-                  : !hasAudioTarget
-                    ? "声音按 D2R 进程隔离捕获；先明确要统计哪个账号。"
-                    : !hasReadyAudioMod
-                      ? "D2R 需要播放极短的识别音频。D2RHub 会保留你的原 Mod，并自动生成启动参数。"
-                      : "所有前置项均已完成。点击开启后，目标游戏运行时会自动开始识别。"}
-            </p>
-          </div>
-        </div>
-        {!isAudioRecognitionActive && !(isAudioEnableRequested && hasReadyAudioMod) && (
-          <Button
-            variant={hasReadyAudioMod ? "primary" : "secondary"}
-            size="sm"
-            className="shrink-0"
-            disabled={audioPreparing || audioModStateLoading}
-            onClick={() => {
-              if (!hasInitializedAudioAccount) {
-                onClose();
-                onInitializeAccount();
-                return;
-              }
-              if (!hasAudioTarget) {
-                const firstAccount = initializedTrackingAccounts[0];
-                if (firstAccount) void handleAudioTargetChange(firstAccount.id);
-                return;
-              }
-              if (!hasReadyAudioMod) {
-                onOpenModProcessing();
-                return;
-              }
-              requestAudioToggle(true);
-            }}
-          >
-            {!hasInitializedAudioAccount
-              ? "初始化账号"
-              : !hasAudioTarget
-                ? "选择首个账号"
-                : !hasReadyAudioMod
-                  ? "开始准备"
-                  : "立即开启"}
-          </Button>
-        )}
-      </div>
-      <ol className="recognition-checklist" aria-label="声纹识别启用步骤">
-        {[
-          { label: "初始化账号", complete: hasInitializedAudioAccount },
-          { label: "选择监听账号", complete: hasAudioTarget },
-          { label: "准备识别 Mod", complete: hasReadyAudioMod },
-        ].map((step, index) => (
-          <li
-            key={step.label}
-            className="recognition-checklist-item"
-            data-complete={step.complete ? "true" : undefined}
-          >
-            <span
-              className="recognition-checklist-marker"
-              aria-hidden="true"
-            >
-              {step.complete ? "✓" : index + 1}
-            </span>
-            <span>{step.label}</span>
-          </li>
-        ))}
-      </ol>
-    </div>
-
-    )}
 
     <div className="recognition-target-section">
       <div className="flex items-center justify-between gap-4">
@@ -321,10 +217,129 @@ export function AutomationPanel({
       busy={audioPreparing || audioModStateLoading} instances={externalInstances} instancesError={externalInstancesError}
       onChange={onExternalTargetChange ?? (async () => {})} onSelectInstance={onSelectExternalInstance ?? (async () => {})} onPrepare={onOpenModProcessing} />}
 
+    {!external && (
+    <div
+      id="rune-audio-readiness"
+      className="recognition-readiness"
+      data-state={isAudioRecognitionActive ? "running" : hasReadyAudioMod ? "ready" : "attention"}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2.5">
+          {isAudioRecognitionActive || hasReadyAudioMod
+            ? <CheckCircle2 size={16} className={`mt-0.5 shrink-0 ${isAudioRecognitionActive ? "text-success" : "text-accent"}`} />
+            : <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />}
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-text-primary">
+              {isAudioRecognitionActive
+                ? "声纹识别已开启"
+                : isAudioEnableRequested && hasReadyAudioMod
+                  ? audioModState?.restart_required ? (isEnglish ? "Enabled · restart the game" : "已启用，等待游戏重启")
+                    : audioStatus?.last_error ? (isEnglish ? "Recognition is unavailable" : "识别暂时不可用") : (isEnglish ? "Enabled · waiting for the game" : "已启用，等待游戏运行")
+                : !hasInitializedAudioAccount
+                  ? isAudioEnableRequested ? "开启尚未完成：初始化账号" : "先初始化一个游戏账号"
+                  : !hasAudioTarget
+                    ? isAudioEnableRequested ? "开启尚未完成：选择监听账号" : "第 2 步：选择监听账号"
+                    : audioModStateLoading
+                      ? "正在检查识别 Mod"
+                      : !hasReadyAudioMod
+                        ? isAudioEnableRequested ? "开启尚未完成：准备识别 Mod" : "还差一步：准备识别 Mod"
+                        : "准备完成，可以开启识别"}
+            </p>
+            <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
+              {isAudioRecognitionActive
+                ? audioModState?.restart_required
+                  ? "配置已完成；请重启该账号的游戏，让新的 Mod 启动参数生效。"
+                  : "D2RHub 会锁定所选账号的 D2R 进程，不会录制其他应用声音。"
+                : isAudioEnableRequested && hasReadyAudioMod
+                  ? audioModState?.restart_required
+                    ? (isEnglish ? "Restart the selected account's game. Recognition starts when the updated Mod is loaded." : "重启所选账号的游戏，新 Mod 生效后会自动开始识别。")
+                    : audioStatus?.last_error
+                      ? (isEnglish ? "Game audio is not being recognized. Open diagnostics to inspect the issue and retry." : "当前未在识别游戏声音。可展开诊断工具查看原因并重试。")
+                      : (isEnglish ? "Recognition starts automatically when this account enters the game." : "所选账号进入游戏后会自动开始识别，无需再次开启。")
+                : !hasInitializedAudioAccount
+                  ? "声纹需要绑定一个可启动的账号。点击右侧按钮完成初始化，再回来选择账号和准备 Mod。"
+                  : !hasAudioTarget
+                    ? "声音按 D2R 进程隔离捕获；先明确要统计哪个账号。"
+                    : !hasReadyAudioMod
+                      ? "选择含声纹功能的 Mod，或前往加工补齐；完成后重启游戏。"
+                      : "所有前置项均已完成。点击开启后，目标游戏运行时会自动开始识别。"}
+            </p>
+          </div>
+        </div>
+        {!isAudioRecognitionActive && !(isAudioEnableRequested && hasReadyAudioMod) && !(hasAudioTarget && !hasReadyAudioMod) && (
+          <Button
+            variant={hasReadyAudioMod ? "primary" : "secondary"}
+            size="sm"
+            className="shrink-0"
+            disabled={audioPreparing || audioModStateLoading}
+            onClick={() => {
+              if (!hasInitializedAudioAccount) {
+                onClose();
+                onInitializeAccount();
+                return;
+              }
+              if (!hasAudioTarget) {
+                const firstAccount = initializedTrackingAccounts[0];
+                if (firstAccount) void handleAudioTargetChange(firstAccount.id);
+                return;
+              }
+              if (!hasReadyAudioMod) {
+                onOpenModProcessing();
+                return;
+              }
+              requestAudioToggle(true);
+            }}
+          >
+            {!hasInitializedAudioAccount
+              ? "初始化账号"
+              : !hasAudioTarget
+                ? "选择首个账号"
+                : !hasReadyAudioMod
+                  ? "开始准备"
+                  : "立即开启"}
+          </Button>
+        )}
+      </div>
+      {!hasReadyAudioMod && <ol className="recognition-checklist" aria-label="声纹识别启用步骤">
+        {[
+          { label: "初始化账号", complete: hasInitializedAudioAccount },
+          { label: "选择监听账号", complete: hasAudioTarget },
+          { label: "准备识别 Mod", complete: hasReadyAudioMod },
+        ].map((step, index) => (
+          <li
+            key={step.label}
+            className="recognition-checklist-item"
+            data-complete={step.complete ? "true" : undefined}
+          >
+            <span
+              className="recognition-checklist-marker"
+              aria-hidden="true"
+            >
+              {step.complete ? "✓" : index + 1}
+            </span>
+            <span>{step.label}</span>
+          </li>
+        ))}
+      </ol>}
+    </div>
+
+    )}
+
+    <div className="settings-next-links">
+      <button type="button" onClick={() => setSection("filters")}><span>{isEnglish ? "Drops to record" : "记录哪些掉落"}</span><small>{filterSummary}</small><ChevronDown size={14} aria-hidden="true" /></button>
+      <Button size="sm" variant="ghost" onClick={async () => {
+        try { await invokeCommand("open_stats_page"); }
+        catch (e) { showToast("error", `${isEnglish ? "Could not open statistics: " : "打开统计界面失败: "}${e}`); }
+      }}>{isEnglish ? "Open statistics" : "查看统计图表"}</Button>
+    </div>
+  </section>
+  <section className="settings-section-body" hidden={section !== "advanced"} aria-label={isEnglish ? "Diagnostics & advanced" : "诊断与高级"}>
     {config.rune_audio_enabled && (trackingTarget.valid || external) && (
-      <details className="group border-t border-border-default/50 pt-3">
+      <details open className="settings-diagnostics group border-t border-border-default/50 pt-3">
         <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-secondary">
-          诊断工具
+          {isEnglish ? "Recognition diagnostics" : "识别诊断"}
           <ChevronDown size={14} className="transition-transform duration-200 group-open:rotate-180" />
         </summary>
         <div className="mt-3 space-y-3">
@@ -424,10 +439,16 @@ export function AutomationPanel({
         </div>
       </details>
     )}
-  </div>
+    <HostileRestartSettings config={config} persist={persistGlobalDraft} error={audioStatus?.last_error} />
+    <details className="settings-help-disclosure"><summary>{isEnglish ? "How recognition works" : "识别说明"}<ChevronDown size={14} aria-hidden="true" /></summary><div className="recognition-notes">
+      <p>{isEnglish ? "Only the selected game process is captured. No game memory is read and no code is injected." : "只捕获所选游戏进程的声音，不读取游戏内存，也不会向游戏注入代码。"}</p>
+      <p>{isEnglish ? "Audio identifies base item codes; unique, set and affixes sharing a code cannot be distinguished by audio alone." : "声纹按基础物品代码识别；同一代码的暗金、套装或词缀无法仅凭音频区分。"}</p>
+    </div></details>
+  </section>
+  <section className="settings-section-body recognition-side" hidden={section !== "filters"} aria-label={isEnglish ? "Recording" : "记录内容"}>
 
-  <div className="recognition-side">
-    <details className="spatial-panel group overflow-hidden recognition-filters">
+    <VisualRecognitionSettings mode="audio" language={config.app_language} />
+    <details open className="spatial-panel group overflow-hidden recognition-filters">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
         <span>
           <span className="block text-sm font-bold text-text-primary">{isEnglish ? "Drops to record" : "记录哪些掉落"}</span>
@@ -580,43 +601,17 @@ export function AutomationPanel({
           </div>
 
           <p className="border-t border-border-default/50 pt-3 text-2xs leading-relaxed text-text-muted">
-            所有掉落仅在已确认的野外或地下城场景中记录；主城、主界面和尚未识别地点时一律忽略。修改后点击左侧“应用并重启识别”。
+            所有掉落仅在已确认的野外或地下城场景中记录；主城、主界面和尚未识别地点时一律忽略。修改后应用过滤规则，识别会重新开始。
           </p>
         </div>
       </div>
     </details>
 
-    <div className="spatial-panel recognition-notes">
-      <VisualRecognitionSettings mode="audio" language={config.app_language} />
-      <div>
-        <span className="text-xs font-bold text-text-primary block mb-1">识别说明</span>
-        <p className="text-2xs text-text-muted">
-          {external ? (isEnglish ? "D2RHub captures only the selected game process, without reading game memory or injecting code." : "D2RHub 只捕获所选游戏进程的声音，不读取游戏内存，也不会向游戏注入代码。") : "D2RHub 只捕获所选账号的游戏声音，不读取游戏内存，也不会向游戏注入代码。"}
-        </p>
-      </div>
-      <p className="text-2xs text-text-secondary">
-        过滤器只决定 D2RHub 是否将已接收事件写入统计；Mod 始终包含完整识别声纹。
-      </p>
-      <p className="text-2xs text-warning">
-        声纹按基础物品代码识别；同一代码的暗金、套装或词缀无法仅凭音频区分。
-      </p>
-      <div className="border-t border-border-default/50 pt-3">
-        <Button
-          size="sm"
-          onClick={async () => {
-            try {
-              await invokeCommand("open_stats_page");
-            } catch (e) {
-              showToast("error", `打开统计界面失败: ${e}`);
-            }
-          }}
-        >
-          <Play size={10} className="text-success fill-success" />
-          打开掉落统计图表
-        </Button>
-      </div>
-    </div>
-  </div>
+    <Button size="sm" variant="secondary" onClick={async () => {
+      try { await persistGlobalDraft(config, true); await invokeCommand("restart_rune_audio_monitor"); showToast("success", isEnglish ? "Drop filters applied" : "掉落过滤规则已应用"); }
+      catch (e) { showToast("error", `${isEnglish ? "Could not apply filters: " : "应用过滤规则失败: "}${e}`); }
+    }}>{isEnglish ? "Apply drop filters" : "应用掉落过滤"}</Button>
+  </section>
 </div>
   );
 }
