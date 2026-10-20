@@ -40,3 +40,11 @@ src-tauri/permissions/*
 src-tauri/processor/
 /.processor-source/
 /dev/review-*/*.log
+/dev/vision-resources/
+/dev/vision-*.log
+
+# Generated local verification output; keep reusable previews and source fixtures visible.
+/dev/*.log
+/dev/*-output/
+/dev/*-report.json
+/dev/vision-log-analysis*.json
