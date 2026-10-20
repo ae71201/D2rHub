@@ -144,6 +144,8 @@ trait RuntimeHost: Send + Sync {
     fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String>;
     fn foreground_pid(&self) -> Option<u32>;
 
+    fn validate_prepared_follower(&self, account_id: &str, room_name: &str) -> Result<(), String>;
+
     fn run_follower(
         &self,
         config: &RoomAutomationConfig,
@@ -189,6 +191,19 @@ impl WindowsRuntimeHost {
 }
 
 impl RuntimeHost for WindowsRuntimeHost {
+    fn validate_prepared_follower(&self, account_id: &str, room_name: &str) -> Result<(), String> {
+        let instance = self.running_instance(account_id)?;
+        #[cfg(target_os = "windows")]
+        {
+            windows::validate_prepared_follower(instance.pid, room_name)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (instance, room_name);
+            Err("自动跟房仅支持 Windows".to_string())
+        }
+    }
+
     fn prepare_background_room(
         &self,
         config: &RoomAutomationConfig,
@@ -848,6 +863,11 @@ impl RoomAutomationManager {
     }
 
     pub(crate) fn start_primary(&self) -> Result<WorkflowStatus, String> {
+        if self.get_config().config.join_only { return Err("只跟房模式不创建房间，请使用跟房快捷键".into()); }
+        self.start_room_workflow()
+    }
+
+    fn start_room_workflow(&self) -> Result<WorkflowStatus, String> {
         let _operation = self.operation.lock();
         self.join_finished_workflow();
         self.require_started()?;
@@ -863,7 +883,7 @@ impl RoomAutomationManager {
         let raw_config = self.workflow_config_snapshot()?;
         // Prepare all participating forms before submitting the primary.
         let ((config, primary, followers), primary_lease) =
-            self.prepare_and_reserve_workflow(raw_config, true, false)?;
+            self.prepare_and_reserve_workflow(raw_config.clone(), true, raw_config.join_only)?;
         let task = self
             .workflow
             .lock()
@@ -915,6 +935,7 @@ impl RoomAutomationManager {
     }
 
     pub(crate) fn start_followers(&self) -> Result<WorkflowStatus, String> {
+        if self.get_config().config.join_only { return self.start_room_workflow(); }
         let _operation = self.operation.lock();
         self.join_finished_workflow();
         self.require_started()?;
@@ -926,6 +947,17 @@ impl RoomAutomationManager {
 
         let previously_completed = snapshot.completed_follower_account_ids.clone();
         let previously_undelivered = snapshot.undelivered_follower_account_ids.clone();
+        if let Err(error) = self.validate_pending_forms(&snapshot) {
+            if let Some(task_id) = snapshot.task_id {
+                if snapshot.phase == WorkflowPhase::Waiting {
+                    self.fail_and_release(task_id, &error);
+                } else {
+                    let status = self.reconcile_follower_recovery(task_id);
+                    self.bridge.publish_status(&status);
+                }
+            }
+            return Err(format!("{error}；请检查游戏界面并重新触发创建快捷键"));
+        }
         let pending_password = self
             .workflow
             .lock()
@@ -1055,6 +1087,10 @@ impl RoomAutomationManager {
         drop(operation);
         join_workflow(worker)?;
         self.lifecycle.lock().leases = None;
+        let status = status.task_id.map_or(status.clone(), |task_id| {
+            self.reconcile_follower_recovery(task_id)
+        });
+        self.bridge.publish_status(&status);
         Ok(status)
     }
 
@@ -1086,7 +1122,10 @@ impl RoomAutomationManager {
         require_primary_foreground: bool,
     ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
-        let primary = self.host.running_instance(&config.primary_account_id)?;
+        let foreground_account = if config.join_only {
+            config.follower_account_ids.first().ok_or("请先选择跟随账号")?
+        } else { &config.primary_account_id };
+        let primary = self.host.running_instance(foreground_account)?;
         if require_primary_foreground && self.host.foreground_pid() != Some(primary.pid) {
             return Err("请先切到主号 D2R 窗口再执行自动跟房".to_string());
         }
@@ -1142,7 +1181,8 @@ impl RoomAutomationManager {
         self.leases
             .try_acquire_many(
                 std::iter::once(config.primary_account_id.as_str())
-                    .chain(config.follower_account_ids.iter().map(String::as_str)),
+                    .chain(config.follower_account_ids.iter().map(String::as_str))
+                    .filter(|id| !id.is_empty()),
             )
             .map_err(|error| error.to_string())
     }
@@ -1195,7 +1235,7 @@ impl RoomAutomationManager {
         // Reserve/consume the room sequence durably before the first external
         // keyboard side effect. A failed reservation is therefore safe to
         // retry, while every attempted form submission consumes its name.
-        if self.persist_used_sequence(task_id, sequence).is_err() {
+        if !config.join_only && self.persist_used_sequence(task_id, sequence).is_err() {
             return;
         }
         let pids = followers
@@ -1227,6 +1267,19 @@ impl RoomAutomationManager {
             return;
         };
         self.bridge.publish_status(&status);
+        if config.join_only {
+            let ready = self.workflow.lock().begin_selected_followers(task_id, config.follower_account_ids.clone());
+            match ready {
+                Ok(status) => self.bridge.publish_status(&status),
+                Err(error) => { self.fail_and_release(task_id, &error.to_string()); return; }
+            }
+            self.run_followers(task_id, config, followers, room_name, cancel);
+            let status = self.get_status();
+            if status.phase == WorkflowPhase::Complete && status.undelivered_follower_account_ids.is_empty() {
+                let _ = self.persist_used_sequence(task_id, sequence);
+            }
+            return;
+        }
         // 主号阶段已经结束。无论是人工等待还是自动延时，都不跨等待状态
         // 持有账号租约；进入跟随阶段时会基于最新运行状态重新获取。
         self.lifecycle.lock().leases = None;
@@ -1464,13 +1517,46 @@ impl RoomAutomationManager {
         }
     }
 
+    fn validate_pending_forms(&self, status: &WorkflowStatus) -> Result<(), String> {
+        let room = status.room_name.as_deref().ok_or("待跟随房间不存在")?;
+        for account in &status.follower_account_ids {
+            if status
+                .completed_follower_account_ids
+                .iter()
+                .any(|completed| completed.eq_ignore_ascii_case(account))
+            {
+                continue;
+            }
+            self.host
+                .validate_prepared_follower(account, room)
+                .map_err(|error| format!("{account}: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_follower_recovery(&self, task_id: WorkflowTaskId) -> WorkflowStatus {
+        let snapshot = self.workflow.lock().snapshot();
+        if snapshot.task_id == Some(task_id)
+            && snapshot.recovery_action == Some(WorkflowRecoveryAction::ResumeFollowers)
+        {
+            if let Err(error) = self.validate_pending_forms(&snapshot) {
+                let mut workflow = self.workflow.lock();
+                let _ = workflow.require_fresh_preparation(task_id, &error);
+                return workflow.snapshot();
+            }
+        }
+        self.workflow.lock().snapshot()
+    }
+
     fn fail_and_release(&self, task_id: WorkflowTaskId, error: &str) {
         crate::logger::log_msg(
             "WARN",
             "RoomAutomation",
             &format!("自动跟房任务 {task_id:?} 失败：{error}"),
         );
-        if let Ok(status) = self.workflow.lock().fail(task_id, error) {
+        let failed = self.workflow.lock().fail(task_id, error).is_ok();
+        if failed {
+            let status = self.reconcile_follower_recovery(task_id);
             self.bridge.publish_status(&status);
             self.lifecycle.lock().leases = None;
         }
@@ -1668,6 +1754,10 @@ impl CapabilityDriver for RoomAutomationManager {
         join_workflow(workflow)
             .map_err(|error| CapabilityFailure::new("workflow-stop-failed", error))?;
         self.lifecycle.lock().leases = None;
+        if let Some(task_id) = current.task_id {
+            let status = self.reconcile_follower_recovery(task_id);
+            self.bridge.publish_status(&status);
+        }
         Ok(())
     }
 
@@ -1873,9 +1963,12 @@ mod tests {
         fail_primary: AtomicBool,
         panic_primary: AtomicBool,
         fail_follower_once: AtomicBool,
+        consume_failed_form: AtomicBool,
+        prepared_forms: Mutex<BTreeMap<String, String>>,
         primary_calls: Mutex<Vec<String>>,
         follower_calls: Mutex<Vec<(String, String)>>,
         preparation_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
+        submission_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
     }
 
     impl FakeHost {
@@ -1884,9 +1977,12 @@ mod tests {
                 fail_primary: AtomicBool::new(fail_primary),
                 panic_primary: AtomicBool::new(false),
                 fail_follower_once: AtomicBool::new(false),
+                consume_failed_form: AtomicBool::new(false),
+                prepared_forms: Mutex::new(BTreeMap::new()),
                 primary_calls: Mutex::new(Vec::new()),
                 follower_calls: Mutex::new(Vec::new()),
                 preparation_gate: Mutex::new(None),
+                submission_gate: Mutex::new(None),
             }
         }
 
@@ -1905,6 +2001,24 @@ mod tests {
     }
 
     impl RuntimeHost for FakeHost {
+        fn validate_prepared_follower(
+            &self,
+            account_id: &str,
+            room_name: &str,
+        ) -> Result<(), String> {
+            if self
+                .prepared_forms
+                .lock()
+                .get(account_id)
+                .map(String::as_str)
+                == Some(room_name)
+            {
+                Ok(())
+            } else {
+                Err("missing or stale prepared form".to_string())
+            }
+        }
+
         fn account_shortcuts(&self) -> Result<Vec<String>, String> {
             Ok(Vec::new())
         }
@@ -1937,7 +2051,7 @@ mod tests {
 
         fn prepare_background_room(
             &self,
-            _config: &RoomAutomationConfig,
+            config: &RoomAutomationConfig,
             _primary_pid: u32,
             _follower_pids: &[u32],
             room_name: &str,
@@ -1956,6 +2070,11 @@ mod tests {
             if self.fail_primary.load(Ordering::Acquire) {
                 Err("injected primary failure".to_string())
             } else {
+                for account in &config.follower_account_ids {
+                    self.prepared_forms
+                        .lock()
+                        .insert(account.clone(), room_name.to_string());
+                }
                 Ok(())
             }
         }
@@ -1969,12 +2088,22 @@ mod tests {
             cancel: &CancellationSignal,
         ) -> Result<(), String> {
             cancel.check_active()?;
+            self.validate_prepared_follower(account_id, room_name)?;
             self.follower_calls
                 .lock()
                 .push((account_id.to_string(), room_name.to_string()));
-            if account_id == "follower-b" && self.fail_follower_once.swap(false, Ordering::AcqRel) {
+            if account_id != "follower-a" && self.fail_follower_once.swap(false, Ordering::AcqRel) {
+                if self.consume_failed_form.load(Ordering::Acquire) {
+                    self.prepared_forms.lock().remove(account_id);
+                }
                 Err("injected follower failure".to_string())
             } else {
+                self.prepared_forms.lock().remove(account_id);
+                if let Some((started, release)) = self.submission_gate.lock().take() {
+                    let _ = started.send(());
+                    let _ = release.recv();
+                    cancel.check_active()?;
+                }
                 Ok(())
             }
         }
@@ -2524,6 +2653,108 @@ mod tests {
         assert_eq!(config.primary_account_id, "Stored-Account");
         assert!(config.follower_account_ids.is_empty());
         config.validate(std::iter::empty::<&str>()).unwrap();
+    }
+
+    #[test]
+    fn consumed_form_failure_withdraws_retry_and_allows_new_creation() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, leases, host) = manager("consumed_form", false, false);
+        host.fail_follower_once.store(true, Ordering::Release);
+        host.consume_failed_form.store(true, Ordering::Release);
+        manager.start().unwrap();
+        manager.start_primary().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Waiting);
+        manager.start_followers().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Error);
+        manager.join_finished_workflow();
+        let failed = manager.get_status();
+        assert_eq!(failed.recovery_action, None);
+        let error = failed.last_error.unwrap();
+        assert!(error.contains("injected follower failure"));
+        assert!(error.contains("重新触发创建快捷键"));
+        assert!(manager.retry().is_err());
+        assert!(manager.start_followers().is_err());
+        assert_eq!(host.follower_calls.lock().len(), 1);
+        assert!(leases.is_empty());
+        manager.start_primary().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Waiting);
+        manager.start_followers().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager.stop().unwrap();
+    }
+
+    #[test]
+    fn missing_or_stale_form_is_rejected_before_follower_dispatch() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        for stale in [false, true] {
+            let (_root, manager, leases, host) = manager("invalid_form", false, false);
+            manager.start().unwrap();
+            manager.start_primary().unwrap();
+            wait_for_phase(&manager, WorkflowPhase::Waiting);
+            if stale {
+                host.prepared_forms
+                    .lock()
+                    .insert("follower".to_string(), "old-room".to_string());
+            } else {
+                host.prepared_forms.lock().clear();
+            }
+            assert!(manager.start_followers().is_err());
+            assert_eq!(manager.get_status().recovery_action, None);
+            assert_eq!(manager.get_status().phase, WorkflowPhase::Error);
+            assert!(host.follower_calls.lock().is_empty());
+            assert!(leases.is_empty());
+            manager.stop().unwrap();
+        }
+    }
+
+    #[test]
+    fn cancellation_during_submission_does_not_advertise_resume() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, leases, host) = manager("cancel_submission", false, false);
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        *host.submission_gate.lock() = Some((started_tx, release_rx));
+        manager.start().unwrap();
+        manager.start_primary().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Waiting);
+        manager.start_followers().unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let cancel_manager = Arc::clone(&manager);
+        let cancel = std::thread::spawn(move || cancel_manager.cancel().unwrap());
+        wait_for_phase(&manager, WorkflowPhase::Cancelled);
+        release_tx.send(()).unwrap();
+        let status = cancel.join().unwrap();
+        assert_eq!(status.recovery_action, None);
+        assert!(status.last_error.unwrap().contains("重新触发创建快捷键"));
+        assert!(manager.retry().is_err());
+        assert_eq!(host.follower_calls.lock().len(), 1);
+        assert!(leases.is_empty());
+        manager.stop().unwrap();
+    }
+
+    #[test]
+    fn cancel_recovery_requires_unconsumed_forms() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        for consumed in [false, true] {
+            let (_root, manager, _leases, host) = manager("cancel_form", false, false);
+            manager.start().unwrap();
+            manager.start_primary().unwrap();
+            wait_for_phase(&manager, WorkflowPhase::Waiting);
+            if consumed {
+                host.prepared_forms.lock().clear();
+            }
+            let status = manager.cancel().unwrap();
+            assert_eq!(status.phase, WorkflowPhase::Cancelled);
+            assert_eq!(
+                status.recovery_action,
+                if consumed {
+                    None
+                } else {
+                    Some(WorkflowRecoveryAction::ResumeFollowers)
+                }
+            );
+            manager.stop().unwrap();
+        }
     }
 
     #[test]

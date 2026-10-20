@@ -411,7 +411,7 @@ export function AccountGridItem({
     : drawer.fps;
   const configModeLabel = isSelectionMode
     ? "方案画质"
-    : account.has_customized_settings ? "独立配置" : "系统配置";
+    : config?.launch_session?.scheme.account_ids.includes(account.id) && account.is_running ? "本次配置" : account.has_customized_settings ? "独立配置" : "系统配置";
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──

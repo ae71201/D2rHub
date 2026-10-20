@@ -57,7 +57,7 @@ impl<'a> KeyDelivery<'a> {
         Ok(Self {
             task_id: cancel.task_id(),
             account_id,
-            primary: account_id.eq_ignore_ascii_case(&config.primary_account_id),
+            primary: !config.join_only && account_id.eq_ignore_ascii_case(&config.primary_account_id),
             pid,
             hwnd,
             created,
@@ -133,6 +133,8 @@ pub(crate) fn prepare_background_room(
     room_name: &str,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
+    let follower_pids: Vec<u32> = follower_pids.iter().copied()
+        .filter(|pid| !config.join_only || *pid != primary_pid).collect();
     validate_text(room_name)?;
     validate_text(&config.password)?;
     let _desktop = loop {
@@ -164,7 +166,9 @@ pub(crate) fn prepare_background_room(
             .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {pid})"))?;
         validate_target(hwnd)?;
         let created = process_creation_time(pid).ok_or("无法确认游戏进程身份")?;
-        let account_id = if index == 0 {
+        let account_id = if config.join_only {
+            config.follower_account_ids.get(index).ok_or("跟随账号与进程列表不一致")?.as_str()
+        } else if index == 0 {
             config.primary_account_id.as_str()
         } else {
             config
@@ -294,6 +298,7 @@ pub(crate) fn prepare_background_room(
             return Err("同步粘贴期间游戏进程或窗口已变化".to_string());
         }
     }
+    if !config.join_only {
     // Consume the primary's prepared marker before the externally visible submit.
     forms.lock().remove(&primary_pid);
     deliver_key(
@@ -305,6 +310,7 @@ pub(crate) fn prepare_background_room(
         cancel,
         "submit.primary",
     )?;
+    }
     for target in &targets {
         if password_needed {
             passwords.lock().insert(
@@ -496,6 +502,26 @@ fn group_chord(
     wait(cancel, Duration::from_millis(flow.character_delay_ms))
 }
 
+pub(crate) fn validate_prepared_follower(pid: u32, room_name: &str) -> Result<(), String> {
+    let forms = PREPARED_FORMS.get_or_init(|| Mutex::new(HashMap::new()));
+    let cached = forms.lock();
+    let entry = cached
+        .get(&pid)
+        .ok_or("该小号没有预填表单，请重新触发创建快捷键")?;
+    validate_prepared_entry(entry, pid, room_name)
+}
+
+fn validate_prepared_entry(entry: &PreparedForm, pid: u32, room_name: &str) -> Result<(), String> {
+    if entry.room_name != room_name
+        || process_creation_time(pid) != Some(entry.created)
+        || crate::infrastructure::system::find_game_hwnd(pid) != Some(entry.hwnd)
+    {
+        return Err("小号预填表单与当前房间或进程不匹配，请重新触发创建快捷键".to_string());
+    }
+    // Minimization is a temporary input failure, not loss of preparation.
+    Ok(())
+}
+
 pub(crate) fn submit_prepared_follower(
     config: &RoomAutomationConfig,
     account_id: &str,
@@ -516,12 +542,7 @@ pub(crate) fn submit_prepared_follower(
     let entry = cached
         .get(&pid)
         .ok_or("该小号没有预填表单，请重新触发创建快捷键")?;
-    if entry.room_name != room_name
-        || process_creation_time(pid) != Some(entry.created)
-        || crate::infrastructure::system::find_game_hwnd(pid) != Some(entry.hwnd)
-    {
-        return Err("小号预填表单与当前房间或进程不匹配，请重新触发创建快捷键".to_string());
-    }
+    validate_prepared_entry(entry, pid, room_name)?;
     validate_target(entry.hwnd)?;
     let target = KeyDelivery::new(config, account_id, pid, entry.hwnd, entry.created, cancel)?;
     // Consume the prepared form before its single submission.

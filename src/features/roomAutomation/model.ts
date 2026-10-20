@@ -178,7 +178,7 @@ export function validateRoomAutomationConfig(
   const followers = config.follower_account_ids.map((id) => id.trim()).filter(Boolean);
   const participantKeys = [config.primary_account_id, ...followers].map((id) => id.trim().toLowerCase());
 
-  if (!config.primary_account_id.trim()) fieldErrors.primary = copy.primaryRequired;
+  if (!config.join_only && !config.primary_account_id.trim()) fieldErrors.primary = copy.primaryRequired;
   if (followers.length === 0) fieldErrors.followers = copy.followersRequired;
   if (knownAccountIds) {
     const known = new Set(knownAccountIds.map((id) => id.toLowerCase()));

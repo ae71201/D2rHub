@@ -49,6 +49,8 @@ pub(crate) enum LaunchTaskRetryPayload {
     Accounts {
         account_ids: Option<Vec<String>>,
         entries: Option<Vec<LaunchAccountEntry>>,
+        #[serde(default)]
+        session_id: Option<String>,
     },
 }
 
@@ -112,18 +114,40 @@ fn track_launched_process(
     let app = app.clone();
     let executable = executable.to_path_buf();
     let expected_layout = selected_window_layout(config).cloned();
+    let session_id = config
+        .launch_session
+        .as_ref()
+        .map(|session| session.id.clone());
+    let session_mod_args = mod_args.to_string();
     tauri::async_runtime::spawn(async move {
         let mut frame_probe =
             crate::infrastructure::game_layout_windows::StartupFrameProbe::default();
         let mut frame_lease: Option<crate::application::multi_instance::FrameCalibrationLease> =
             None;
         let started = std::time::Instant::now();
+        let mut session_recorded = session_id.is_none();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             if !process.is_running()
                 || state.multi_instance().instances().pid_for(&account_id) != Some(pid)
             {
                 break;
+            }
+            if !session_recorded {
+                let state = state.clone();
+                let app = app.clone();
+                let account = account_id.clone();
+                let session = session_id.clone().unwrap();
+                let arguments = session_mod_args.clone();
+                session_recorded = tokio::task::spawn_blocking(move || {
+                    crate::commands::launch_scheme_recovery::capture_process(
+                        &state, &app, &session, &account, pid, &arguments,
+                    )
+                })
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or(false);
             }
             // Only the elected representative measures borders. Other windows
             // wait for or reuse its result; title repair has an independent life.
@@ -637,6 +661,9 @@ fn apply_temporary_window_settings_at_path(
         )));
     }
     if let Some(graphics) = graphics {
+        if let Some(snapshot) = &graphics.game_settings {
+            settings = snapshot.clone();
+        }
         settings.insert(
             "Screen Resolution (Windowed)".to_string(),
             serde_json::Value::String(graphics.resolution.clone()),
@@ -1184,6 +1211,23 @@ pub async fn launch_battle_net_only(
     state: tauri::State<'_, SharedState>,
     account_ids: Vec<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
+    let shared = state.inner().clone();
+    let _admission = shared
+        .launch_admission
+        .try_lock()
+        .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
+    if state
+        .configuration()
+        .snapshot()
+        .is_some_and(|config| config.launch_session.is_some())
+        && crate::commands::account::list_accounts(state.clone())?
+            .iter()
+            .any(|account| account.is_running)
+    {
+        return Err(AppError::ConfigReadError(
+            "方案运行期间请使用本次账号的启动操作".into(),
+        ));
+    }
     launch_battle_net_only_task(app, state, account_ids, None).await
 }
 
@@ -1876,7 +1920,159 @@ pub async fn launch_accounts(
     account_ids: Option<Vec<String>>,
     entries: Option<Vec<LaunchAccountEntry>>,
 ) -> Result<Vec<LaunchResult>, AppError> {
+    let shared = state.inner().clone();
+    let _admission = shared
+        .launch_admission
+        .try_lock()
+        .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
+    let (account_ids, entries) = resolve_session_launch(&app, &state, account_ids, entries)?;
     launch_accounts_task(app, state, account_ids, entries, None).await
+}
+
+type AccountLaunchRequest = (Option<Vec<String>>, Option<Vec<LaunchAccountEntry>>);
+
+fn resolve_session_launch(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, SharedState>,
+    ids: Option<Vec<String>>,
+    entries: Option<Vec<LaunchAccountEntry>>,
+) -> Result<AccountLaunchRequest, AppError> {
+    let config = state.configuration().snapshot();
+    let Some(session) = config
+        .as_ref()
+        .and_then(|config| config.launch_session.as_ref())
+    else {
+        return Ok((ids, entries));
+    };
+    let accounts = crate::commands::account::list_accounts(state.clone())?;
+    if !accounts.iter().any(|account| account.is_running) {
+        crate::commands::global_config::mutate_loaded_global_config(
+            state.inner(),
+            app,
+            |config| {
+                config.launch_session = None;
+                Ok(true)
+            },
+        )?;
+        return Ok((ids, entries));
+    }
+    if entries.is_some() {
+        return Err(AppError::ConfigReadError(
+            "运行期间不能应用另一套启动参数，请使用账号启动按钮补启动".into(),
+        ));
+    }
+    let requested = ids.unwrap_or_default();
+    let resolved = requested
+        .into_iter()
+        .map(|id| {
+            let member = session
+                .members
+                .iter()
+                .find(|member| member.account_id == id)
+                .ok_or_else(|| {
+                    AppError::ConfigReadError("运行期间只能补启动本次方案内的账号".into())
+                })?;
+            Ok(LaunchAccountEntry {
+                account_id: id,
+                overrides: crate::application::multi_instance::LaunchAccountOverrides {
+                    snapshot: member.snapshot.clone(),
+                    mod_args: member.mod_args.clone().unwrap_or_default(),
+                    position_preset_id: None,
+                    resolution: member.resolution.clone(),
+                    fps: member.fps,
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    Ok((None, Some(resolved)))
+}
+
+#[tauri::command]
+pub(crate) async fn launch_saved_scheme(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    id: String,
+    revision: u64,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let shared = state.inner().clone();
+    let _admission = shared
+        .launch_admission
+        .try_lock()
+        .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
+    let entries =
+        crate::commands::launch_scheme::prepare_scheme_launch(&app, &state, &id, revision)?;
+    let result = launch_accounts_task(app.clone(), state.clone(), None, Some(entries), None).await;
+    let survivors = crate::commands::account::list_accounts(state.clone())?
+        .iter()
+        .any(|account| account.is_running);
+    if !survivors {
+        if let Some(manager) = crate::commands::launch_scheme::room_manager(&app) {
+            let snapshot = manager.get_config();
+            let mut disabled = snapshot.config;
+            disabled.enabled = false;
+            manager
+                .save_config(snapshot.generation, disabled)
+                .map_err(AppError::ConfigWriteError)?;
+        }
+        crate::commands::global_config::mutate_loaded_global_config(
+            state.inner(),
+            &app,
+            |config| {
+                config.launch_session = None;
+                config.rune_audio_enabled = false;
+                Ok(true)
+            },
+        )?;
+    }
+    result
+}
+
+pub(crate) fn preflight_scheme_entries(
+    config: &GlobalConfig,
+    state: &SharedState,
+    entries: &[LaunchAccountEntry],
+) -> Result<(), AppError> {
+    let plan = LaunchBatchPlan::from_request(None, Some(entries.to_vec()))?;
+    if plan.is_empty() {
+        return Err(AppError::ConfigReadError("方案至少需要一个账号".into()));
+    }
+    crate::commands::window_layout::prepare_launch_layout(config, state, plan.account_ids())?;
+    for id in plan.account_ids() {
+        let account = AccountManager::load_meta(&config.accounts_dir, id)?;
+        let (account, graphics) = plan.apply_for(id, account, config.window_layout_enabled)?;
+        preflight_account_meta(config, &account, ContextPurpose::LaunchGame)?;
+        let context = LaunchContext::for_account(config, &account, ContextPurpose::LaunchGame)?;
+        preflight_scheme_mod(&account, &context)?;
+        if config.rune_audio_enabled && config.rune_audio_target_account == *id {
+            crate::audio_mod::validate_runtime_audio_mod(config, &account, &account.mod_args)
+                .map_err(AppError::ConfigReadError)?;
+        }
+        if config
+            .launch_session
+            .as_ref()
+            .and_then(|session| session.scheme.environment.as_ref())
+            .is_some_and(|environment| {
+                environment.room.enabled
+                    && (environment.room.primary_account_id == *id
+                        || environment.room.follower_account_ids.contains(id))
+            })
+        {
+            crate::audio_mod::validate_in_game_room_tools_for_arguments(
+                &account.display_name,
+                &context,
+                &account.mod_args,
+            )
+            .map_err(AppError::ConfigReadError)?;
+        }
+        preflight_launch_graphics(
+            config,
+            &account,
+            &context,
+            graphics.as_ref(),
+            config.window_layout_enabled,
+        )?;
+    }
+    Ok(())
 }
 
 async fn launch_accounts_task(
@@ -1891,6 +2087,11 @@ async fn launch_accounts_task(
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     let cancel_state = state.inner().clone();
     let retry_payload = serde_json::to_string(&LaunchTaskRetryPayload::Accounts {
+        session_id: state
+            .configuration()
+            .snapshot()
+            .and_then(|config| config.launch_session)
+            .map(|session| session.id),
         account_ids: account_ids.clone(),
         entries: entries.clone(),
     })
@@ -1913,7 +2114,16 @@ async fn launch_accounts_task(
         .begin(request)
         .map_err(|error| AppError::Unknown(error.to_string()))?;
     let completion_state = state.inner().clone();
+    let events = app.clone();
     let result = launch_accounts_impl(app, state, account_ids, entries, cancellation_ticket).await;
+    if let Ok(results) = &result {
+        for result in results {
+            let _ = events.emit(
+                "account-settings-updated",
+                serde_json::json!({ "accountId": result.account_id }),
+            );
+        }
+    }
     completion_state
         .multi_instance()
         .facade()
@@ -1928,6 +2138,11 @@ pub(crate) async fn retry_launch_task(
     retry_of: u64,
     payload: LaunchTaskRetryPayload,
 ) -> Result<Vec<LaunchResult>, AppError> {
+    let shared = state.inner().clone();
+    let _admission = shared
+        .launch_admission
+        .try_lock()
+        .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
     match payload {
         LaunchTaskRetryPayload::BattleNetOnly { account_ids } => {
             launch_battle_net_only_task(app, state, account_ids, Some(retry_of)).await
@@ -1935,7 +2150,58 @@ pub(crate) async fn retry_launch_task(
         LaunchTaskRetryPayload::Accounts {
             account_ids,
             entries,
-        } => launch_accounts_task(app, state, account_ids, entries, Some(retry_of)).await,
+            session_id,
+        } => {
+            let current = state
+                .configuration()
+                .snapshot()
+                .and_then(|config| config.launch_session);
+            if session_id.as_deref() != current.as_ref().map(|session| session.id.as_str()) {
+                return Err(AppError::ConfigReadError(
+                    "原启动任务已结束，请从方案入口重新启动".into(),
+                ));
+            }
+            let entries = if let Some(session) = current {
+                let ids = account_ids.clone().unwrap_or_else(|| {
+                    entries
+                        .as_ref()
+                        .map(|entries| {
+                            entries
+                                .iter()
+                                .map(|entry| entry.account_id.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                });
+                Some(
+                    session
+                        .members
+                        .into_iter()
+                        .filter(|member| ids.contains(&member.account_id))
+                        .map(|member| LaunchAccountEntry {
+                            account_id: member.account_id,
+                            overrides: crate::application::multi_instance::LaunchAccountOverrides {
+                                snapshot: member.snapshot,
+                                mod_args: member.mod_args.unwrap_or_default(),
+                                position_preset_id: None,
+                                resolution: member.resolution,
+                                fps: member.fps,
+                            },
+                        })
+                        .collect(),
+                )
+            } else {
+                entries
+            };
+            launch_accounts_task(
+                app,
+                state,
+                if entries.is_some() { None } else { account_ids },
+                entries,
+                Some(retry_of),
+            )
+            .await
+        }
     }
 }
 
@@ -3773,6 +4039,7 @@ mod tests {
             let _guard = apply_temporary_graphics_override_at_path(
                 path.clone(),
                 &LaunchGraphicsOverride {
+                    game_settings: None,
                     resolution: "2560x1440".to_string(),
                     fps: 144,
                 },
@@ -3791,11 +4058,41 @@ mod tests {
     }
 
     #[test]
+    fn complete_scheme_settings_replace_mutable_defaults_and_restore_exact_bytes() {
+        let root = temp_dir("complete_scheme_settings");
+        let path = root.join("Settings.json");
+        let original = br#"{"Texture Quality":0,"Master Volume":10}"#;
+        std::fs::write(&path, original).unwrap();
+        let graphics = LaunchGraphicsOverride {
+            game_settings: Some(
+                serde_json::from_value(
+                    serde_json::json!({ "Texture Quality": 3, "Master Volume": 80 }),
+                )
+                .unwrap(),
+            ),
+            resolution: "1920x1080".into(),
+            fps: 60,
+        };
+        {
+            let _guard =
+                apply_temporary_graphics_override_at_path(path.clone(), &graphics).unwrap();
+            let effective: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(effective["Texture Quality"], 3);
+            assert_eq!(effective["Master Volume"], 80);
+            assert_eq!(effective["Framerate Cap"], 60);
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn layout_game_resolution_is_temporary_and_preserves_fps_intent() {
         let root = temp_dir("layout_window_settings");
         let path = root.join("Settings.json");
         let original = br#"{"Window Mode":1,"Screen Resolution (Windowed)":"2560x1440","Framerate Cap":75,"VSync":true}"#;
         let graphics = LaunchGraphicsOverride {
+            game_settings: None,
             resolution: "3840x2160".into(),
             fps: 144,
         };

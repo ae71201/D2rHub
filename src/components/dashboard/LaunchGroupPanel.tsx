@@ -1,5 +1,5 @@
 import { AlertTriangle, Pencil, Play, Plus, Star, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
 import type { AccountMeta, GlobalConfig, LaunchGroup, ModCapsulePool } from "../../store/types";
@@ -47,7 +47,6 @@ export function LaunchGroupPanel({
     if (wasEditing.current && !editor && editTrigger.current?.isConnected) editTrigger.current.focus({ preventScroll: true });
     wasEditing.current = Boolean(editor);
   }, [editor]);
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const favorites = new Set(normalizeFavoriteLaunchGroupIds(groups, favoriteGroupIds));
   const favoriteLimitReached = favorites.size >= MAX_FAVORITE_LAUNCH_GROUPS;
   const orderedGroups = groups
@@ -89,11 +88,9 @@ export function LaunchGroupPanel({
               ? t("launch.scheme.status.unavailable", { count: availability.issues.length })
               : t("launch.scheme.status.ready", { count: memberCount });
           const issueTitle = launchGroupIssueDetails(availability.issues);
-          const selected = selectedGroupId === group.id;
           return (
             <article
               className="launch-group-panel-row"
-              data-selected={selected ? "true" : undefined}
               data-warning={!availability.can_launch ? "true" : undefined}
               key={group.id}
             >
@@ -101,12 +98,10 @@ export function LaunchGroupPanel({
                 type="button"
                 className="launch-group-panel-launch"
                 disabled={disabled}
-                aria-pressed={selected}
-                aria-disabled={!availability.can_launch}
-                title={issueTitle || t(selected ? "launch.scheme.launchSelectedTitle" : "launch.scheme.selectTitle", { name: group.name })}
+                title={issueTitle || (!group.environment ? `补全启动方案“${group.name}”` : `启动方案“${group.name}”`)}
                 onClick={() => {
-                  if (selected && availability.can_launch) onLaunch(group);
-                  else setSelectedGroupId(group.id);
+                  if (!group.environment || !availability.can_launch) onEdit(group);
+                  else onLaunch(group);
                 }}
               >
                 <span className="launch-group-play" aria-hidden="true">
@@ -116,7 +111,7 @@ export function LaunchGroupPanel({
                 </span>
                 <span className="launch-group-copy">
                   <strong data-i18n-skip>{group.name}</strong>
-                  <span>{status}</span>
+                  <span>{!group.environment ? "待补全 · 请编辑并保存" : `${status} · ${group.environment.room.enabled ? "跟房开启" : "跟房关闭"} · ${group.environment.settings.rune_audio_enabled ? "识别开启" : "识别关闭"} · ${group.environment.layout?.name ?? "独立位置"}`}</span>
                 </span>
               </button>
               <button

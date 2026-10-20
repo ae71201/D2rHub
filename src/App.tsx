@@ -170,6 +170,18 @@ function App() {
   });
   const launchGroups = useLaunchGroupController(modCapsules.pool);
   const launchGroupDraft = launchGroups.draft;
+  useEffect(() => {
+    const editFromRoom = (event: Event) => {
+      const ids = (event as CustomEvent<string[]>).detail;
+      if (!Array.isArray(ids)) return;
+      setShowSettings(false);
+      setLaunchGroupPanelOpen(true);
+      launchGroups.edit({ id: "", name: "自动跟房", account_ids: ids });
+    };
+    window.addEventListener("edit-launch-scheme-from-room", editFromRoom);
+    return () => window.removeEventListener("edit-launch-scheme-from-room", editFromRoom);
+  }, [launchGroups.edit]);
+
   const launchGroupPendingDelete = launchGroups.pendingDelete;
   const openModManager = (action?: "add", edition?: string | null) => {
     setSettingsTab(action === "add" ? `mod-processing:add:${edition ?? ""}` : "mod-processing");
@@ -644,10 +656,11 @@ function App() {
             </div>
           )}
 
+          {config?.launch_session && (launching || accounts.some(account => account.is_running && config.launch_session?.scheme.account_ids.includes(account.id))) && <p className="scheme-note px-8" role="status">本次启动：{config.launch_session.scheme.name} · 当前调整不会修改方案</p>}
           <div className="dashboard-workspace">
             {(launchGroupPanelOpen || launchGroupDraft) && (
               <LaunchGroupPanel
-                editor={launchGroupDraft ? <LaunchGroupEditor launchGroups={launchGroups} /> : undefined}
+                editor={launchGroupDraft ? <LaunchGroupEditor launchGroups={launchGroups} modCapsulePool={modCapsules.pool} /> : undefined}
                 groups={config?.launch_groups ?? []}
                 accounts={accounts}
                 config={config}
@@ -677,7 +690,7 @@ function App() {
             ) : (
               <AccountGrid
                 accounts={sortedAccounts}
-                isSelectionMode={!!launchGroupDraft}
+                isSelectionMode={false}
                 onReorder={reorderAccounts}
               >
                 {sortedAccounts.map(a => {
@@ -700,7 +713,7 @@ function App() {
                     onConfigure={a => { setShowSettings(true); setSettingsTab("accounts"); setSettingsAccountId(a.id); }}
                     onLaunch={id => { if (!batch.selection.mode) void startDashboardLaunch([id]); }}
                     onBattleNetOnly={id => { if (!batch.selection.mode && !batchLock.current) void startBattleNetOnly([id]); }}
-                    isSelectionMode={!!launchGroupDraft}
+                    isSelectionMode={false}
                     selected={!!schemeMember}
                     onToggleSelect={launchGroups.toggleAccount}
                     schemeMember={schemeMember}

@@ -19,6 +19,7 @@ pub(crate) enum CoreShortcutAction {
 
 /// 应用全局运行时状态
 pub struct AppState {
+    pub(crate) launch_admission: tokio::sync::Mutex<()>,
     /// 全局配置事务运行时。所有读取都取得不可变快照，写入只能经仓储与策略端口提交。
     configuration: ConfigurationRuntime,
     /// 可选模块生命周期的纯应用层控制面。
@@ -68,6 +69,7 @@ impl AppState {
 
     fn with_app_data_dir(app_data: PathBuf) -> Self {
         Self {
+            launch_admission: tokio::sync::Mutex::new(()),
             configuration: ConfigurationRuntime::new(),
             capabilities: Arc::new(CapabilityRegistry::new()),
             app_data_dir: app_data.to_string_lossy().to_string(),

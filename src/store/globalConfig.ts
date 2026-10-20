@@ -92,6 +92,7 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
   },
 
   patch: async (patch: GlobalConfigPatch) => {
+    const expectedSessionId = get().config?.launch_session?.id ?? null;
     if (Object.keys(patch).length === 0) {
       const current = get().config;
       if (!current) throw new Error("全局配置尚未加载");
@@ -102,7 +103,7 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
     return enqueueMutation(async () => {
       try {
         const snapshotBeforeRequest = get().config;
-        const saved = await invokeCommand<GlobalConfig>("patch_global_config", { patch });
+        const saved = await invokeCommand<GlobalConfig>("patch_global_config", { patch, expectedSessionId });
         if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
           set({ config: saved });
         }

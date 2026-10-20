@@ -136,6 +136,7 @@ export function materializeLaunchGroupMembers(
     const configured = explicitMember(group, accountId);
     return {
       account_id: accountId,
+      snapshot: configured?.snapshot ? structuredClone(configured.snapshot) : undefined,
       mod_args: configured?.mod_args ?? account?.mod_args ?? "",
       position_preset_id: configured?.position_configured
         ? configured.position_preset_id ?? null
@@ -194,7 +195,7 @@ export function inspectLaunchGroup(
         });
       }
     }
-    if (member?.position_configured && member.position_preset_id) {
+    if (!member?.snapshot && member?.position_configured && member.position_preset_id) {
       const exists = (account.position_presets || [])
         .some(position => position.id === member.position_preset_id);
       if (!exists) {
@@ -209,7 +210,7 @@ export function inspectLaunchGroup(
   }
 
   const members = new Set(accountIds);
-  const orderedAccountIds = sortAccountsByCardOrder(accounts)
+  const orderedAccountIds = (group.environment ? accountIds.map(id => accountsById.get(id)).filter((account): account is AccountMeta => !!account) : sortAccountsByCardOrder(accounts))
     .filter(account => members.has(account.id))
     .map(account => account.id);
 

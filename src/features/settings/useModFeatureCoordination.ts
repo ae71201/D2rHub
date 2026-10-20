@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 
 import { showToast } from "../../components/ui/Toast";
-import { useGlobalConfig } from "../../store/globalConfig";
 import type { AccountMeta, GlobalConfig } from "../../store/types";
 import {
   AUDIO_TELEMETRY_CAPSULE_FEATURE,
@@ -21,12 +20,10 @@ interface CoordinationOptions {
 }
 
 export function useModFeatureCoordination({
-  accounts,
   trackingTargetId,
   modCatalog,
   toggleAudio,
   openProcessing,
-  onGlobalCommitted,
 }: CoordinationOptions) {
   const prepareFeature = useCallback(async (
     accountId: string,
@@ -80,32 +77,9 @@ export function useModFeatureCoordination({
   }, [modCatalog.pool, openProcessing, prepareFeature, toggleAudio, trackingTargetId]);
 
   const saveRoomLaunchScheme = useCallback(async (accountIds: string[]) => {
-    const current = useGlobalConfig.getState().config;
-    if (!current || !accountIds.length) return;
-    const primary = accounts.find((account) => account.id === accountIds[0]);
-    const baseName = `自动跟房 · ${primary?.display_name?.trim() || primary?.id || "主号"}`;
-    const usedNames = new Set(current.launch_groups.map((group) => group.name.trim().toLocaleLowerCase()));
-    let name = baseName;
-    for (let suffix = 2; usedNames.has(name.toLocaleLowerCase()); suffix += 1) name = `${baseName} ${suffix}`;
-    const group = {
-      id: crypto.randomUUID(),
-      name,
-      account_ids: [...accountIds],
-      members: accountIds.map((accountId) => ({
-        account_id: accountId,
-        mod_args: accounts.find((account) => account.id === accountId)?.mod_args ?? "",
-        position_configured: false,
-        graphics_configured: false,
-      })),
-    };
-    try {
-      const saved = await useGlobalConfig.getState().patch({ launch_groups: [...current.launch_groups, group] });
-      onGlobalCommitted(saved);
-      showToast("success", `已保存启动方案“${name}”`);
-    } catch (error) {
-      showToast("error", `保存启动方案失败：${error}`);
-    }
-  }, [accounts, onGlobalCommitted]);
+    if (!accountIds.length) return;
+    window.dispatchEvent(new CustomEvent("edit-launch-scheme-from-room", { detail: accountIds }));
+  }, []);
 
   return { prepareFeature, toggleRecognition, saveRoomLaunchScheme };
 }

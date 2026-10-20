@@ -82,6 +82,8 @@ impl ConfigurationRepository for GlobalConfigRepository<'_> {
 struct GlobalConfigPolicy<'a> {
     state: &'a SharedState,
     profile_transition: bool,
+    preserve_schemes: bool,
+    expected_session: Option<Option<String>>,
 }
 
 impl<'a> GlobalConfigPolicy<'a> {
@@ -89,6 +91,8 @@ impl<'a> GlobalConfigPolicy<'a> {
         Self {
             state,
             profile_transition: false,
+            preserve_schemes: false,
+            expected_session: None,
         }
     }
 }
@@ -99,14 +103,49 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
         current: &GlobalConfig,
         patch: serde_json::Value,
     ) -> Result<GlobalConfig, AppError> {
+        if let Some(expected) = &self.expected_session {
+            let working = patch.as_object().is_some_and(|patch| {
+                patch.keys().any(|key| {
+                    crate::domain::launch_scheme::SETTING_KEYS.contains(&key.as_str())
+                        || [
+                            "window_layout_enabled",
+                            "active_window_layout_id",
+                            "window_layouts",
+                        ]
+                        .contains(&key.as_str())
+                })
+            });
+            if working
+                && current.launch_session.as_ref().map(|session| &session.id) != expected.as_ref()
+            {
+                return Err(AppError::ConfigWriteError(
+                    "本次运行已变化，请重新打开设置".into(),
+                ));
+            }
+        }
         current.apply_user_patch(patch)
     }
 
     fn prepare(
         &self,
         previous: Option<&GlobalConfig>,
-        candidate: GlobalConfig,
+        mut candidate: GlobalConfig,
     ) -> Result<GlobalConfig, AppError> {
+        if self.preserve_schemes {
+            if candidate.launch_session.as_ref().map(|session| &session.id)
+                != previous
+                    .and_then(|config| config.launch_session.as_ref())
+                    .map(|session| &session.id)
+            {
+                return Err(AppError::ConfigWriteError(
+                    "本次运行已变化，请重新打开设置".into(),
+                ));
+            }
+            candidate.launch_groups = previous
+                .map(|config| config.launch_groups.clone())
+                .unwrap_or_default();
+            candidate.launch_session = previous.and_then(|config| config.launch_session.clone());
+        }
         if self.profile_transition {
             // This private policy is used only by the mode-only mutation below.
             // Unrelated stale paths/module drafts must not block a safe pause.
@@ -333,6 +372,42 @@ mod validation_tests {
     use crate::application::configuration::ConfigurationPolicy;
     use crate::commands::account::{AccountManager, AccountMeta};
 
+    #[test]
+    fn ordinary_full_save_cannot_replace_saved_schemes() {
+        let state = std::sync::Arc::new(crate::state::AppState::new());
+        let mut policy = GlobalConfigPolicy::new(&state);
+        policy.preserve_schemes = true;
+        let mut current = GlobalConfig::default();
+        current.launch_groups.push(LaunchGroup {
+            id: "saved".into(),
+            name: "Saved".into(),
+            ..Default::default()
+        });
+        let mut stale = current.clone();
+        stale.launch_groups.clear();
+        stale.theme = "forest".into();
+        let saved = policy.prepare(Some(&current), stale).unwrap();
+        assert_eq!(saved.launch_groups, current.launch_groups);
+        assert_eq!(saved.theme, "forest");
+        assert!(policy
+            .apply_patch(&current, serde_json::json!({ "launch_groups": [] }))
+            .is_err());
+    }
+
+    #[test]
+    fn working_settings_from_a_previous_run_are_rejected() {
+        let state = std::sync::Arc::new(crate::state::AppState::new());
+        let mut policy = GlobalConfigPolicy::new(&state);
+        policy.expected_session = Some(Some("old-run".into()));
+        let current = GlobalConfig::default();
+        assert!(policy
+            .apply_patch(&current, serde_json::json!({ "rune_audio_enabled": false }))
+            .is_err());
+        assert!(policy
+            .apply_patch(&current, serde_json::json!({ "theme": "forest" }))
+            .is_ok());
+    }
+
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let unique = format!(
             "d2rhub_{name}_{}_{}",
@@ -542,6 +617,8 @@ mod validation_tests {
     fn launch_groups_are_trimmed_and_deduplicated_without_changing_member_order() {
         let mut config = GlobalConfig {
             launch_groups: vec![LaunchGroup {
+                revision: 0,
+                environment: None,
                 id: "  primary  ".to_string(),
                 name: "  主力队  ".to_string(),
                 account_ids: vec![
@@ -569,6 +646,8 @@ mod validation_tests {
     fn launch_group_members_are_authoritative_and_keep_the_legacy_id_mirror() {
         let mut config = GlobalConfig {
             launch_groups: vec![LaunchGroup {
+                revision: 0,
+                environment: None,
                 id: " plan ".to_string(),
                 name: " 方案 ".to_string(),
                 account_ids: vec!["stale-account".to_string()],
@@ -615,12 +694,16 @@ mod validation_tests {
         let mut config = GlobalConfig {
             launch_groups: vec![
                 LaunchGroup {
+                    revision: 0,
+                    environment: None,
                     id: "group-1".to_string(),
                     name: "Farm".to_string(),
                     account_ids: vec!["account-a".to_string()],
                     members: Vec::new(),
                 },
                 LaunchGroup {
+                    revision: 0,
+                    environment: None,
                     id: "group-2".to_string(),
                     name: "farm".to_string(),
                     account_ids: vec!["account-b".to_string()],
@@ -642,12 +725,16 @@ mod validation_tests {
         let mut config = GlobalConfig {
             launch_groups: vec![
                 LaunchGroup {
+                    revision: 0,
+                    environment: None,
                     id: "only".to_string(),
                     name: "单账号组".to_string(),
                     account_ids: vec!["account-a".to_string()],
                     members: Vec::new(),
                 },
                 LaunchGroup {
+                    revision: 0,
+                    environment: None,
                     id: "mixed".to_string(),
                     name: "混合组".to_string(),
                     account_ids: vec!["account-a".to_string(), "account-b".to_string()],
@@ -694,6 +781,8 @@ mod validation_tests {
             rune_audio_target_account: retired_id.clone(),
             keep_battle_net_account_id: Some(retired_id.to_ascii_uppercase()),
             launch_groups: vec![LaunchGroup {
+                revision: 0,
+                environment: None,
                 id: "stale".to_string(),
                 name: "陈旧方案".to_string(),
                 account_ids: vec![retired_id.clone()],
@@ -726,12 +815,16 @@ mod validation_tests {
         let mut config = GlobalConfig {
             launch_groups: vec![
                 LaunchGroup {
+                    revision: 0,
+                    environment: None,
                     id: "group-a".to_string(),
                     name: "A".to_string(),
                     account_ids: Vec::new(),
                     members: Vec::new(),
                 },
                 LaunchGroup {
+                    revision: 0,
+                    environment: None,
                     id: "group-b".to_string(),
                     name: "B".to_string(),
                     account_ids: Vec::new(),
@@ -1995,6 +2088,8 @@ impl GlobalConfig {
             if matches!(
                 key.as_str(),
                 "version"
+                    | "launch_groups"
+                    | "launch_session"
                     | "accounts_dir"
                     | "legacy_path_migration"
                     | "feature_profile"
@@ -2023,6 +2118,9 @@ impl GlobalConfig {
     pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
         let mut removed = false;
         for group in &mut self.launch_groups {
+            if group.environment.is_some() {
+                continue;
+            }
             let previous_len = group.account_ids.len();
             group
                 .account_ids
@@ -3172,6 +3270,8 @@ fn commit_feature_profile(
         let policy = GlobalConfigPolicy {
             state,
             profile_transition: true,
+            preserve_schemes: false,
+            expected_session: None,
         };
         let observer = ProfileConfigurationObserver {
             runtime: RuntimeConfigurationObserver {
@@ -3325,9 +3425,14 @@ pub fn save_global_config(
     state: tauri::State<'_, SharedState>,
     config: GlobalConfig,
 ) -> Result<GlobalConfig, AppError> {
+    let _activation = state
+        .runtime_activation_lock
+        .try_lock()
+        .ok_or_else(|| AppError::ConfigWriteError("启动配置正在应用，请稍后重试".into()))?;
     crate::input_listener::with_shortcut_routing_transaction(|| {
         let repository = GlobalConfigRepository::new(&state.app_data_dir);
-        let policy = GlobalConfigPolicy::new(state.inner());
+        let mut policy = GlobalConfigPolicy::new(state.inner());
+        policy.preserve_schemes = true;
         let observer = RuntimeConfigurationObserver {
             state: state.inner(),
             app: Some(&app),
@@ -3343,10 +3448,17 @@ pub fn patch_global_config(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     patch: serde_json::Value,
+    expected_session_id: Option<String>,
 ) -> Result<GlobalConfig, AppError> {
+    let _activation = state
+        .runtime_activation_lock
+        .try_lock()
+        .ok_or_else(|| AppError::ConfigWriteError("启动配置正在应用，请稍后重试".into()))?;
     crate::input_listener::with_shortcut_routing_transaction(|| {
         let repository = GlobalConfigRepository::new(&state.app_data_dir);
-        let policy = GlobalConfigPolicy::new(state.inner());
+        let mut policy = GlobalConfigPolicy::new(state.inner());
+        policy.preserve_schemes = true;
+        policy.expected_session = Some(expected_session_id);
         let observer = RuntimeConfigurationObserver {
             state: state.inner(),
             app: Some(&app),
@@ -3381,7 +3493,7 @@ pub fn patch_desktop_pet_settings(
             "桌宠窗口无权修改全局配置字段: {field}"
         )));
     }
-    patch_global_config(app, state, patch)
+    patch_global_config(app, state, patch, None)
 }
 
 #[cfg(test)]

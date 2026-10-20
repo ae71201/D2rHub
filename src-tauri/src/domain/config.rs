@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 ///
 /// The command/application layer owns migrations, while this domain module owns
 /// the stable serialized shape and defaults.
-pub(crate) const CURRENT_CONFIG_VERSION: u32 = 11;
+pub(crate) const CURRENT_CONFIG_VERSION: u32 = 12;
 
 pub(crate) const FEATURE_PROFILE_NORMAL: &str = "normal";
 pub(crate) const FEATURE_PROFILE_MINIMAL: &str = "minimal";
@@ -63,6 +63,8 @@ pub struct ExternalAudioTarget {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchGroupMember {
+    #[serde(default)]
+    pub snapshot: Option<super::launch_scheme::AccountLaunchSnapshot>,
     pub account_id: String,
     /// None 表示由旧版启动组迁移而来，继续继承账号默认 Mod；Some("") 表示明确不使用 Mod。
     #[serde(default)]
@@ -82,8 +84,12 @@ pub struct LaunchGroupMember {
     pub fps: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LaunchGroup {
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub environment: Option<super::launch_scheme::SchemeEnvironment>,
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -100,6 +106,8 @@ pub struct LaunchGroup {
 /// configuration without loading those feature implementations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
+    #[serde(default)]
+    pub launch_session: Option<super::launch_scheme::LaunchSession>,
     pub version: u32,
     #[serde(default)]
     pub cn_battle_net_path: String,
@@ -475,6 +483,7 @@ impl GlobalConfig {
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
+            launch_session: None,
             version: CURRENT_CONFIG_VERSION,
             cn_battle_net_path: String::new(),
             cn_game_path: String::new(),

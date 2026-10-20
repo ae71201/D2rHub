@@ -8,6 +8,8 @@ pub mod diagnostics;
 pub mod disclosure;
 pub mod global_config;
 pub mod launch;
+pub(crate) mod launch_scheme;
+pub(crate) mod launch_scheme_recovery;
 pub mod pet;
 pub mod room_automation;
 pub mod settings;

@@ -1,3 +1,4 @@
+import { useGlobalConfig } from "../../../store/globalConfig";
 import type { Dispatch, SetStateAction } from "react";
 import { Input } from "../../../components/ui/Input";
 import { ResolutionInput } from "../../../components/ui/ResolutionInput";
@@ -116,6 +117,8 @@ export function AccountsPanel({
   const gameSettingsError = gameSettingsLoadError
     ? describeGameSettingsLoadError(gameSettingsLoadError)
     : null;
+  const session = useGlobalConfig(state => state.config?.launch_session);
+  const runningSession = session && accounts.some(account => account.is_running && session.scheme.account_ids.includes(account.id));
   return (
 <div className="space-y-3 p-1">
   {accounts.length === 0 ? (
@@ -125,7 +128,8 @@ export function AccountsPanel({
       <div className="space-y-1.5 max-[880px]:order-1 max-[880px]:flex max-[880px]:gap-2 max-[880px]:space-y-0 max-[880px]:overflow-x-auto max-[880px]:pb-1">
         {accounts.map((a, idx) => {
           const active = a.id === selectedAccountId;
-          const overrideEnabled = !!a.has_customized_settings;
+          const inSession = !!runningSession && session.scheme.account_ids.includes(a.id);
+          const overrideEnabled = inSession || !!a.has_customized_settings;
           return (
             <div
               key={a.id}
@@ -158,11 +162,12 @@ export function AccountsPanel({
                     <input
                       type="checkbox"
                       className="sr-only"
+                      disabled={inSession}
                       checked={overrideEnabled}
                       onChange={e => void handleToggleAccountSettingsMode(a.id, e.target.checked)}
                     />
                     <span className={overrideEnabled ? "check-box checked" : "check-box"} />
-                    <span>覆盖游戏配置</span>
+                    <span>{inSession ? "本次独立配置" : "覆盖游戏配置"}</span>
                   </label>
                   <span className={a.initialized ? "account-state-dot" : "account-state-dot warn"} />
                 </div>

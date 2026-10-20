@@ -3,7 +3,7 @@ import type { SettingsLanguage } from "../settings/settingsRegistry";
 export const ROOM_AUTOMATION_COPY = {
   "zh-CN": {
     enableLabel: "启用",
-    saveLaunchScheme: "保存启动方案",
+    saveLaunchScheme: "创建启动方案…",
     retrySave: "重试保存",
     followTrigger: "跟随触发",
     selectAllFollowers: "全选",
@@ -115,7 +115,7 @@ export const ROOM_AUTOMATION_COPY = {
   },
   "en-US": {
     enableLabel: "Enable",
-    saveLaunchScheme: "Save launch scheme",
+    saveLaunchScheme: "Create launch scheme…",
     retrySave: "Retry save",
     followTrigger: "Follow trigger",
     selectAllFollowers: "Select all",

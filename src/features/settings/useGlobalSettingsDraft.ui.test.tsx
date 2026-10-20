@@ -12,7 +12,7 @@ vi.mock("../../platform/tauri", () => ({ invokeCommand: vi.fn(), listenEvent: vi
 
 const initial = {
   theme: "light", font_scale: "default", app_language: "zh-CN", main_opacity: 95,
-  agent_delay_secs: 2, enable_tz_overlay: true, launch_groups: [],
+  agent_delay_secs: 2, enable_tz_overlay: true, launch_groups: [], rune_audio_tracked_categories: [],
   cn_game_path: "C:\\Games\\D2R", global_game_path: "",
 } as unknown as GlobalConfig;
 
@@ -46,10 +46,10 @@ describe("isolated settings edit session", () => {
     const { result } = mount();
     act(() => result.current.updateConfig(config => {
       config.theme = "onyx";
-      config.launch_groups.push({ id: "local", name: "Local", account_ids: [] });
+      config.rune_audio_tracked_categories.push("runes");
     }));
     expect(result.current.config?.theme).toBe("onyx");
-    expect(result.current.config?.launch_groups).toHaveLength(1);
+    expect(result.current.config?.rune_audio_tracked_categories).toEqual(["runes"]);
     expect(useGlobalConfig.getState().config).toEqual(initial);
     expect(result.current.hasChanges).toBe(true);
   });

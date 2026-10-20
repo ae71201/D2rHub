@@ -13,6 +13,8 @@ use super::LaunchOrchestrator;
 /// React caller nor the Tauri adapter can bypass the core launch invariants.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LaunchAccountOverrides {
+    #[serde(default)]
+    pub snapshot: Option<crate::domain::launch_scheme::AccountLaunchSnapshot>,
     pub mod_args: String,
     #[serde(default)]
     pub position_preset_id: Option<String>,
@@ -30,6 +32,7 @@ pub struct LaunchAccountEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchGraphicsOverride {
+    pub game_settings: Option<serde_json::Map<String, serde_json::Value>>,
     pub resolution: String,
     pub fps: u32,
 }
@@ -149,6 +152,10 @@ pub fn validate_graphics_override(
                 ));
             }
             Ok(Some(LaunchGraphicsOverride {
+                game_settings: overrides
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.game_settings.clone()),
                 resolution: resolution.to_string(),
                 fps,
             }))
@@ -168,6 +175,40 @@ fn apply_account_overrides(
     // Schemes select from the shared Mod catalog, not the account's historical
     // mod_list. The launch adapter checks the effective installation on disk.
     account.mod_args = mod_args;
+
+    if let Some(snapshot) = &overrides.snapshot {
+        let saved =
+            crate::domain::account::GameRegion::parse(snapshot.region.as_deref().unwrap_or(""))?;
+        let current = account
+            .region
+            .as_deref()
+            .map(crate::domain::account::GameRegion::parse)
+            .transpose()?
+            .unwrap_or(saved);
+        if saved.edition() != current.edition() || snapshot.game_settings.is_empty() {
+            return Err(AppError::ConfigReadError(
+                "账号身份已变化或方案快照无效，请编辑并保存方案".into(),
+            ));
+        }
+        if saved != current
+            && crate::domain::account::AuthMode::parse(account.auth_mode.as_deref())?
+                != crate::domain::account::AuthMode::Token
+        {
+            return Err(AppError::ConfigReadError(
+                "战网账号区服已变化，请重新编辑方案；仅 Token 账号支持独立区服".into(),
+            ));
+        }
+        // The scheme supplies the complete game settings. Never read/copy the
+        // account's mutable Settings.json before applying this snapshot.
+        account.has_customized_settings = false;
+        account.region = snapshot.region.clone();
+        account.language = snapshot.language.clone();
+        account.voicelanguage = snapshot.voicelanguage.clone();
+        account.window_x = snapshot.position.map(|position| position.0);
+        account.window_y = snapshot.position.map(|position| position.1);
+        account.active_position_id = None;
+        return Ok(account);
+    }
 
     // Layout geometry supersedes a scheme's position capsule, including a
     // stale/deleted reference. Keep the account default intact for later use.
@@ -210,8 +251,8 @@ pub fn launch_queue_can_continue(success: bool, mutex_closed: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        launch_queue_can_continue, validate_graphics_override, LaunchAccountEntry,
-        LaunchAccountOverrides, LaunchBatchPlan,
+        apply_account_overrides, launch_queue_can_continue, validate_graphics_override,
+        LaunchAccountEntry, LaunchAccountOverrides, LaunchBatchPlan,
     };
     use crate::domain::account::{AccountMeta, WindowPositionPreset};
 
@@ -229,8 +270,40 @@ mod tests {
         account
     }
 
+    #[test]
+    fn snapshot_survives_deleted_position_and_changed_account_defaults() {
+        let mut account = account();
+        account.region = Some("KR".into());
+        account.auth_mode = Some("token".into());
+        account.position_presets.clear();
+        let original = account.clone();
+        let mut settings = serde_json::Map::new();
+        settings.insert("Texture Quality".into(), serde_json::json!(3));
+        let mut requested = overrides();
+        requested.snapshot = Some(crate::domain::launch_scheme::AccountLaunchSnapshot {
+            game_settings: settings.clone(),
+            position: Some((-100, 50)),
+            region: Some("KR".into()),
+            language: Some("zhTW".into()),
+            voicelanguage: Some("enUS".into()),
+        });
+        let effective = apply_account_overrides(account, &requested, false).unwrap();
+        assert_eq!(effective.window_x, Some(-100));
+        assert_eq!(effective.window_y, Some(50));
+        assert_ne!(effective.mod_args, original.mod_args);
+        assert!(!effective.has_customized_settings);
+        assert_eq!(
+            validate_graphics_override(&requested)
+                .unwrap()
+                .unwrap()
+                .game_settings,
+            Some(settings)
+        );
+    }
+
     fn overrides() -> LaunchAccountOverrides {
         LaunchAccountOverrides {
+            snapshot: None,
             mod_args: " -mod plan ".to_string(),
             position_preset_id: Some("desk".to_string()),
             resolution: Some("1920x1080".to_string()),

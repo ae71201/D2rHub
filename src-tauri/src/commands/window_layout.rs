@@ -22,6 +22,12 @@ struct AccountWindowIdentity {
 fn identities(config: &GlobalConfig, state: &SharedState) -> Vec<AccountWindowIdentity> {
     AccountManager::list_ids(&config.accounts_dir)
         .into_iter()
+        .filter(|id| {
+            config
+                .launch_session
+                .as_ref()
+                .is_none_or(|session| session.scheme.account_ids.contains(id))
+        })
         .filter_map(|id| {
             let account = AccountManager::load_meta(&config.accounts_dir, &id).ok()?;
             Some(AccountWindowIdentity {
@@ -186,6 +192,7 @@ pub(crate) fn calibrate_game_frame(
         .into_iter()
         .enumerate()
     {
+        let index = layout_slot_index(&config, &id, index);
         let (Some(old), Some(new)) = (before.get(index), after.get(index)) else {
             continue;
         };
@@ -225,6 +232,9 @@ pub async fn get_game_layout_account_order(
         if observed.is_empty() {
             return Ok(Vec::new());
         }
+        if let Some(session) = &config.launch_session {
+            return Ok(session.scheme.account_ids.clone());
+        }
         Ok(match_accounts(&identities(&config, &state), &observed)
             .into_iter()
             .map(|(id, _)| id)
@@ -236,6 +246,7 @@ pub async fn get_game_layout_account_order(
 
 #[tauri::command]
 pub async fn capture_account_window_position(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
     activate: Option<bool>,
@@ -288,7 +299,25 @@ pub async fn capture_account_window_position(
         account
             .replace_position_presets(active_id, presets)
             .map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
-        AccountManager::save_meta(&config.accounts_dir, &account)?;
+        let in_session = crate::commands::launch_scheme::update_current_member(
+            &state,
+            &app,
+            &account_id,
+            |member| {
+                if activate.unwrap_or(true) {
+                    member.position_preset_id = account.active_position_id.clone();
+                    member
+                        .snapshot
+                        .as_mut()
+                        .ok_or_else(|| AppError::ConfigWriteError("本次账号配置缺失".into()))?
+                        .position = account.window_x.zip(account.window_y);
+                }
+                Ok(())
+            },
+        )?;
+        if !in_session {
+            AccountManager::save_meta(&config.accounts_dir, &account)?;
+        }
         state
             .multi_instance()
             .instances()
@@ -308,6 +337,7 @@ pub(crate) struct LaunchLayoutPlan {
     rectangles: Vec<LayoutRect>,
     existing: Vec<String>,
     next: usize,
+    fixed_order: Vec<String>,
 }
 
 impl LaunchLayoutPlan {
@@ -317,6 +347,14 @@ impl LaunchLayoutPlan {
             .any(|id| id.eq_ignore_ascii_case(account_id))
     }
     pub fn target(&self, account_id: &str) -> Option<LayoutRect> {
+        if !self.fixed_order.is_empty() {
+            return self
+                .fixed_order
+                .iter()
+                .position(|id| id.eq_ignore_ascii_case(account_id))
+                .and_then(|index| self.rectangles.get(index))
+                .copied();
+        }
         let index = self
             .existing
             .iter()
@@ -375,7 +413,18 @@ pub(crate) fn prepare_launch_layout(
             rectangles.len()
         )));
     }
+    let fixed_order = config
+        .launch_session
+        .as_ref()
+        .map(|session| session.scheme.account_ids.clone())
+        .unwrap_or_default();
+    if !fixed_order.is_empty() && fixed_order.len() > rectangles.len() {
+        return Err(AppError::ConfigReadError(
+            "布局位置不足，无法保留本次方案的账号位置对应关系".into(),
+        ));
+    }
     Ok(Some(LaunchLayoutPlan {
+        fixed_order,
         next: existing.len(),
         existing,
         rectangles,
@@ -386,6 +435,20 @@ pub(crate) fn prepare_launch_layout(
 pub struct LayoutRestoreResult {
     pub applied: Vec<String>,
     pub failures: Vec<String>,
+}
+
+fn layout_slot_index(config: &GlobalConfig, id: &str, fallback: usize) -> usize {
+    config
+        .launch_session
+        .as_ref()
+        .and_then(|session| {
+            session
+                .scheme
+                .account_ids
+                .iter()
+                .position(|account| account.eq_ignore_ascii_case(id))
+        })
+        .unwrap_or(fallback)
 }
 
 pub(crate) fn restore_layout(
@@ -416,13 +479,18 @@ pub(crate) fn restore_layout(
     };
     // Back-to-front: the first-launched primary window remains on top, without
     // stealing focus. Enumeration and executable matching happen only once.
-    for (index, (id, window)) in matched.iter().enumerate().rev() {
+    for (ordinal, (id, window)) in matched.iter().enumerate().rev() {
+        let index = layout_slot_index(config, id, ordinal);
+        let Some(rectangle) = rectangles.get(index).copied() else {
+            result
+                .failures
+                .push(format!("账号 {id} 对应的布局位置 {} 不存在", index + 1));
+            continue;
+        };
         let registry = state.multi_instance().instances();
         registry.record_discovered(id, window.pid);
         let applied = registry
-            .override_window_geometry(id, window.pid, || {
-                windows::apply(window, rectangles[index], true)
-            })
+            .override_window_geometry(id, window.pid, || windows::apply(window, rectangle, true))
             .unwrap_or_else(|| Err(AppError::FileError("账号窗口状态已变化，请重试".into())));
         match applied {
             Ok(()) => {
@@ -625,11 +693,34 @@ mod tests {
             rectangles: vec![rect, LayoutRect { x: 640, ..rect }],
             existing: vec![],
             next: 0,
+            fixed_order: Vec::new(),
         };
         assert_eq!(plan.target("acount1"), Some(rect));
         assert_eq!(plan.target("acount2"), Some(rect));
         plan.record_started("acount2");
         assert_eq!(plan.target("acount1").unwrap().x, 640);
         assert_eq!(plan.target("acount2"), Some(rect));
+    }
+
+    #[test]
+    fn scheme_slots_do_not_shift_when_an_earlier_account_fails_or_retries() {
+        let first = LayoutRect {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        };
+        let second = LayoutRect { x: 1280, ..first };
+        let mut plan = LaunchLayoutPlan {
+            rectangles: vec![first, second],
+            existing: vec![],
+            next: 0,
+            fixed_order: vec!["primary".into(), "follower".into()],
+        };
+        assert_eq!(plan.target("follower"), Some(second));
+        plan.record_started("follower");
+        assert_eq!(plan.target("primary"), Some(first));
+        assert_eq!(plan.target("follower"), Some(second));
+        assert_eq!(plan.target("unrelated"), None);
     }
 }

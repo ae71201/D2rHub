@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitEvent, invokeCommand, listenEvent } from "../platform/tauri";
 
+import { useGlobalConfig } from "../store/globalConfig";
 import { useAccounts } from "../store/accounts";
 import { readFramerateCap, writeFramerateCap } from "../utils/gameSettings";
 
@@ -69,6 +70,12 @@ function hasPatch(patch: SettingsPatch): boolean {
 }
 
 export function useAccountQuickSettings(accountId: string, enabled: boolean) {
+  const sessionKey = useGlobalConfig(state => state.config?.launch_session?.id ?? "");
+  const anyRunning = useAccounts(state => state.accounts.some(account => account.is_running));
+  const scopeKey = sessionKey ? `${sessionKey}:${anyRunning}` : "default";
+  const previousScope = useRef(scopeKey);
+  const readEpoch = useRef(0);
+
   const [settings, setSettings] = useState<AccountQuickSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -83,12 +90,13 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
 
   const load = useCallback((force = false): Promise<void> => {
     if (loadedRef.current && !force) return Promise.resolve();
-    if (loadPromiseRef.current) return loadPromiseRef.current;
+    if (loadPromiseRef.current) return force ? loadPromiseRef.current.then(() => load(true), () => load(true)) : loadPromiseRef.current;
+    const epoch = readEpoch.current;
 
     if (mountedRef.current) setLoading(true);
     const request = invokeCommand<Record<string, unknown>>("get_account_settings", { accountId })
       .then((raw) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || epoch !== readEpoch.current) return;
         setSettings(applyPendingPatch(parseSettings(raw), pendingPatchRef.current));
         loadedRef.current = true;
         setLoaded(true);
@@ -174,6 +182,16 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
     settingsFlushers.set(accountId, flush);
     return () => { if (settingsFlushers.get(accountId) === flush) settingsFlushers.delete(accountId); };
   }, [accountId, flush]);
+
+  useEffect(() => {
+    if (previousScope.current === scopeKey) return;
+    previousScope.current = scopeKey;
+    readEpoch.current++;
+    loadedRef.current = false;
+    pendingPatchRef.current = {};
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (enabled) void load(true).catch(() => undefined);
+  }, [scopeKey, load]);
 
   useEffect(() => {
     if (!enabled) return;

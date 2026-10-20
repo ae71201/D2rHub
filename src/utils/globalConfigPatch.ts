@@ -4,6 +4,8 @@ export type GlobalConfigPatch = Partial<GlobalConfig>;
 
 const SERVER_MANAGED_CONFIG_KEYS = new Set<keyof GlobalConfig>([
   "version",
+  "launch_groups",
+  "launch_session",
   "accounts_dir",
   "legacy_path_migration",
   "feature_profile",

@@ -37,7 +37,8 @@ const group: LaunchGroup = {
 afterEach(cleanup);
 
 describe("launch group controls", () => {
-  it("selects a launch scheme on the first click and launches it on the second", () => {
+  it("opens incomplete legacy schemes directly for explicit editing", () => {
+    const onEdit = vi.fn();
     const onLaunch = vi.fn();
     render(
       <LaunchGroupPanel
@@ -47,17 +48,14 @@ describe("launch group controls", () => {
         onClose={vi.fn()}
         onLaunch={onLaunch}
         onCreate={vi.fn()}
-        onEdit={vi.fn()}
+        onEdit={onEdit}
         onToggleFavorite={vi.fn()}
       />,
     );
 
-    const launch = screen.getByTitle(`选择启动方案“${group.name}”；再次点击启动`);
-    fireEvent.click(launch);
+    fireEvent.click(screen.getByTitle(`补全启动方案“${group.name}”`));
     expect(onLaunch).not.toHaveBeenCalled();
-    expect(launch.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(launch);
-    expect(onLaunch).toHaveBeenCalledWith(group);
+    expect(onEdit).toHaveBeenCalledWith(group);
   });
 
   it("adds and removes a scheme from the main action bar through the star control", () => {

@@ -522,6 +522,27 @@ impl WorkflowTaskState {
         Ok(self.snapshot())
     }
 
+    /// A consumed/missing native form cannot be resumed safely. Keep the
+    /// original failure for diagnostics, but withdraw the retry action.
+    pub fn require_fresh_preparation(
+        &mut self,
+        task_id: WorkflowTaskId,
+        reason: &str,
+    ) -> Result<WorkflowStatus, WorkflowStateError> {
+        self.require_task(task_id)?;
+        if self.status.recovery_action == Some(WorkflowRecoveryAction::ResumeFollowers) {
+            self.status.revision = self.next_revision()?;
+            self.status.recovery_action = None;
+            let guidance =
+                format!("{reason}；请检查游戏界面并重新触发创建快捷键，不能直接重试跟随");
+            self.status.last_error = Some(match self.status.last_error.take() {
+                Some(error) => format!("{error}；{guidance}"),
+                None => guidance,
+            });
+        }
+        Ok(self.snapshot())
+    }
+
     fn finish_complete(&mut self) {
         self.status.phase = WorkflowPhase::Complete;
         self.status.running = false;

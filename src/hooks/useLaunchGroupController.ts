@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { showToast } from "../components/ui/Toast";
 import { useAccounts } from "../store/accounts";
 import { useGlobalConfig } from "../store/globalConfig";
 import { useLaunch } from "../store/launch";
-import type { AccountMeta, LaunchGroup, LaunchGroupMember, ModCapsulePool } from "../store/types";
+import { invokeCommand } from "../platform/tauri";
+import type { RoomAutomationConfigSnapshot } from "../features/roomAutomation/types";
+import { readFramerateCap } from "../utils/gameSettings";
+import type { SchemeEnvironment, AccountMeta, LaunchGroup, LaunchGroupMember, ModCapsulePool } from "../store/types";
 import {
   inspectLaunchGroup,
-  launchEntriesForGroup,
   launchGroupNameExists,
   MAX_FAVORITE_LAUNCH_GROUPS,
   materializeLaunchGroupMembers,
@@ -15,9 +17,12 @@ import {
   normalizeFavoriteLaunchGroupIds,
   toggleFavoriteLaunchGroupId,
 } from "../utils/launchGroups";
-import { requiresTokenMigration } from "../utils/regionPaths";
+import { requiresTokenMigration, normalizeAccountRegion, firstConfiguredRegion } from "../utils/regionPaths";
 
 export interface LaunchGroupDraft {
+  key: string;
+  revision: number | null;
+  environment: SchemeEnvironment;
   id: string | null;
   name: string;
   members: LaunchGroupMember[];
@@ -45,25 +50,90 @@ function createLaunchGroupMember(account: AccountMeta): LaunchGroupMember {
 export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null) {
   const { config, saving, patch } = useGlobalConfig();
   const { accounts } = useAccounts();
-  const { startSchemeLaunch } = useLaunch();
+  const { startSavedScheme } = useLaunch();
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const opening = useRef(0);
   const [draft, setDraft] = useState<LaunchGroupDraft | null>(null);
   const [pendingDelete, setPendingDelete] = useState<LaunchGroup | null>(null);
 
-  const create = () => {
-    setDraft({
-      id: null,
-      name: nextLaunchGroupName(config?.launch_groups ?? []),
-      members: [],
-    });
+  const openDraft = async (group?: LaunchGroup, duplicate = false) => {
+    const request = ++opening.current;
+    setBusy(true); setLoadError(null);
+    try {
+      const environment = group?.environment ? structuredClone(group.environment)
+        : await invokeCommand<SchemeEnvironment>("get_launch_scheme_defaults");
+      if (group && !group.id && config) {
+        const snapshot = await invokeCommand<RoomAutomationConfigSnapshot>("room_automation_get_config");
+        environment.room = structuredClone(snapshot.config);
+        for (const key of Object.keys(environment.settings) as (keyof SchemeEnvironment["settings"])[]) {
+          if (config[key] !== undefined) Object.assign(environment.settings, { [key]: structuredClone(config[key]) });
+        }
+        environment.settings.rune_audio_external_target = null;
+        environment.layout = structuredClone(config.window_layout_enabled ? config.window_layouts?.find(layout => layout.id === config.active_window_layout_id) ?? null : null);
+      }
+      if (request !== opening.current) return;
+      setDraft({ key: createLaunchGroupId(), id: duplicate ? null : group?.id || null,
+        revision: duplicate ? null : group?.id ? group.revision ?? 0 : null,
+        name: duplicate ? `${group!.name} 副本` : group?.name ?? nextLaunchGroupName(config?.launch_groups ?? []),
+        members: group ? materializeLaunchGroupMembers(group, accounts) : [], environment });
+    } catch (error) { showToast("error", `读取方案失败: ${error}`); }
+    finally { if (request === opening.current) setBusy(false); }
   };
+  const create = () => { void openDraft(); };
+  const edit = (group: LaunchGroup) => { void openDraft(group); };
+  const duplicate = () => {
+    if (!draft) return;
+    setDraft({ ...structuredClone(draft), key: createLaunchGroupId(), id: null, revision: null, name: `${draft.name} 副本` });
+  };
+  const missing = draft?.members.filter(member => !member.snapshot).map(member => member.account_id).join("|") ?? "";
+  useEffect(() => {
+    if (!draft || !missing) return;
+    let cancelled = false;
+    setLoadError(null);
+    void Promise.allSettled(draft.members.filter(member => !member.snapshot).map(async member => {
+      const account = accounts.find(account => account.id === member.account_id);
+      if (!account) throw new Error(`账号 ${member.account_id} 已删除，请移除`);
+      const settings = await invokeCommand<Record<string, unknown>>("get_account_settings", { accountId: member.account_id });
+      if (!Object.keys(settings).length) throw new Error(`${account.display_name} 游戏设置为空`);
+      const position = account.position_presets?.find(position => position.id === member.position_preset_id);
+      return { ...member, graphics_configured: true,
+        resolution: member.graphics_configured ? member.resolution : String(settings["Screen Resolution (Windowed)"] ?? "1280x720"),
+        fps: member.graphics_configured ? member.fps : readFramerateCap(settings, 30),
+        snapshot: { game_settings: settings, position: position ? [position.x, position.y] as [number, number] : null,
+          region: normalizeAccountRegion(account.region) ?? firstConfiguredRegion(config, account.auth_mode === "token" ? "token" : "bnet"), language: account.language ?? null, voicelanguage: account.voicelanguage ?? null } };
+    })).then(results => {
+      if (cancelled) return;
+      const loaded = results.filter(result => result.status === "fulfilled").map(result => result.value);
+      const errors = results.filter(result => result.status === "rejected").map(result => String(result.reason));
+      setLoadError(errors.length ? errors.join("；") : null);
+      setDraft(current => current?.key === draft.key ? { ...current, members: current.members.map(member => {
+        const result = loaded.find(result => result.account_id === member.account_id);
+        return result && !member.snapshot ? { ...member, snapshot: result.snapshot,
+          graphics_configured: true, resolution: member.graphics_configured ? member.resolution : result.resolution,
+          fps: member.graphics_configured ? member.fps : result.fps } : member;
+      }) } : current);
+    });
+    return () => { cancelled = true; };
+  }, [draft?.key, missing]);
 
-  const edit = (group: LaunchGroup) => {
-    setDraft({
-      id: group.id,
-      name: group.name,
-      members: materializeLaunchGroupMembers(group, accounts),
-    });
-  };
+  const updateEnvironment = (update: (environment: SchemeEnvironment) => void) => setDraft(current => {
+    if (!current) return current;
+    const environment = structuredClone(current.environment); update(environment);
+    return { ...current, environment };
+  });
+  const moveMember = (id: string, offset: number) => setDraft(current => {
+    if (!current) return current;
+    const members = [...current.members], index = members.findIndex(member => member.account_id === id), next = index + offset;
+    if (index < 0 || next < 0 || next >= members.length) return current;
+    [members[index], members[next]] = [members[next], members[index]];
+    // Keep layout slots attached to their account while changing launch order.
+    const environment = structuredClone(current.environment);
+    if (environment.layout && environment.layout.windows[index] && environment.layout.windows[next]) {
+      [environment.layout.windows[index], environment.layout.windows[next]] = [environment.layout.windows[next], environment.layout.windows[index]];
+    }
+    return { ...current, members, environment };
+  });
 
   const renameDraft = (name: string) => {
     setDraft(current => current ? { ...current, name } : current);
@@ -93,10 +163,11 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
     setDraft(current => {
       if (!current) return current;
       if (current.members.some(member => member.account_id === accountId)) {
-        return {
-          ...current,
-          members: current.members.filter(member => member.account_id !== accountId),
-        };
+        const environment = structuredClone(current.environment);
+        const index = current.members.findIndex(member => member.account_id === accountId);
+        environment.room.follower_account_ids = environment.room.follower_account_ids.filter(id => id !== accountId);
+        if (environment.layout) environment.layout.windows.splice(index, 1);
+        return { ...current, environment, members: current.members.filter(member => member.account_id !== accountId) };
       }
       const account = accounts.find(candidate => candidate.id === accountId);
       if (!account?.initialized || requiresTokenMigration(account.auth_mode, account.region, config)) {
@@ -116,7 +187,7 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
   };
 
   const saveDraft = async () => {
-    if (!config || !draft || saving) return;
+    if (!config || !draft || saving || busy) return;
     const name = draft.name.trim();
     if (!name) {
       showToast("warning", "请输入启动方案名称");
@@ -127,7 +198,7 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
       return;
     }
     if (draft.members.some(member =>
-      !member.graphics_configured || !member.resolution || member.fps == null)) {
+      !member.snapshot || !member.graphics_configured || !member.resolution || member.fps == null)) {
       showToast("warning", "请等待所有已选账号的分辨率与 FPS 加载完成");
       return;
     }
@@ -140,6 +211,8 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
     const savedGroup: LaunchGroup = {
       id,
       name,
+      environment: structuredClone(draft.environment),
+      revision: draft.revision ?? 0,
       account_ids: draft.members.map(member => member.account_id),
       members: draft.members.map(member => ({
         ...member,
@@ -151,28 +224,23 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
         fps: member.fps,
       })),
     };
-    const nextGroups = draft.id
-      ? config.launch_groups.map(group => group.id === draft.id ? savedGroup : group)
-      : [...config.launch_groups, savedGroup];
-
     try {
-      await patch({ launch_groups: nextGroups });
+      setBusy(true);
+      await invokeCommand("save_launch_scheme", { scheme: savedGroup, expectedRevision: draft.revision });
+      await useGlobalConfig.getState().load();
       setDraft(null);
       showToast("success", `启动方案“${name}”已保存`);
     } catch (error) {
       showToast("error", `保存启动方案失败: ${error}`);
-    }
+    } finally { setBusy(false); }
   };
 
   const removePending = async () => {
     if (!config || !pendingDelete || saving) return;
     const group = pendingDelete;
     try {
-      await patch({
-        launch_groups: config.launch_groups.filter(candidate => candidate.id !== group.id),
-        favorite_launch_group_ids: (config.favorite_launch_group_ids ?? [])
-          .filter(groupId => groupId !== group.id),
-      });
+      await invokeCommand("delete_launch_scheme", { id: group.id, expectedRevision: group.revision ?? 0 });
+      await useGlobalConfig.getState().load();
       if (draft?.id === group.id) setDraft(null);
       setPendingDelete(null);
       showToast("success", `启动方案“${group.name}”已删除`);
@@ -212,7 +280,8 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
       showToast("warning", `启动方案“${group.name}”配置不完整，请先修复后再启动`);
       return;
     }
-    void startSchemeLaunch(launchEntriesForGroup(group, accounts));
+    if (!group.environment) { edit(group); showToast("info", "请补全旧方案并保存，再按方案启动"); return; }
+    void startSavedScheme(group.id, group.revision ?? 0);
   };
 
   const requestDraftDelete = () => {
@@ -223,11 +292,12 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
 
   return {
     draft,
+    busy, loadError, duplicate, moveMember, updateEnvironment,
     pendingDelete,
     create,
     edit,
     renameDraft,
-    cancelDraft: () => setDraft(null),
+    cancelDraft: () => { opening.current++; setBusy(false); setDraft(null); },
     selectAll,
     clearSelection,
     toggleAccount,

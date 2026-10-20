@@ -161,8 +161,11 @@ fn configured_account(
         .configuration()
         .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
-    let account = AccountManager::load_meta(&config.accounts_dir, account_id)
+    let mut account = AccountManager::load_meta(&config.accounts_dir, account_id)
         .map_err(|error| error.to_string())?;
+    if let Some(member) = crate::commands::launch_scheme::current_member(state, account_id) {
+        account.mod_args = member.mod_args.unwrap_or_default();
+    }
     if !account.initialized {
         return Err("请先初始化该账号".to_string());
     }
@@ -331,7 +334,7 @@ fn validate_room_tool_capability(
     Ok(())
 }
 
-fn validate_in_game_room_tools_for_arguments(
+pub(crate) fn validate_in_game_room_tools_for_arguments(
     account_name: &str,
     context: &LaunchContext,
     launch_arguments: &str,

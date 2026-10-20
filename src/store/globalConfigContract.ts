@@ -4,6 +4,7 @@ import type { GlobalConfig } from "./types";
 // declaration and compares it with the serialized GlobalConfig field set.
 export const GLOBAL_CONFIG_FIELDS = [
   "version",
+  "launch_session",
   "cn_battle_net_path",
   "cn_game_path",
   "cn_saved_games_path",

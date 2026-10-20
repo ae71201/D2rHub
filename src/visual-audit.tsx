@@ -493,6 +493,23 @@ function installIpcMock() {
     }
 
     switch (cmd) {
+      case "get_launch_scheme_defaults": {
+        const keys = ["rune_audio_enabled", "rune_audio_target_account", "rune_audio_external_target", "rune_audio_detection_threshold", "rune_audio_tracked_categories", "rune_audio_min_rune_number", "rune_audio_min_gem_level", "rune_audio_tracked_charm_codes", "enable_tz_overlay", "enable_stats_overlay", "launch_trim_memory", "keep_battle_net_account_id", "auto_close_browser", "agent_mode", "agent_delay_secs", "agent_threshold"];
+        return { settings: { ...Object.fromEntries(keys.map(key => [key, (persistedGlobalConfig as unknown as Record<string, unknown>)[key]])), rune_audio_enabled: false, rune_audio_target_account: "", rune_audio_external_target: null, keep_battle_net_account_id: null },
+          room: { ...structuredClone(roomAutomationSnapshot.config), enabled: false, primary_account_id: "", follower_account_ids: [] }, layout: null };
+      }
+      case "save_launch_scheme": {
+        const { scheme } = payload as { scheme: GlobalConfig["launch_groups"][number] };
+        const saved = { ...scheme, revision: (scheme.revision ?? 0) + 1 };
+        persistedGlobalConfig.launch_groups = [...persistedGlobalConfig.launch_groups.filter(group => group.id !== saved.id), saved];
+        return saved;
+      }
+      case "delete_launch_scheme": {
+        const { id } = payload as { id: string };
+        persistedGlobalConfig.launch_groups = persistedGlobalConfig.launch_groups.filter(group => group.id !== id);
+        return null;
+      }
+
       case "pet_get_wardrobe":
       case "pet_settle_activity":
         return structuredClone(petPreview);

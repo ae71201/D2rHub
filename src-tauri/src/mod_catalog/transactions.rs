@@ -196,7 +196,7 @@ pub(super) fn apply_scheme_mod_replacements(
             let member = config
                 .launch_groups
                 .iter_mut()
-                .find(|group| group.id == change.group_id)
+                .find(|group| group.id == change.group_id && group.environment.is_none())
                 .and_then(|group| {
                     group
                         .members

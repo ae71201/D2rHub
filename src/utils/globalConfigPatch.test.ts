@@ -27,9 +27,8 @@ const patch = diffGlobalConfig(base, current);
 assert(
   JSON.stringify(patch) === JSON.stringify({
     theme: "onyx",
-    launch_groups: [{ id: "farm", name: "Farm", account_ids: ["a"] }],
   }),
-  "config diffs include only changed user fields and exclude server-managed fields",
+  "ordinary config diffs never write schemes or server-managed fields",
 );
 assert(hasGlobalConfigPatch(patch), "a changed config produces a non-empty patch");
 assert(!hasGlobalConfigPatch(diffGlobalConfig(base, { ...base })), "an unchanged config produces no patch");

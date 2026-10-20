@@ -1,3 +1,4 @@
+import type { RoomAutomationConfig } from "../features/roomAutomation/types";
 // ── 数据模型 ──
 
 export interface LegacyPathMigration {
@@ -6,7 +7,23 @@ export interface LegacyPathMigration {
   battle_net_path: string;
 }
 
+export interface SchemeEnvironment {
+  settings: Pick<GlobalConfig, "rune_audio_enabled" | "rune_audio_target_account" | "rune_audio_external_target" | "rune_audio_detection_threshold" | "rune_audio_tracked_categories" | "rune_audio_min_rune_number" | "rune_audio_min_gem_level" | "rune_audio_tracked_charm_codes" | "enable_tz_overlay" | "enable_stats_overlay" | "launch_trim_memory" | "keep_battle_net_account_id" | "auto_close_browser" | "agent_mode" | "agent_delay_secs" | "agent_threshold">;
+  room: RoomAutomationConfig;
+  layout: WindowLayout | null;
+}
+
+export interface AccountLaunchSnapshot {
+  game_settings: Record<string, unknown>;
+  position: [number, number] | null;
+  region: string | null;
+  language: string | null;
+  voicelanguage: string | null;
+}
+
 export interface LaunchGroup {
+  revision?: number;
+  environment?: SchemeEnvironment | null;
   id: string;
   name: string;
   account_ids: string[];
@@ -14,6 +31,7 @@ export interface LaunchGroup {
 }
 
 export interface LaunchGroupMember {
+  snapshot?: AccountLaunchSnapshot | null;
   account_id: string;
   /** undefined/null = legacy group inherits the account default; empty string = explicitly no Mod. */
   mod_args?: string | null;
@@ -74,6 +92,7 @@ export interface WindowLayout {
 }
 
 export interface GlobalConfig {
+  launch_session?: { id: string; scheme: LaunchGroup; started_at: string; members?: LaunchGroupMember[] } | null;
   version: number;
   cn_battle_net_path: string;
   cn_game_path: string;
@@ -331,6 +350,7 @@ export interface LaunchResult {
 export interface LaunchAccountEntry {
   account_id: string;
   overrides: {
+    snapshot?: AccountLaunchSnapshot | null;
     mod_args: string;
     position_preset_id: string | null;
     resolution?: string | null;

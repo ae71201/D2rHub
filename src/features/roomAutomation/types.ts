@@ -17,6 +17,7 @@ export type FollowerJoinMode = "simultaneous" | "interval";
 
 export interface RoomAutomationConfig {
   enabled: boolean;
+  join_only?: boolean;
   primary_account_id: string;
   follower_account_ids: string[];
   auto_followers_enabled: boolean;

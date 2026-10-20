@@ -69,22 +69,19 @@ describe("shared Mod feature coordination", () => {
     expect(readRoom).not.toHaveBeenCalled();
   });
 
-  it("saves room participants as a launch scheme with explicit Mods and inherited other settings", async () => {
-    const current = { launch_groups: [] } as unknown as GlobalConfig;
-    const saved = { ...current, launch_groups: [] } as GlobalConfig;
-    const patch = vi.fn(async (value) => ({ ...saved, ...value }));
-    useGlobalConfig.setState({ config: current, patch } as never);
+  it("opens an editor instead of implicitly saving a scheme from the room panel", async () => {
+    const patch = vi.fn();
+    useGlobalConfig.setState({ config: { launch_groups: [] } as unknown as GlobalConfig, patch } as never);
+    const listener = vi.fn();
+    window.addEventListener("edit-launch-scheme-from-room", listener);
     const { result } = renderHook(() => useModFeatureCoordination({
       accounts, trackingTargetId: "main", modCatalog: catalog(), toggleAudio: vi.fn(),
       openProcessing: vi.fn(), onGlobalCommitted: vi.fn(),
     }));
-
     await act(() => result.current.saveRoomLaunchScheme(["main"]));
-    const group = patch.mock.calls[0][0].launch_groups[0];
-    expect(group.account_ids).toEqual(["main"]);
-    expect(group.members[0]).toMatchObject({
-      account_id: "main", mod_args: "-mod Rooms -txt",
-      position_configured: false, graphics_configured: false,
-    });
+    expect(patch).not.toHaveBeenCalled();
+    expect(listener).toHaveBeenCalledOnce();
+    expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual(["main"]);
+    window.removeEventListener("edit-launch-scheme-from-room", listener);
   });
 });

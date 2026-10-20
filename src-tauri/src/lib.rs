@@ -57,6 +57,9 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
     }
     mod_resources::recover_updates(app, state.inner())?;
     mod_catalog::recover_before_launch(state.inner(), app)?;
+    commands::launch_scheme_recovery::recover(state.inner()).map_err(|error| error.to_string())?;
+    commands::launch_scheme_recovery::recover_processes(state.inner(), app)
+        .map_err(|error| error.to_string())?;
     // Internal window creation uses the same activation gate as commands.
     state.runtime_activated.store(true, Ordering::Release);
     if config.optional_features_runtime_allowed() {
@@ -277,6 +280,10 @@ pub fn run() {
             commands::account_transfer::import_accounts,
             // ── 启动引擎 ──
             commands::launch::launch_accounts,
+            commands::launch::launch_saved_scheme,
+            commands::launch_scheme::save_launch_scheme,
+            commands::launch_scheme::delete_launch_scheme,
+            commands::launch_scheme::get_launch_scheme_defaults,
             commands::launch::launch_battle_net_only,
             commands::launch::cancel_launch,
             // ── Settings 编辑器 ──

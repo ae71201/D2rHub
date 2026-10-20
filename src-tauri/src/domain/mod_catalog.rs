@@ -231,6 +231,7 @@ pub(crate) fn plan_catalog_argument_replacements_in_schemes(
     config
         .launch_groups
         .iter()
+        .filter(|group| group.environment.is_none())
         .flat_map(|group| {
             group
                 .members

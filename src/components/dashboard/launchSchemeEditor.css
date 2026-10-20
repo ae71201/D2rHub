@@ -1,0 +1,24 @@
+.scheme-form { display: grid; gap: 16px; min-width: 0; }
+.modal-content:has(.scheme-form), .modal-content-exit:has(.scheme-form) { max-height: calc(100dvh - 40px); display: flex; flex-direction: column; }
+.modal-content:has(.scheme-form) > div, .modal-content-exit:has(.scheme-form) > div { flex-shrink: 0; }
+.modal-content > div:has(> .scheme-form), .modal-content-exit > div:has(> .scheme-form) { overflow-y: auto; min-height: 0; flex-shrink: 1; }
+.scheme-form label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+.scheme-form input:not([type=checkbox]), .scheme-form select { width: 100%; min-width: 0; padding: 8px 10px; background: var(--surface-control); border: 1px solid var(--border-default); border-radius: 7px; color: var(--text-primary); }
+.scheme-form input:focus-visible, .scheme-form select:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.scheme-note { color: var(--text-muted); font-size: 12px; line-height: 1.7; }
+.scheme-tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--border-default); padding-bottom: 10px; }
+.scheme-tabs button { padding: 8px 12px; border-radius: 7px; color: var(--text-secondary); }
+.scheme-tabs button[aria-pressed=true] { background: var(--surface-active); color: var(--text-primary); }
+.scheme-body { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 16px; }
+.scheme-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; align-items: end; margin: 12px 0; }
+.scheme-wide { grid-column: 1 / -1; }
+.scheme-account { padding: 14px; border: 1px solid var(--border-default); border-radius: 9px; }
+.scheme-account-picker { display: flex; flex-wrap: wrap; gap: 10px 20px; }
+.scheme-account-picker label, .scheme-form .scheme-toggle, .scheme-form label:has(> input[type=checkbox]) { flex-direction: row; align-items: center; }
+.scheme-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.scheme-spacer { flex: 1; }
+.scheme-form summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; padding-block: 8px; }
+.scheme-error { color: var(--danger); font-size: 13px; line-height: 1.7; }
+.scheme-layout-preview { width: 100%; height: 230px; border-radius: 8px; background: var(--surface-control); }
+.scheme-form :disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 600px) { .scheme-fields { grid-template-columns: 1fr; } }
