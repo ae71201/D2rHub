@@ -5,9 +5,9 @@
   <p>管理账号、启动游戏，按需添加识别统计和自动跟房。</p>
 </div>
 
-当前版本 **v0.9.115**。
+当前版本 **v0.9.116**。
 
-本版增加地区 OCR、掉落视觉核验、聊天信号协作跟房和完整启动方案，改进实时布局采集与统计图表。内置加工器 beta.22 采用 r26／声纹 r4，旧声纹成品需从原始 Mod 重新加工并重启游戏。完整变更见 [v0.9.115 发行说明](docs/releases/v0.9.115.md)。
+本版为视觉识别模型和推理运行库增加 Gitee 国内镜像，并在 Mod 管理的下载资源页统一展示“视觉识别资源包”，支持提前下载、校验和打开目录；首次使用仍按需自动下载。已加工场景重开的 Mod 锁定第四幕快捷传送配置，更新时保留必要的小站映射。模型、运行库及加工器版本保持不变。完整变更见 [v0.9.116 发行说明](docs/releases/v0.9.116.md)。
 
 [下载安装](https://github.com/gjy991229/D2RHub/releases/latest) · [使用手册](docs/user-guide.html) 提供多开、识别、跟房和组合使用的分步路线。[加工器源码](https://github.com/gjy991229/d2r-audio-mod) 单独维护，EXE 随 Hub 安装和更新，不再独立下载或互认软件版本。LiteHub、BoHub、NullHub 仍按需下载。
 
@@ -44,7 +44,7 @@ npm run build
 
 D2RHub is a local Windows tool for managing multiple Diablo II: Resurrected accounts, separate CN/Global installations, authentication, launch groups, and per-account settings. Optional extensions provide audio-based run tracking, room automation, desktop overlays, and Bongo Cat.
 
-Version **0.9.115** adds area OCR, visual drop verification, chat-based room collaboration, complete launch recipes, live layout capture, and new statistics charts. Bundled processor beta.22 uses recipe r26 and audio group r4. Rebuild older processed Mods from their original sources and restart the game.
+Version **0.9.116** adds Gitee mirrors for visual recognition assets and a single shared resource package in Mod Management downloads, with preparation, verification, and folder access. Mods with scene restart now lock Act IV waypoint editing and preserve their generated mappings during updates. Automatic on-demand downloads and existing model/runtime/processor versions are unchanged.
 
 [Download](https://github.com/gjy991229/D2RHub/releases/latest), configure a game and save directory, then add and initialize an account. The [Mod processor](https://github.com/gjy991229/d2r-audio-mod) ships with Hub. Account data stays on this computer; the app does not read/write game memory or inject DLLs. See the [manual](docs/user-guide.html), [development guide](docs/DEVELOPMENT.md), and [security policy](SECURITY.md).
 
