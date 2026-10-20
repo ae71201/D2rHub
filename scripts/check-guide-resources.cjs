@@ -30,6 +30,23 @@ function checkResource(relative) {
   used.add(file);
   return file;
 }
+function imageDimensions(file) {
+  const bytes = fs.readFileSync(file);
+  if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+    return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
+  }
+  // Browser captures may contain JPEG bytes even when the resource ends in .png.
+  assert.equal(bytes.readUInt16BE(0), 0xffd8, `Unsupported guide image: ${file}`);
+  const frameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  for (let offset = 2; offset + 7 < bytes.length;) {
+    if (bytes[offset++] !== 0xff) continue;
+    const marker = bytes[offset++];
+    if (marker === 0xff || marker === 0x00) continue;
+    if (frameMarkers.has(marker)) return [bytes.readUInt16BE(offset + 5), bytes.readUInt16BE(offset + 3)];
+    offset += bytes.readUInt16BE(offset);
+  }
+  assert.fail(`No dimensions in guide image: ${file}`);
+}
 try {
   checkResource('user-guide.html');
   for (const link of window.document.querySelectorAll('link[rel="stylesheet"]')) {
@@ -43,7 +60,12 @@ try {
   let steps = 0;
   function checkImages() {
     for (const image of window.document.querySelectorAll('#stepContent image')) {
-      checkResource(image.getAttribute('href'));
+      const file = checkResource(image.getAttribute('href'));
+      const [width, height] = imageDimensions(file);
+      assert.equal(Number(image.getAttribute('width')), width, `Guide image width differs from source: ${file}`);
+      assert.equal(Number(image.getAttribute('height')), height, `Guide image height differs from source: ${file}`);
+      const [x, y, w, h] = image.closest('svg').getAttribute('viewBox').split(/\s+/).map(Number);
+      assert(x >= 0 && y >= 0 && x + w <= width && y + h <= height, `Guide crop exceeds image: ${file}`);
     }
   }
   for (const route of ['multi', 'audio', 'room', 'all']) {
