@@ -152,7 +152,7 @@ pub(crate) fn inherit_preferences(source: &Path, output: &Path, name: &str) -> R
                 save(output, name, &previous.game_data_version, &next.etag)?;
             }
         }
-        if previous.waypoints_supported {
+        if previous.waypoints_supported && !crate::mod_waypoints::scene_shortcuts_enabled(output)? {
             if let (Some(old), Some(new)) = (
                 crate::mod_waypoints::read_config(source, name)?,
                 crate::mod_waypoints::read_config(output, name)?,
@@ -422,6 +422,32 @@ mod tests {
             serde_json::json!({"manifest_format":"d2r-audio-telemetry-mod","producer":"d2r-audio-mod","mod_name":name,"protocol_version":7,"recipe_version":25,"build_mode":"augment","source_mod_copied":true,"source_mod_name":source,"feature_groups":[{"id":"in_game_room_tools","recipe_version":IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,"fingerprint":format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}"),"reused_from_source":false}]}),
         );
         root
+    }
+    #[test]
+    fn scene_rebuild_keeps_generated_waypoints_instead_of_old_preferences() {
+        let old = Scratch::new();
+        let new = Scratch::new();
+        base(&old.0, "LiteHub");
+        base(&new.0, "LiteHub");
+        let source = derived(&old.0, "Custom", "LiteHub");
+        let output = derived(&new.0, "Custom", "LiteHub");
+        let path = output.join("d2rhub-mod-manifest.json");
+        let mut manifest = json(&path).unwrap();
+        manifest["feature_groups"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id":"scene_shortcuts", "recipe_version":7,
+                "fingerprint":crate::domain::mod_processing::SCENE_SHORTCUTS_FINGERPRINT,
+                "reused_from_source":false
+            }));
+        put(&path, manifest);
+        let table = output.join("Custom.mpq/data/global/excel/actinfo.txt");
+        let before = fs::read(&table).unwrap();
+        // Fixtures deliberately contain no editable waypoint table: inheritance
+        // must skip reading the old configuration entirely when the output owns it.
+        inherit_preferences(&source, &output, "Custom").unwrap();
+        assert_eq!(fs::read(table).unwrap(), before);
     }
     #[test]
     fn versions_update_metadata_and_reject_stale_or_invalid_writes() {

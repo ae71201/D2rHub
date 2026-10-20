@@ -3,6 +3,7 @@ import { Button } from "../../../components/ui/Button";
 import { invokeCommand } from "../../../platform/tauri/client";
 
 export interface WaypointConfig {
+  locked?: boolean;
   selected: string[];
   defaults: string[];
   options: { id: string; act: number; label_zh: string; label_en: string }[];
@@ -40,7 +41,7 @@ export function ModWaypointSettings({ edition, modName, en, disabled }: {
   const dirty = config !== null && JSON.stringify(config.selected) !== JSON.stringify(draft);
   const busy = disabled || loading || saving;
   const save = async () => {
-    if (!config || !dirty || busy || duplicate || saveLock.current) return;
+    if (!config || config.locked || !dirty || busy || duplicate || saveLock.current) return;
     saveLock.current = true; setSaving(true); setError(""); setMessage("");
     const token = request.current;
     try {
@@ -62,10 +63,13 @@ export function ModWaypointSettings({ edition, modName, en, disabled }: {
     {loading && <p role="status">{en ? "Loading…" : "正在读取传送列表…"}</p>}
     {!loading && !config && !error && <p>{en ? "Install a Mod version with waypoint shortcuts to configure this list." : "此 Mod 版本尚未包含快捷传送功能，请先安装新版成品。"}</p>}
     {!loading && config && <>
+      {config.locked && <p role="status">{en
+        ? "Scene restart is installed. Waypoint destinations are locked to preserve its teleport sequence."
+        : "此 Mod 已加工场景重开，传送点配置已锁定，以保证场景重开的传送流程正常。"}</p>}
       <div className="mod-waypoint-grid">
         {draft.map((value, index) => <label key={index} htmlFor={`${id}-${index}`}>
           <span>{en ? `Slot ${index + 4}` : `第 ${index + 4} 项`}</span>
-          <select id={`${id}-${index}`} className="settings-input" value={value} disabled={busy}
+          <select id={`${id}-${index}`} className="settings-input" value={value} disabled={busy || config.locked}
             onChange={e => { const next = [...draft]; next[index] = e.target.value; setDraft(next); setMessage(""); }}>
             <option value="">{en ? "None" : "不添加"}</option>
             {[1, 2, 3, 5].map(act => <optgroup key={act} label={en ? `Act ${act}` : `第 ${act} 幕`}>
@@ -76,8 +80,8 @@ export function ModWaypointSettings({ edition, modName, en, disabled }: {
       </div>
       {duplicate && <p role="alert">{en ? "Choose different destinations or leave slots empty." : "新增目的地不能重复；不用的位置可选择“不添加”。"}</p>}
       <div className="mod-library-entry-actions">
-        <Button size="sm" variant="primary" disabled={busy || !dirty || duplicate} onClick={() => void save()}>{saving ? (en ? "Saving…" : "正在保存…") : (en ? "Save waypoints" : "保存传送列表")}</Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setDraft([...config.defaults]); setMessage(""); }}>{en ? "Restore default order" : "恢复默认顺序"}</Button>
+        <Button size="sm" variant="primary" disabled={busy || config.locked || !dirty || duplicate} onClick={() => void save()}>{saving ? (en ? "Saving…" : "正在保存…") : (en ? "Save waypoints" : "保存传送列表")}</Button>
+        <Button size="sm" variant="ghost" disabled={busy || config.locked} onClick={() => { setDraft([...config.defaults]); setMessage(""); }}>{en ? "Restore default order" : "恢复默认顺序"}</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void load()}>{en ? "Reload" : "重新读取"}</Button>
       </div>
     </>}

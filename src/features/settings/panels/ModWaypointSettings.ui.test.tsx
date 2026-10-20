@@ -12,6 +12,22 @@ beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(config()); });
 afterEach(cleanup);
 
 describe("Act IV waypoint editor", () => {
+  it("locks scene restart destinations while allowing reload", async () => {
+    invoke.mockResolvedValue({ ...config(), locked: true });
+    render(<ModWaypointSettings edition="CN" modName="LiteHub" en={false} disabled={false} />);
+    await screen.findByText(/此 Mod 已加工场景重开/);
+    for (const select of screen.getAllByRole("combobox")) {
+      expect(select.hasAttribute("disabled")).toBe(true);
+    }
+    for (const name of ["保存传送列表", "恢复默认顺序"]) {
+      expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name }));
+    }
+    expect(invoke).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    expect(invoke).toHaveBeenLastCalledWith("get_mod_waypoints", { edition: "CN", modName: "LiteHub" });
+  });
   it("saves ordered slots and etag; defaults do not write until saved", async () => {
     render(<ModWaypointSettings edition="CN" modName="LiteHub" en={false} disabled={false} />);
     await screen.findByLabelText("第 4 项");

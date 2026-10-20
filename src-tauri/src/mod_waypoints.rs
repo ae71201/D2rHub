@@ -33,6 +33,7 @@ fn catalog() -> Result<Catalog, String> {
 }
 #[derive(Serialize)]
 pub struct WaypointConfig {
+    locked: bool,
     pub(crate) selected: Vec<String>,
     pub(crate) defaults: Vec<String>,
     options: Vec<WaypointOption>,
@@ -193,6 +194,23 @@ fn ensure_closed() -> Result<(), String> {
 fn table_path(root: &Path, name: &str) -> PathBuf {
     root.join(format!("{name}.mpq")).join(TABLE)
 }
+/// Scene shortcuts own the waypoint mapping, including during rebuilds.
+pub(crate) fn scene_shortcuts_enabled(root: &Path) -> Result<bool, String> {
+    for filename in ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"] {
+        let path = root.join(filename);
+        if path.exists() {
+            let manifest: Value = serde_json::from_slice(&small_read(&path)?).map_err(error)?;
+            if manifest["feature_groups"].as_array().is_some_and(|groups| {
+                groups.iter().any(|group| {
+                    group["id"] == crate::domain::mod_processing::SCENE_SHORTCUTS_FEATURE_ID
+                })
+            }) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
 pub(crate) fn recover(root: &Path, name: &str) -> Result<(), String> {
     if !root.join(JOURNAL).exists() {
         return Ok(());
@@ -227,6 +245,7 @@ pub(crate) fn read_config(root: &Path, name: &str) -> Result<Option<WaypointConf
     let c = catalog()?;
     validate_selected(&selected, &c)?;
     Ok(Some(WaypointConfig {
+        locked: scene_shortcuts_enabled(root)?,
         selected,
         defaults: c.defaults,
         options: c.options,
@@ -251,6 +270,9 @@ pub(crate) fn save(
     selected: &[String],
     etag: &str,
 ) -> Result<WaypointConfig, String> {
+    if scene_shortcuts_enabled(root)? {
+        return Err("此 Mod 已加工场景重开，第四幕快捷传送已锁定，不能修改".into());
+    }
     let before = read_config(root, name)?.ok_or("请先安装支持快捷传送的新版 Mod")?;
     if before.etag != etag {
         return Err("传送列表已被修改，请重新加载后保存".into());
@@ -393,6 +415,29 @@ mod tests {
         let after: Value = serde_json::from_slice(&fs::read(root.join(MANIFEST)).unwrap()).unwrap();
         assert_eq!(after["files"][TABLE]["sha256"], next.etag);
         assert!(!root.join(JOURNAL).exists());
+        for filename in ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"] {
+            let manifest_path = root.join(filename);
+            fs::write(
+                &manifest_path,
+                r#"{"feature_groups":[{"id":"scene_shortcuts"}]}"#,
+            )
+            .unwrap();
+            let locked = read_config(&root, "LiteHub").unwrap().unwrap();
+            assert!(locked.locked);
+            let before_table = fs::read(&path).unwrap();
+            let before_manifest = fs::read(root.join(MANIFEST)).unwrap();
+            assert!(
+                save(&root, "LiteHub", &vec![String::new(); 6], &locked.etag)
+                    .err()
+                    .unwrap()
+                    .contains("场景重开")
+            );
+            assert_eq!(fs::read(&path).unwrap(), before_table);
+            assert_eq!(fs::read(root.join(MANIFEST)).unwrap(), before_manifest);
+            assert!(!root.join(JOURNAL).exists());
+            fs::remove_file(manifest_path).unwrap();
+        }
+        assert!(!read_config(&root, "LiteHub").unwrap().unwrap().locked);
         fs::remove_dir_all(root).unwrap();
     }
 }
