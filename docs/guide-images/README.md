@@ -4,6 +4,8 @@
 
 ## 当前图示
 
+2026-10-20 再次更新 `recognition.png`，敌对自动重开上移至分页外，说明默认折叠，开关和范围并排。
+
 2026-10-20 更新 `room-collaboration.png`、`recognition.png`、`room-participants.png`、`room-rules.png`、`room-auto.png`，新增 `room-method.png`，对应设置分区和离开时自动保存的快捷面板。使用示例账号，快捷面板密码隐藏，未执行游戏操作。快捷面板关闭、点击外部、Esc 或离开时自动保存；无效输入与保存失败会提示。
 
 以下截图沿用“游戏 / 扩展 / 应用”侧栏分组；识别与跟房页内按用途分区。Mod 加工和扩展列表仍使用 2026-09-28 的采集图：
