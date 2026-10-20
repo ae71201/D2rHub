@@ -6,6 +6,8 @@
 | --- | --- | --- |
 | `mod-resources-v2.json` | 本项目的资源目录与兼容声明 | 跟踪；新客户端的内置基线，远端更新经校验后使用 |
 | `mod-resources-v1.json` | 旧客户端的历史资源目录 | 跟踪并冻结语义；不由新工作流改写 |
+| `scene-shortcuts-v6.json`、`scene-shortcuts-v7-actinfo.json` | 快捷场景配方的布局摘要与小站映射基线 | 跟踪；Rust 校验器通过 `include_str!` 编译嵌入，不能作为实验输出清理 |
+| `vision-resources-v1.json` | 视觉识别模型与运行库的版本、下载地址和摘要 | 跟踪；编译嵌入作为资源下载的固定回退清单，模型和 DLL 本体不入库 |
 | `public/logo.png`、根 `logo.png` | 项目作者提供的同一 Logo | 跟踪；`public/` 进入前端构建，根文件保留兼容引用 |
 | `public/bongo-cat-*.svg` | 项目作者原创文件，形象灵感另有声明 | 跟踪；运行时资源 |
 | `public/token-copy-guide.png`、赞助图片与 JSON | 项目作者提供 | 跟踪；运行时资源 |

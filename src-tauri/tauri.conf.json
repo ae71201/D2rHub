@@ -113,6 +113,7 @@
             "../docs/guide-images/accounts.png",
             "../docs/guide-images/modules.png",
             "../docs/guide-images/room-rules.png",
+            "../docs/guide-images/room-collaboration.png",
             "../docs/guide-images/room-auto.png",
             "processor/**/*"
         ],

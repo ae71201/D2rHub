@@ -1,6 +1,17 @@
 // Captured from the real React components with browser-only sample data.
 // Preserve the source PNGs; crop, emphasis and labels are rendered as SVG/HTML.
 const GUIDE_FIGURES = {
+  "collaboration": {
+    "title": "快捷设置：拼房模式、规则与应用",
+    "file": "room-collaboration.png",
+    "crop": [480, 72, 440, 636],
+    "note": "2026-10-20 真实组件、示例数据。拼房跟随监听本机主号聊天，主号与小号一起加入；点击应用后保存模式与规则。此图未执行游戏操作。",
+    "marks": [
+      [504, 269, 386, 44, "选择默认、拼房主机或拼房跟随"],
+      [744, 351, 145, 36, "复制或粘贴房间规则，内容包含密码"],
+      [816, 654, 77, 36, "确认规则后点击应用；取消不会保存"]
+    ]
+  },
   "recognition": {
     "title": "先选监听账号，再准备识别 Mod",
     "file": "recognition.png",
@@ -51,7 +62,7 @@ const GUIDE_FIGURES = {
       773,
       588
     ],
-    "note": "此图以原版游戏为来源，选择声纹识别与局内房间工具，输出名为 HubMain。加工器尚未安装，因此开始按钮不可用；示例没有执行加工。",
+    "note": "此图以原版游戏为来源，选择声纹识别与局内房间工具，输出名为 HubMain。此旧示例显示加工器缺失，因此开始按钮不可用；当前加工器随 Hub 内置，实际缺失时请修复 Hub 安装。示例没有执行加工。",
     "marks": [
       [
         1005,
@@ -374,7 +385,7 @@ const GUIDE_STEP_FIGURES = {
   paths: ['paths'], first: ['init'], second: ['init', 'accounts'],
   'audio-install': ['modules', 'recognition'], 'audio-mod': ['mod'], 'combined-mod': ['mod', 'accounts'],
   'room-install': ['modules', 'participants'], 'room-mod': ['participants', 'mod'],
-  'room-method': ['method'], 'room-rules': ['rules', 'method'], 'room-auto': ['auto']
+  'room-method': ['method'], 'room-rules': ['rules', 'collaboration', 'method'], 'room-auto': ['auto']
 };
 function guideStepFigureMarkup(stepId) {
   const keys = GUIDE_STEP_FIGURES[stepId];
