@@ -538,6 +538,11 @@ function installIpcMock() {
         return structuredClone(auditVisionSnapshot);
       case "vision_get_status":
         return { running: false, ready: false, message: "尚未启用视觉辅助", checked: 0, matched: 0, rejected: 0, unavailable: 0 };
+      case "vision_get_resource_package":
+      case "vision_prepare_resource_package":
+        return { ready: true, preparing: false, progress: 100, message: "资源包已就绪", size: 88999851, path: "C:\\Users\\Demo\\AppData\\Roaming\\D2RHub\\resources\\vision" };
+      case "vision_open_resource_directory":
+        return;
       case "get_global_config":
         return { ...persistedGlobalConfig, first_run_complete: surface !== "setup" };
       case "get_capability_statuses":

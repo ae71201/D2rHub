@@ -1323,10 +1323,28 @@
           "markdownDescription": "Enables the vision_get_config command without any pre-configured scope."
         },
         {
+          "description": "Enables the vision_get_resource_package command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vision-get-resource-package",
+          "markdownDescription": "Enables the vision_get_resource_package command without any pre-configured scope."
+        },
+        {
           "description": "Enables the vision_get_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-vision-get-status",
           "markdownDescription": "Enables the vision_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vision_open_resource_directory command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vision-open-resource-directory",
+          "markdownDescription": "Enables the vision_open_resource_directory command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vision_prepare_resource_package command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vision-prepare-resource-package",
+          "markdownDescription": "Enables the vision_prepare_resource_package command without any pre-configured scope."
         },
         {
           "description": "Enables the vision_preview command without any pre-configured scope.",
@@ -2289,10 +2307,28 @@
           "markdownDescription": "Denies the vision_get_config command without any pre-configured scope."
         },
         {
+          "description": "Denies the vision_get_resource_package command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vision-get-resource-package",
+          "markdownDescription": "Denies the vision_get_resource_package command without any pre-configured scope."
+        },
+        {
           "description": "Denies the vision_get_status command without any pre-configured scope.",
           "type": "string",
           "const": "deny-vision-get-status",
           "markdownDescription": "Denies the vision_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vision_open_resource_directory command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vision-open-resource-directory",
+          "markdownDescription": "Denies the vision_open_resource_directory command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vision_prepare_resource_package command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vision-prepare-resource-package",
+          "markdownDescription": "Denies the vision_prepare_resource_package command without any pre-configured scope."
         },
         {
           "description": "Denies the vision_preview command without any pre-configured scope.",

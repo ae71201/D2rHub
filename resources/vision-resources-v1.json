@@ -1,17 +1,25 @@
 {
   "schema": 1,
-  "revision": 1,
+  "revision": 2,
   "engine_abi": "ort-1.22",
   "model": {
     "version": "ppocrv5-mobile-rapidocr-3.10.0",
     "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx",
     "size": 16631306,
-    "sha256": "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5"
+    "sha256": "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5",
+    "mirrors": [{
+      "platform": "gitee",
+      "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/vision-resources-v1/ch_PP-OCRv5_rec_mobile.onnx"
+    }]
   },
   "runtime": {
     "version": "1.22.0",
     "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip",
     "size": 72368545,
-    "sha256": "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da"
+    "sha256": "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da",
+    "mirrors": [{
+      "platform": "gitee",
+      "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/vision-resources-v1/onnxruntime-win-x64-1.22.0.zip"
+    }]
   }
 }

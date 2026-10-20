@@ -4,6 +4,64 @@ use super::{
 };
 use std::sync::Arc;
 use tauri::Manager;
+
+fn resource_root(app: &tauri::AppHandle) -> std::path::PathBuf {
+    std::path::PathBuf::from(&app.state::<crate::state::SharedState>().app_data_dir)
+        .join("resources/vision")
+}
+
+// Resource management is available independently of the recognition service.
+#[tauri::command(async)]
+pub fn vision_get_resource_package(
+    app: tauri::AppHandle,
+    refresh: Option<bool>,
+) -> Result<super::resources::PackageStatus, String> {
+    super::resources::package_status(&resource_root(&app), refresh.unwrap_or(false))
+}
+
+#[tauri::command]
+pub async fn vision_prepare_resource_package(
+    app: tauri::AppHandle,
+) -> Result<super::resources::PackageStatus, String> {
+    let root = resource_root(&app);
+    let preferred =
+        crate::downloads::cached_preference(&app, &app.state::<crate::state::SharedState>());
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    super::resources::ensure_preferred(&root, &stop, &preferred, |_| {}).await?;
+    // A previous automatic preparation may have exited after a network error.
+    // Let the supervisor resume requested recognition without changing settings.
+    if let Some(service) = app.try_state::<Arc<Vision>>() {
+        let _operation = service.operation.lock();
+        let finished = service
+            .worker
+            .lock()
+            .as_ref()
+            .is_some_and(|w| w.handle.is_finished());
+        if finished {
+            service.stop_worker()?;
+        }
+    }
+    super::project(&app);
+    super::resources::package_status(&root, false)
+}
+
+#[tauri::command(async)]
+pub fn vision_open_resource_directory(app: tauri::AppHandle) -> Result<(), String> {
+    let root = resource_root(&app);
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    crate::resource_install::no_links(&root)?;
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer")
+        .arg(&root)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    std::process::Command::new("open")
+        .arg(&root)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
 fn service(app: &tauri::AppHandle) -> Result<Arc<Vision>, String> {
     app.try_state::<Arc<Vision>>()
         .map(|s| s.inner().clone())

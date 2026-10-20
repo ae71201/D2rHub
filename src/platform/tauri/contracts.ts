@@ -8,6 +8,7 @@
 export const TAURI_COMMANDS = [
     "vision_get_config", "vision_save_config", "vision_get_status",
   "vision_preview",
+  "vision_get_resource_package", "vision_prepare_resource_package", "vision_open_resource_directory",
   "activate_application_runtime",
   "get_application_disclosure_acceptance",
   "accept_application_disclosure",

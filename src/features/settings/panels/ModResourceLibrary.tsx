@@ -3,6 +3,7 @@ import { Button } from "../../../components/ui/Button";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
 import { ModResourceCard } from "../../modResources/ModResourceCard";
 import { useModResources } from "../../modResources/useModResources";
+import { VisionResourceCard } from "../../modResources/VisionResourceCard";
 import "./modResources.css";
 
 const RESOURCE_ORDER = ["NullHub", "BoHub", "LiteHub"];
@@ -24,8 +25,8 @@ export function ModResourceLibrary({ edition, en, catalog, onBusy }: Props) {
   return <section className="mod-resources" aria-label={en ? "Mod resources" : "Mod 资源下载"}>
     <header className="mod-resources-heading">
       <div>
-        <h3><Download size={15} aria-hidden="true" />{en ? "Ready-to-use Mods" : "成品 Mod"}</h3>
-        <p>{en ? "Choose a ready-to-use Mod. Custom processing is included with Hub." : "选择成品即可安装；自定义加工功能已随 Hub 内置。"}</p>
+        <h3><Download size={15} aria-hidden="true" />{en ? "Download resources" : "下载资源"}</h3>
+        <p>{en ? "Install ready-to-use Mods and prepare shared recognition resources. Custom processing is included with Hub." : "安装成品 Mod，管理共用识别资源；自定义加工功能已随 Hub 内置。"}</p>
       </div>
       <Button size="sm" variant="ghost" disabled={controller.busy} loading={checking} onClick={() => void controller.refresh()}>
         <RefreshCw size={13} />{en ? "Check updates" : "检查更新"}
@@ -39,6 +40,7 @@ export function ModResourceLibrary({ edition, en, catalog, onBusy }: Props) {
         installed={!!catalog?.pool?.capsules.some(mod => mod.edition === edition && mod.origin === "scanned" && mod.name.toLowerCase() === asset.id.toLowerCase())} />)}
       {!assets.length && <p role="status">{en ? "No resources are available in this catalog. Check updates to refresh it." : "当前目录暂无可用资源，可检查更新后重试。"}</p>}
     </div>}
+    <div className="resource-cards"><VisionResourceCard en={en} /></div>
     {runningElsewhere && <p role="status" className="resource-note">{en ? "Another game edition is installing resources. Follow it in Background tasks." : "另一个游戏版本正在安装资源，可在后台任务中查看进度。"}</p>}
     {readError && <p className="resource-error" role="alert">{readError}</p>}
     {feedback?.assetId === null && feedback.error && <p className="resource-error" role="alert">{feedback.error}</p>}

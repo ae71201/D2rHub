@@ -212,6 +212,7 @@ impl CapabilityDriver for Vision {
         let config = effective_configuration(&app);
         let chat_follow = config.chat_follow;
         let root = PathBuf::from(&app.state::<SharedState>().app_data_dir).join("resources/vision");
+        let preferred = crate::downloads::cached_preference(&app, &app.state::<SharedState>());
         let (tx, rx) = mpsc::sync_channel(8);
         let handle=std::thread::Builder::new().name("visual-recognition".into()).spawn(move||{
             status.lock().running=true;
@@ -219,7 +220,7 @@ impl CapabilityDriver for Vision {
             diagnostics::event(configuration().diagnostic_enabled,"worker_start",serde_json::json!({"chat":config.chat_follow,"area":config.area_enabled,"drops":config.drops_enabled,"enforce":config.drops_enforce,"poll_ms":config.poll_ms,"chat_roi":config.chat_roi,"area_roi":config.area_roi,"needs_ocr":config.needs_ocr()}));
             let result=if config.needs_ocr() { tauri::async_runtime::block_on(async {
                 tokio::select! {
-                    result=resources::ensure(&root,&stopped,|message|{status.lock().message=message})=>result,
+                    result=resources::ensure_preferred(&root,&stopped,&preferred,|message|{status.lock().message=message})=>result,
                     _=async {while !stopped.load(Ordering::Acquire){tokio::time::sleep(Duration::from_millis(100)).await;}}=>Err("资源准备已取消".into())
                 }
             }).and_then(|files|ocr::Ocr::new(&files)).map(Some) } else { Ok(None) };

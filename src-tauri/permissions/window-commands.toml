@@ -3,6 +3,7 @@ identifier = "main-window-commands"
 description = "Allows the main application window to invoke the complete D2RHub command surface."
 commands.allow = [
     "vision_get_config", "vision_save_config", "vision_get_status",
+    "vision_get_resource_package", "vision_prepare_resource_package", "vision_open_resource_directory",
   "vision_preview",
   "get_external_audio_instances", "select_external_audio_instance",
   "check_mod_resource_updates", "check_software_update", "download_software_update", "launch_downloaded_update",

@@ -11,6 +11,10 @@ const subscribe = vi.hoisted(() => vi.fn());
 vi.mock("../../../platform/tauri", () => ({ invokeCommand: invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: picker }));
 vi.mock("../../tasks/taskSync", () => ({ subscribeBeforeReadingTasks: subscribe }));
+vi.mock("../../modResources/visionResourcesGateway", () => ({ visionResourcesGateway: {
+  read: async () => ({ ready: true, preparing: false, progress: 100, message: "资源包已就绪", size: 88999851, path: "C:\\resources\\vision" }),
+  prepare: vi.fn(), openFolder: vi.fn(),
+} }));
 const state = () => ({
   catalog: { release_url: "https://github.com/gjy991229/D2rHub/releases", assets: [
     { id: "processor", version: "1.4.0-beta.17", size: 3000000, url: "https://example.test/processor", game_data_version: null },
@@ -35,7 +39,7 @@ describe("Mod resources", () => {
       mods: [{ id: "LiteHub", installed_version: "private-release-id", update_available: false }] });
     render(<ModResourceLibrary edition="CN" en={false} />);
     await screen.findByText("LiteHub");
-    expect(screen.getAllByRole("article").map(card => card.getAttribute("aria-label"))).toEqual(["NullHub", "BoHub", "LiteHub"]);
+    expect(screen.getAllByRole("article").map(card => card.getAttribute("aria-label"))).toEqual(["NullHub", "BoHub", "LiteHub", "视觉识别资源包"]);
     for (const [name, memory] of [["NullHub", 300], ["BoHub", 500], ["LiteHub", 800]] as const) {
       const card = screen.getByRole("article", { name });
       expect(within(card).getByText(`约 ${memory} MB`)).toBeTruthy();

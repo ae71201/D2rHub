@@ -9,12 +9,87 @@ use std::{
 
 const ONLINE: &str =
     "https://raw.githubusercontent.com/gjy991229/D2rHub/main/resources/vision-resources-v1.json";
+static PREPARATION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static PACKAGE: parking_lot::Mutex<Option<PackageStatus>> = parking_lot::Mutex::new(None);
+
+#[derive(Clone, Serialize)]
+pub struct PackageStatus {
+    pub ready: bool,
+    pub preparing: bool,
+    pub progress: Option<u8>,
+    pub message: String,
+    pub size: u64,
+    pub path: PathBuf,
+}
+
+fn local_manifest(root: &Path) -> Result<Manifest, String> {
+    let mut manifest: Manifest =
+        serde_json::from_str(include_str!("../../../resources/vision-resources-v1.json"))
+            .map_err(err)?;
+    validate(&manifest)?;
+    if let Ok(bytes) = fs::read(root.join("manifest.json")) {
+        if let Ok(cached) = serde_json::from_slice(&bytes) {
+            adopt_newer_compatible_manifest(&mut manifest, cached);
+        }
+    }
+    Ok(manifest)
+}
+
+pub fn package_status(root: &Path, refresh: bool) -> Result<PackageStatus, String> {
+    let mut status = PACKAGE.lock();
+    if let Some(current) = status
+        .as_ref()
+        .filter(|s| s.path == root && (!refresh || s.preparing))
+    {
+        return Ok(current.clone());
+    }
+    let m = local_manifest(root)?;
+    let ready = installed_valid(root, &m);
+    let current = PackageStatus {
+        ready,
+        preparing: false,
+        progress: ready.then_some(100),
+        message: if ready {
+            "资源包已就绪"
+        } else {
+            "尚未准备完整资源包，启用识别时会自动下载"
+        }
+        .into(),
+        size: m.model.size + m.runtime.size,
+        path: root.into(),
+    };
+    *status = Some(current.clone());
+    Ok(current)
+}
+
+fn report(progress: &impl Fn(String), message: String, percent: Option<u8>) {
+    if let Some(status) = PACKAGE.lock().as_mut() {
+        status.message = message.clone();
+        status.progress = percent;
+    }
+    progress(message);
+}
+
+struct Preparing(bool);
+impl Drop for Preparing {
+    fn drop(&mut self) {
+        if !self.0 {
+            if let Some(status) = PACKAGE.lock().as_mut() {
+                status.preparing = false;
+                status.ready = false;
+                status.message = "资源准备已中断，可重试".into();
+            }
+        }
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Asset {
     pub version: String,
     pub url: String,
     pub size: u64,
     pub sha256: String,
+    #[serde(default)]
+    pub mirrors: Vec<crate::downloads::Mirror>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -70,6 +145,22 @@ fn validate(m: &Manifest) -> Result<(), String> {
         {
             return Err("视觉资源下载来源或摘要无效".into());
         }
+        if a.mirrors.len() > 1 {
+            return Err("视觉资源镜像数量无效".into());
+        }
+        for mirror in &a.mirrors {
+            // Keep upstream URLs for older clients; only the owned Gitee mirror
+            // can be added to this backwards-compatible manifest.
+            crate::downloads::validate_payload(&crate::downloads::Payload {
+                version: a.version.clone(),
+                size: a.size,
+                sha256: a.sha256.clone(),
+                mirrors: vec![mirror.clone()],
+            })?;
+            if mirror.platform != "gitee" {
+                return Err("视觉资源镜像必须来自 Gitee 资源库".into());
+            }
+        }
     }
     Ok(())
 }
@@ -84,23 +175,88 @@ fn valid_file(p: &Path, a: &Asset) -> bool {
         && fs::metadata(p).is_ok_and(|m| m.len() == a.size)
         && crate::downloads::digest(p).is_ok_and(|h| h.eq_ignore_ascii_case(&a.sha256))
 }
+
+fn installed_valid(root: &Path, m: &Manifest) -> bool {
+    let model = root.join(format!("{}.onnx", m.model.sha256));
+    let archive = root.join(format!("{}.zip", m.runtime.sha256));
+    let runtime = root.join(&m.runtime.sha256).join("onnxruntime.dll");
+    if !valid_file(&model, &m.model)
+        || !valid_file(&archive, &m.runtime)
+        || crate::resource_install::no_links(&runtime).is_err()
+    {
+        return false;
+    }
+    let check = || -> Result<bool, String> {
+        let mut zip = zip::ZipArchive::new(fs::File::open(archive).map_err(err)?).map_err(err)?;
+        let mut entry = zip
+            .by_name(&format!(
+                "onnxruntime-win-x64-{}/lib/onnxruntime.dll",
+                m.runtime.version
+            ))
+            .map_err(err)?;
+        if entry.size() > 128 * 1024 * 1024 {
+            return Ok(false);
+        }
+        let mut expected = Vec::new();
+        entry.read_to_end(&mut expected).map_err(err)?;
+        Ok(fs::read(runtime).map_err(err)? == expected)
+    };
+    check().unwrap_or(false)
+}
+
+fn download_urls<'a>(a: &'a Asset, preferred: &str) -> Vec<&'a str> {
+    let mut urls: Vec<&str> = a.mirrors.iter().map(|m| m.url.as_str()).collect();
+    if preferred == "github" {
+        urls.insert(0, &a.url);
+    } else {
+        urls.push(&a.url);
+    }
+    urls
+}
 async fn download(
     client: &reqwest::Client,
     a: &Asset,
     p: &Path,
     stop: &AtomicBool,
     progress: &impl Fn(String),
+    preferred: &str,
+    range: (u64, u64),
 ) -> Result<(), String> {
+    let (base, total) = range;
+    if stop.load(Ordering::Acquire) {
+        return Err("视觉资源下载已取消".into());
+    }
+    if valid_file(p, a) {
+        report(
+            progress,
+            "正在校验视觉识别资源包".into(),
+            Some(((base + a.size) * 100 / total) as u8),
+        );
+        return Ok(());
+    }
+    let urls = download_urls(a, preferred);
     let mut last = String::new();
     for attempt in 0..3 {
-        if stop.load(Ordering::Acquire) {
-            return Err("视觉资源下载已取消".into());
+        for (index, url) in urls.iter().enumerate() {
+            if stop.load(Ordering::Acquire) {
+                return Err("视觉资源下载已取消".into());
+            }
+            if index > 0 {
+                report(progress, "资源下载源不可用，切换备用源".into(), None);
+            }
+            match download_once(client, a, url, p, stop, progress, range).await {
+                Ok(()) => return Ok(()),
+                Err(error) => last = error,
+            }
+            if stop.load(Ordering::Acquire) {
+                return Err("视觉资源下载已取消".into());
+            }
         }
-        match download_once(client, a, p, stop, progress).await {
-            Ok(()) => return Ok(()),
-            Err(error) => last = error,
-        }
-        progress(format!("资源下载失败，重试 {}/3：{last}", attempt + 1));
+        report(
+            progress,
+            format!("资源下载失败，重试 {}/3：{last}", attempt + 1),
+            None,
+        );
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
     Err(last)
@@ -108,10 +264,16 @@ async fn download(
 async fn download_once(
     client: &reqwest::Client,
     a: &Asset,
+    url: &str,
     p: &Path,
     stop: &AtomicBool,
     progress: &impl Fn(String),
+    range: (u64, u64),
 ) -> Result<(), String> {
+    let (base, total) = range;
+    if stop.load(Ordering::Acquire) {
+        return Err("视觉资源下载已取消".into());
+    }
     if valid_file(p, a) {
         return Ok(());
     }
@@ -119,7 +281,7 @@ async fn download_once(
     let _partial = PartialFile(temporary.clone());
     let result = async {
         let mut response = client
-            .get(&a.url)
+            .get(url)
             .send()
             .await
             .map_err(|e| format!("{e:?}"))?
@@ -137,9 +299,13 @@ async fn download_once(
                 return Err("视觉资源超过清单大小".into());
             }
             f.write_all(&bytes).map_err(err)?;
-            let percent = count * 100 / a.size;
+            let percent = (base + count) * 100 / total;
             if percent != last_percent {
-                progress(format!("下载 {}：{}%", a.version, percent));
+                report(
+                    progress,
+                    format!("下载视觉识别资源包：{percent}%"),
+                    Some(percent as u8),
+                );
                 last_percent = percent;
             }
         }
@@ -160,10 +326,51 @@ async fn download_once(
     let _ = fs::remove_file(&temporary);
     result
 }
+#[cfg(test)]
 pub async fn ensure(
     root: &Path,
     stop: &AtomicBool,
     progress: impl Fn(String),
+) -> Result<Installed, String> {
+    ensure_preferred(root, stop, "gitee", progress).await
+}
+
+pub async fn ensure_preferred(
+    root: &Path,
+    stop: &AtomicBool,
+    preferred: &str,
+    progress: impl Fn(String),
+) -> Result<Installed, String> {
+    let _exclusive = PREPARATION.lock().await;
+    if stop.load(Ordering::Acquire) {
+        return Err("视觉资源准备已取消".into());
+    }
+    package_status(root, false)?;
+    if let Some(status) = PACKAGE.lock().as_mut() {
+        status.preparing = true;
+        status.ready = false;
+        status.progress = None;
+    }
+    let mut preparing = Preparing(false);
+    let result = ensure_inner(root, stop, preferred, &progress).await;
+    if let Some(status) = PACKAGE.lock().as_mut() {
+        status.preparing = false;
+        status.ready = result.is_ok();
+        status.progress = result.is_ok().then_some(100);
+        status.message = match &result {
+            Ok(_) => "资源包已就绪".into(),
+            Err(error) => error.clone(),
+        };
+    }
+    preparing.0 = true;
+    result
+}
+
+async fn ensure_inner(
+    root: &Path,
+    stop: &AtomicBool,
+    preferred: &str,
+    progress: &impl Fn(String),
 ) -> Result<Installed, String> {
     fs::create_dir_all(root).map_err(err)?;
     crate::resource_install::no_links(root)?;
@@ -174,17 +381,9 @@ pub async fn ensure(
         .timeout(std::time::Duration::from_secs(180))
         .build()
         .map_err(err)?;
-    let mut manifest: Manifest =
-        serde_json::from_str(include_str!("../../../resources/vision-resources-v1.json"))
-            .map_err(err)?;
-    validate(&manifest)?;
+    let mut manifest = local_manifest(root)?;
     let cache = root.join("manifest.json");
-    if let Ok(bytes) = fs::read(&cache) {
-        if let Ok(cached) = serde_json::from_slice::<Manifest>(&bytes) {
-            adopt_newer_compatible_manifest(&mut manifest, cached);
-        }
-    }
-    progress("检查视觉资源版本".into());
+    report(progress, "检查视觉资源版本".into(), None);
     // A missing release index/offline host may use the pinned, verified manifest.
     let remote = async {
         let mut response = client
@@ -215,8 +414,31 @@ pub async fn ensure(
     }
     let model = root.join(format!("{}.onnx", manifest.model.sha256));
     let archive = root.join(format!("{}.zip", manifest.runtime.sha256));
-    download(&client, &manifest.model, &model, stop, &progress).await?;
-    download(&client, &manifest.runtime, &archive, stop, &progress).await?;
+    let total = manifest.model.size + manifest.runtime.size;
+    if let Some(status) = PACKAGE.lock().as_mut() {
+        status.size = total;
+    }
+    download(
+        &client,
+        &manifest.model,
+        &model,
+        stop,
+        progress,
+        preferred,
+        (0, total),
+    )
+    .await?;
+    download(
+        &client,
+        &manifest.runtime,
+        &archive,
+        stop,
+        progress,
+        preferred,
+        (manifest.model.size, total),
+    )
+    .await?;
+    report(progress, "正在校验并安装视觉识别资源包".into(), Some(100));
     let runtime_dir = root.join(&manifest.runtime.sha256);
     fs::create_dir_all(&runtime_dir).map_err(err)?;
     crate::resource_install::no_links(&runtime_dir)?;
@@ -247,16 +469,148 @@ pub async fn ensure(
         }
     }
     crate::downloads::save_json(&cache, &manifest)?;
-    progress(format!(
-        "资源就绪：{} / ORT {}",
-        manifest.model.version, manifest.runtime.version
-    ));
+    report(progress, "视觉识别资源包已就绪".into(), Some(100));
     Ok(Installed { model, runtime })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pinned() -> Manifest {
+        serde_json::from_str(include_str!("../../../resources/vision-resources-v1.json")).unwrap()
+    }
+
+    #[test]
+    fn old_manifests_remain_valid_and_owned_mirrors_follow_source_preference() {
+        let mut m = pinned();
+        assert_eq!(
+            download_urls(&m.runtime, "gitee")[0],
+            m.runtime.mirrors[0].url
+        );
+        assert_eq!(download_urls(&m.runtime, "github")[0], m.runtime.url);
+        let mut legacy = serde_json::to_value(&m).unwrap();
+        for kind in ["model", "runtime"] {
+            legacy[kind].as_object_mut().unwrap().remove("mirrors");
+        }
+        let legacy: Manifest = serde_json::from_value(legacy).unwrap();
+        assert!(validate(&legacy).is_ok());
+        assert_eq!(
+            download_urls(&legacy.runtime, "gitee"),
+            vec![legacy.runtime.url.as_str()]
+        );
+        m.runtime.mirrors[0].url =
+            "https://gitee.com/another/repo/releases/download/v1/runtime.zip".into();
+        assert!(validate(&m).is_err());
+    }
+
+    fn serve(body: &'static [u8]) -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(body).unwrap();
+        });
+        (url, worker)
+    }
+
+    #[test]
+    fn corrupt_mirror_falls_back_and_valid_cache_needs_no_network() {
+        use sha2::{Digest, Sha256};
+        let (mirror, first) = serve(b"bad!");
+        let (upstream, second) = serve(b"good");
+        let a = Asset {
+            version: "test".into(),
+            url: upstream,
+            size: 4,
+            sha256: format!("{:x}", Sha256::digest(b"good")),
+            mirrors: vec![crate::downloads::Mirror {
+                platform: "gitee".into(),
+                url: mirror,
+            }],
+        };
+        let root = std::env::temp_dir().join(format!("vision-download-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("asset.onnx");
+        let stop = AtomicBool::new(false);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let messages = parking_lot::Mutex::new(Vec::new());
+        tauri::async_runtime::block_on(download(
+            &client,
+            &a,
+            &path,
+            &stop,
+            &|s| messages.lock().push(s),
+            "gitee",
+            (0, 4),
+        ))
+        .unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"good");
+        assert!(messages.lock().iter().any(|s| s.contains("切换备用源")));
+        // Both listeners are gone: a second call can only succeed by using the verified cache.
+        tauri::async_runtime::block_on(download(
+            &client,
+            &a,
+            &path,
+            &stop,
+            &|_| {},
+            "gitee",
+            (0, 4),
+        ))
+        .unwrap();
+        stop.store(true, Ordering::Release);
+        assert!(tauri::async_runtime::block_on(download(
+            &client,
+            &a,
+            &path,
+            &stop,
+            &|_| {},
+            "gitee",
+            (0, 4)
+        ))
+        .is_err());
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            1,
+            "partial files must be cleaned up"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "Downloads both pinned assets to an isolated directory through the Gitee mirror"]
+    fn gitee_package_download_smoke() {
+        let root = PathBuf::from(
+            std::env::var_os("D2RHUB_VISION_MIRROR_SMOKE_ROOT").expect("isolated smoke directory"),
+        );
+        let stop = AtomicBool::new(false);
+        let files = tauri::async_runtime::block_on(ensure_preferred(&root, &stop, "gitee", |s| {
+            println!("{s}")
+        }))
+        .unwrap();
+        assert!(files.model.is_file());
+        assert!(files.runtime.is_file());
+        assert!(package_status(&root, true).unwrap().ready);
+        // Loading ORT confirms extraction and model format, beyond archive hashes.
+        super::super::ocr::Ocr::new(&files).unwrap();
+    }
     #[test]
     fn validates_pinned_manifest_and_rejects_foreign_binary() {
         let mut m: Manifest =
