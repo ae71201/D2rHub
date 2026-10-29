@@ -171,12 +171,25 @@ pub trait TaskObserver: Send + Sync {
     fn task_updated(&self, snapshot: &TaskSnapshot);
 }
 
+const MAX_TIMELINE_ENTRIES: usize = 256;
+
 struct TaskRecord {
     snapshot: TaskSnapshot,
     timeline: Vec<TaskTimelineEntry>,
     cancellation: Arc<AtomicBool>,
     retry_payload: Option<String>,
     cancel_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl TaskRecord {
+    fn record_progress(&mut self, timestamp_ms: u64) {
+        // Keep the initial state and the latest events, including terminal state.
+        if self.timeline.len() >= MAX_TIMELINE_ENTRIES {
+            self.timeline.remove(1);
+        }
+        self.timeline
+            .push(timeline_from(&self.snapshot, timestamp_ms));
+    }
 }
 
 struct TaskRuntimeInner {
@@ -373,9 +386,7 @@ impl TaskRuntime {
             if record.snapshot.message.is_empty() {
                 record.snapshot.message = "取消请求已提交".to_string();
             }
-            record
-                .timeline
-                .push(timeline_from(&record.snapshot, timestamp_ms));
+            record.record_progress(timestamp_ms);
             (record.snapshot.clone(), record.cancel_hook.clone())
         };
         if let Some(cancel_hook) = cancel_hook {
@@ -433,6 +444,12 @@ impl TaskRuntime {
                     requested: progress,
                 });
             }
+            if current.snapshot.progress == progress.min(99)
+                && current.snapshot.step == step.trim()
+                && current.snapshot.message == message.trim()
+            {
+                return Ok(current.snapshot.clone());
+            }
             inner.revision = inner.revision.saturating_add(1);
             let revision = inner.revision;
             let record = inner.records.get_mut(&task_id).expect("task was checked");
@@ -440,9 +457,7 @@ impl TaskRuntime {
             record.snapshot.progress = progress.min(99);
             record.snapshot.step = step.trim().to_string();
             record.snapshot.message = message.trim().to_string();
-            record
-                .timeline
-                .push(timeline_from(&record.snapshot, timestamp_ms));
+            record.record_progress(timestamp_ms);
             record.snapshot.clone()
         };
         self.publish(&snapshot);
@@ -488,9 +503,7 @@ impl TaskRuntime {
             record.snapshot.error_code = error_code.map(str::to_string);
             record.snapshot.finished_at_ms = Some(timestamp_ms);
             record.cancel_hook = None;
-            record
-                .timeline
-                .push(timeline_from(&record.snapshot, timestamp_ms));
+            record.record_progress(timestamp_ms);
             record.snapshot.clone()
         };
         self.publish(&snapshot);
@@ -656,6 +669,26 @@ mod tests {
 
     fn runtime(max_completed: usize) -> TaskRuntime {
         TaskRuntime::with_clock(max_completed, Arc::new(FakeClock::default()))
+    }
+
+    #[test]
+    fn repeated_progress_is_quiet_and_long_timelines_stay_bounded() {
+        let runtime = runtime(10);
+        let handle = runtime.begin(TaskRequest::new("long-job")).unwrap();
+        let first = handle.update(1, "work", "working").unwrap();
+        assert_eq!(
+            handle.update(1, "work", "working").unwrap().revision,
+            first.revision
+        );
+        for i in 0..1000 {
+            handle.update(1, "work", &format!("item {i}")).unwrap();
+        }
+        let done = handle.succeed("done").unwrap();
+        let timeline = runtime.timeline(done.task_id).unwrap();
+        assert_eq!(timeline.len(), super::MAX_TIMELINE_ENTRIES);
+        assert_eq!(timeline[0].progress, 0);
+        assert_eq!(timeline.last().unwrap().state, TaskState::Succeeded);
+        assert!(timeline.windows(2).all(|v| v[0].revision < v[1].revision));
     }
 
     #[test]

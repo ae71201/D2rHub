@@ -138,22 +138,7 @@ pub fn get_account_settings(
     account_id: String,
     defaults_only: Option<bool>,
 ) -> Result<HashMap<String, Value>, AppError> {
-    if defaults_only != Some(true) {
-        if let Some(member) =
-            crate::commands::launch_scheme::current_member(state.inner(), &account_id)
-        {
-            if let Some(snapshot) = member.snapshot {
-                let mut settings: HashMap<_, _> = snapshot.game_settings.into_iter().collect();
-                if let Some(resolution) = member.resolution {
-                    settings.insert("Screen Resolution (Windowed)".into(), resolution.into());
-                }
-                if let Some(fps) = member.fps {
-                    settings.insert("Framerate Cap".into(), fps.into());
-                }
-                return Ok(settings);
-            }
-        }
-    }
+    let _ = defaults_only;
     account_default_settings(state.inner(), &account_id)
 }
 
@@ -176,47 +161,13 @@ pub(crate) fn account_default_settings(
 /// 保存指定账号的 Settings.json
 #[tauri::command]
 pub fn save_account_settings(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
     settings: HashMap<String, Value>,
 ) -> Result<(), AppError> {
     ensure_nonempty_settings(&settings, "游戏设置")?;
-    if crate::commands::launch_scheme::update_current_member(
-        state.inner(),
-        &app,
-        &account_id,
-        |member| {
-            let resolution = settings
-                .get("Screen Resolution (Windowed)")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or(member.resolution.clone());
-            let fps = settings
-                .get("Framerate Cap")
-                .and_then(Value::as_u64)
-                .and_then(|fps| u32::try_from(fps).ok())
-                .or(member.fps);
-            let overrides = crate::application::multi_instance::LaunchAccountOverrides {
-                snapshot: member.snapshot.clone(),
-                mod_args: member.mod_args.clone().unwrap_or_default(),
-                position_preset_id: None,
-                resolution: resolution.clone(),
-                fps,
-            };
-            crate::application::multi_instance::validate_graphics_override(&overrides)?;
-            member.resolution = resolution;
-            member.fps = fps;
-            member
-                .snapshot
-                .as_mut()
-                .ok_or_else(|| AppError::ConfigWriteError("本次账号设置缺失".into()))?
-                .game_settings = settings.clone().into_iter().collect();
-            Ok(())
-        },
-    )? {
-        return Ok(());
-    }
+
     let cfg = state
         .configuration()
         .snapshot()
@@ -229,10 +180,28 @@ pub fn save_account_settings(
         .save(&account_id, settings)
 }
 
+#[tauri::command]
+pub fn patch_account_settings(
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    patch: GameSettings,
+) -> Result<GameSettings, AppError> {
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".into()))?;
+    let adapter = AccountGameSettingsAdapter {
+        config: &config,
+        state: state.inner(),
+    };
+    AccountGameSettingsService::new(&adapter, state.multi_instance().account_leases())
+        .patch(&account_id, patch)
+}
+
 /// 将系统 Saved Games 下的 Settings.json 快照到指定账号
 #[tauri::command]
 pub fn snapshot_system_settings_to_account(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<HashMap<String, Value>, AppError> {
@@ -244,12 +213,7 @@ pub fn snapshot_system_settings_to_account(
         config: &cfg,
         state: state.inner(),
     };
-    if crate::commands::launch_scheme::current_member(state.inner(), &account_id).is_some() {
-        let account = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-        let settings = adapter.read_system_settings_required(&account)?;
-        save_account_settings(app, state, account_id, settings.clone())?;
-        return Ok(settings);
-    }
+
     AccountGameSettingsService::new(&adapter, state.multi_instance().account_leases())
         .snapshot_system(&account_id)
 }

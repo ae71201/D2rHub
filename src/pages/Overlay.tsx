@@ -1,6 +1,6 @@
 import { matchesRecognitionSource } from "../utils/recognitionSource";
 import React, { useEffect, useState, useRef } from "react";
-import { ChevronLeft, ChevronRight, Eye } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigSync } from "../store/globalConfig";
@@ -476,14 +476,6 @@ export function Overlay() {
   );
   const overlaySizeSaveTimerRef = useRef<number | null>(null);
   const modeTransitionRef = useRef(false);
-  const accountScrollRef = useRef<HTMLDivElement | null>(null);
-  const accountButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const accountDragStateRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startScrollLeft: number;
-    dragged: boolean;
-  } | null>(null);
   const overlayWindowDragStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -493,7 +485,6 @@ export function Overlay() {
   const miniResizeInitTokenRef = useRef(0);
   const miniResizeSessionRef = useRef<MiniOverlayResizeSession | null>(null);
   const suppressOverlayDoubleClickUntilRef = useRef(0);
-  const [accountStripScrollable, setAccountStripScrollable] = useState(false);
   const dockStateRef = useRef<OverlayDockState | null>(null);
   const dockMoveTimerRef = useRef<number | null>(null);
   const dockHideTimerRef = useRef<number | null>(null);
@@ -508,7 +499,6 @@ export function Overlay() {
     : !!config?.enable_tz_overlay;
   const isAudioTrackingActive = isStatsOverlay && !!config?.rune_audio_enabled;
 
-  const startupCheckDoneRef = useRef(false);
 
   async function getOverlayWindowSize() {
     const win = getCurrentWindow();
@@ -948,7 +938,7 @@ export function Overlay() {
     if (!(target instanceof Element)) return;
     if (
       target.closest(
-        'button, input, select, textarea, a, [data-overlay-interactive="true"], .overlay-account-scroll.is-scrollable',
+        'button, input, select, textarea, a, [data-overlay-interactive="true"]',
       )
     ) {
       return;
@@ -1173,65 +1163,6 @@ export function Overlay() {
     }
   }
 
-  async function focusAccountWindow(displayName: string) {
-    try {
-      const ok = await invokeCommand<boolean>("bring_window_by_title_to_front", {
-        windowTitle: displayName,
-      });
-      if (!ok) {
-        reportOverlayIssue("WARN", "bring_window_by_title_to_front returned false", displayName);
-      } else {
-        // Optimistically reflect the requested focus so its pill becomes visible immediately.
-        setForegroundTitle(displayName);
-      }
-    } catch (err) {
-      reportOverlayIssue("ERROR", "bring_window_by_title_to_front failed", err);
-    }
-  }
-
-  function handleAccountPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) return;
-    const container = event.currentTarget;
-    if (container.scrollWidth <= container.clientWidth) return;
-
-    accountDragStateRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startScrollLeft: container.scrollLeft,
-      dragged: false,
-    };
-  }
-
-  function handleAccountPointerMove(event: React.PointerEvent<HTMLDivElement>) {
-    const drag = accountDragStateRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const deltaX = event.clientX - drag.startX;
-    if (!drag.dragged && Math.abs(deltaX) < 4) return;
-    if (!drag.dragged) {
-      drag.dragged = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
-    event.currentTarget.dataset.dragging = "true";
-    event.currentTarget.scrollLeft = drag.startScrollLeft - deltaX;
-    event.preventDefault();
-  }
-
-  function finishAccountPointerDrag(event: React.PointerEvent<HTMLDivElement>) {
-    const drag = accountDragStateRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    if (drag.dragged) {
-      suppressOverlayDoubleClickUntilRef.current = performance.now() + 350;
-      event.preventDefault();
-    }
-    delete event.currentTarget.dataset.dragging;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    accountDragStateRef.current = null;
-  }
-
   // Apply font scale on startup from localStorage, then sync from config
   useEffect(() => {
     try {
@@ -1255,26 +1186,6 @@ export function Overlay() {
     }
   }, [config?.font_scale]);
 
-  useEffect(() => {
-    const container = accountScrollRef.current;
-    if (!container) return;
-
-    const handleWheel = (event: WheelEvent) => {
-      if (container.scrollWidth <= container.clientWidth) return;
-      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
-        ? event.deltaX
-        : event.deltaY;
-      if (delta === 0) return;
-
-      event.preventDefault();
-      container.scrollLeft += delta;
-    };
-
-    container.addEventListener("wheel", handleWheel, { passive: false });
-    return () => container.removeEventListener("wheel", handleWheel);
-  }, []);
-
-  const [foregroundTitle, setForegroundTitle] = useState("");
   const [terrorZones, setTerrorZones] = useState<TerrorZoneSnapshot>({ current: null, next: null });
   const [terrorZoneStatus, setTerrorZoneStatus] = useState<TerrorZoneStatus>("loading");
 
@@ -1670,82 +1581,8 @@ export function Overlay() {
 
   // Config is updated in real-time via the Tauri event listener in globalConfig.ts
 
-  // Load accounts
-  useEffect(() => {
-    if (!isStatsOverlay || (!isPollerActive && !isAudioTrackingActive)) return;
-    let cancelled = false;
-    let timer: number | undefined;
-
-    const poll = async () => {
-      await loadAccounts();
-      if (!cancelled && isOverlayWindowVisible && isPollerActive) {
-        timer = window.setTimeout(poll, 5000);
-      }
-    };
-
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [isAudioTrackingActive, loadAccounts, isOverlayWindowVisible, isPollerActive, isStatsOverlay]);
-
-  // 启动时检查已运行的 D2R 窗口，立即更新悬浮窗状态（仅执行一次）
-  useEffect(() => {
-    if (startupCheckDoneRef.current) return;
-    if (!isStatsOverlay || (!isPollerActive && !isAudioTrackingActive)) return;
-    if (!config?.rune_audio_target_account || config.rune_audio_external_target) return;
-    (async () => {
-      try {
-        startupCheckDoneRef.current = true;
-
-        // 刷新账号运行状态（扫描 D2R 窗口匹配账号昵称 → 更新 active_games）
-        const matchedIds: string[] = await invokeCommand("refresh_account_running_state");
-        if (matchedIds.length > 0) {
-          // 等待账号列表加载完成
-          await loadAccounts();
-        }
-
-        // 如果任一 D2R 窗口标题包含被监控账号的昵称，直接设置为前台标题
-        const titles: string[] = await invokeCommand("get_d2r_window_titles");
-        if (titles.length > 0 && config?.rune_audio_target_account) {
-          // 使用 getState() 读取最新账号列表，避免将 accounts 加入依赖造成循环
-          const latestAccounts = useAccounts.getState().accounts;
-          const target = latestAccounts.find((a) => a.id === config.rune_audio_target_account);
-          if (target) {
-            const displayName = target.display_name || target.id;
-            const match = titles.find((t) =>
-              t.toLowerCase().includes(displayName.toLowerCase())
-            );
-            if (match) {
-              setForegroundTitle(match);
-            }
-          }
-        }
-      } catch {}
-    })();
-  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive, isPollerActive, isStatsOverlay, loadAccounts]);
-
-  // 前台窗口标题轮询
-  useEffect(() => {
-    if (!isStatsOverlay || !isPollerActive || !isOverlayWindowVisible) return;
-    let cancelled = false;
-    let timer: number | undefined;
-
-    const poll = async () => {
-      try {
-        const title = await invokeCommand<string>("get_foreground_window_title");
-        if (!cancelled) setForegroundTitle(title);
-      } catch {}
-      if (!cancelled) timer = window.setTimeout(poll, 1000);
-    };
-
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [isOverlayWindowVisible, isPollerActive]);
+  // Metadata only: the overlay no longer monitors account windows.
+  useEffect(() => { if (isAudioTrackingActive) void loadAccounts(); }, [isAudioTrackingActive, loadAccounts]);
 
   // ── 音频遥测事件（后端实时捕获并推送）──
   useEffect(() => {
@@ -1869,7 +1706,6 @@ export function Overlay() {
   }, [recentDropHighlights]);
 
   // ── 派生数据 ──
-  const activeAccounts = accounts.filter((a) => a.is_running);
   const scopedDrops = dropScope === "current"
     ? stats.currentRunDrops
     : dropScope === "previous"
@@ -1893,42 +1729,7 @@ export function Overlay() {
       setShowAllDropGroups(false);
     }
   }, [aggregatedDrops.length]);
-  const activeAccountIdsKey = activeAccounts.map((account) => account.id).join("|");
-  const foregroundTitleLower = foregroundTitle.toLowerCase();
-  const focusedAccountId = activeAccounts.find((account) => {
-    const displayName = account.display_name || account.id;
-    return displayName.length > 0 && foregroundTitleLower.includes(displayName.toLowerCase());
-  })?.id;
 
-  useEffect(() => {
-    if (!isStatsOverlay) return;
-    const container = accountScrollRef.current;
-    if (!container) return;
-
-    const syncScrollableState = () => {
-      setAccountStripScrollable(container.scrollWidth > container.clientWidth + 1);
-    };
-    syncScrollableState();
-
-    const observer = new ResizeObserver(syncScrollableState);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [activeAccountIdsKey, displayMode]);
-
-  useEffect(() => {
-    if (!isStatsOverlay || !focusedAccountId) return;
-    const frame = window.requestAnimationFrame(() => {
-      const container = accountScrollRef.current;
-      const pill = accountButtonRefs.current.get(focusedAccountId);
-      if (!container || !pill) return;
-
-      const centeredLeft = pill.offsetLeft - (container.clientWidth - pill.offsetWidth) / 2;
-      const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
-      const left = Math.max(0, Math.min(maxScrollLeft, centeredLeft));
-      container.scrollTo({ left, behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeAccountIdsKey, displayMode, focusedAccountId]);
 
   const avgTime = stats.dbAvgTime;
   const currentSessionRuns = stats.sessionRuns[
@@ -1974,7 +1775,6 @@ export function Overlay() {
     ? (useEnglish ? "Double-click to end and save this run" : "双击结束当前计时并保存")
     : (useEnglish ? "No active timer" : "当前没有正在进行的计时");
 
-  const noActiveAccountLabel = useEnglish ? "No active accounts" : "无活动账号";
   const averageTimeLabel = useEnglish ? "Average" : "平均";
   const totalRunsLabel = useEnglish ? "Total" : "总计";
   const currentSessionRunsLabel = useEnglish ? "This session" : "本次";
@@ -2070,118 +1870,6 @@ export function Overlay() {
       {/* ═══════════════════════════════════════════
           1. 账号胶囊（现有）
           ═══════════════════════════════════════════ */}
-      {isStatsOverlay && displayMode === "expanded" && <div
-        ref={accountScrollRef}
-        className={`overlay-account-scroll flex min-h-0 w-full flex-none flex-nowrap items-center gap-1.5 overflow-x-auto ${
-          accountStripScrollable ? "is-scrollable" : ""
-        }`}
-        data-overlay-account-scroll="true"
-        tabIndex={0}
-        role="toolbar"
-        aria-label={useEnglish ? "Active game accounts" : "运行中的游戏账号"}
-        onPointerDown={handleAccountPointerDown}
-        onPointerMove={handleAccountPointerMove}
-        onPointerUp={finishAccountPointerDrag}
-        onPointerCancel={finishAccountPointerDrag}
-      >
-        {activeAccounts.length > 0 ? (
-          activeAccounts.map((a) => {
-            const isMonitored =
-              config?.rune_audio_enabled && !config.rune_audio_external_target && config?.rune_audio_target_account === a.id;
-            const displayName = a.display_name || a.id;
-            const isFocused = a.id === focusedAccountId;
-
-            const bg = isFocused
-              ? "rgba(52,211,153,0.12)"
-              : isMonitored
-                ? "rgba(200,168,78,0.15)"
-                : "var(--surface-hover)";
-            const border = isFocused
-              ? "1px solid rgba(52,211,153,0.45)"
-              : isMonitored
-                ? "1px solid rgba(200,168,78,0.3)"
-                : "1px solid var(--border-default)";
-            const textColor = isFocused
-              ? "var(--success)"
-              : isMonitored
-                ? "var(--accent)"
-                : "var(--text-secondary)";
-            const dotBg = isFocused
-              ? "var(--success)"
-              : isMonitored
-                ? "var(--accent)"
-                : "var(--success)";
-            const dotShadow = "none";
-
-            let tooltip = "";
-            if (useEnglish) {
-              if (isFocused && isMonitored) tooltip = "Monitoring window · Focused · Double-click to switch";
-              else if (isFocused) tooltip = "Focused · Double-click to switch";
-              else if (isMonitored) tooltip = "Monitoring window · Double-click to focus";
-              else tooltip = "Double-click to focus window";
-            } else {
-              if (isFocused && isMonitored) tooltip = "正在监测窗口 · 当前聚焦 · 双击切换";
-              else if (isFocused) tooltip = "当前聚焦 · 双击切换";
-              else if (isMonitored) tooltip = "正在监测窗口 · 双击聚焦";
-              else tooltip = "双击聚焦窗口";
-            }
-
-            return (
-              <button
-                type="button"
-                key={a.id}
-                ref={(node) => {
-                  if (node) accountButtonRefs.current.set(a.id, node);
-                  else accountButtonRefs.current.delete(a.id);
-                }}
-                className={`overlay-account-pill flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-2xs font-medium
-                  cursor-pointer hover:brightness-110 active:scale-95 transition-all duration-150 select-none
-                  focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1`}
-                title={tooltip}
-                aria-label={useEnglish ? `${displayName}, focus window` : `${displayName}，聚焦窗口`}
-                aria-keyshortcuts="Enter Space"
-                data-overlay-interactive="true"
-                style={
-                  {
-                    background: bg,
-                    color: textColor,
-                    border,
-                    WebkitAppRegion: "no-drag",
-                  } as React.CSSProperties
-                }
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter" && e.key !== " ") return;
-                  e.stopPropagation();
-                  e.preventDefault();
-                  void focusAccountWindow(displayName);
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  void focusAccountWindow(displayName);
-                }}
-              >
-                {isMonitored && (
-                  <Eye
-                    size={10}
-                    className="shrink-0"
-                    style={{ opacity: isFocused ? 1 : 0.85 }}
-                  />
-                )}
-                <span
-                  className="w-1.5 h-1.5 rounded-full shrink-0"
-                  style={{ background: dotBg, boxShadow: dotShadow }}
-                />
-                {displayName}
-              </button>
-            );
-          })
-        ) : (
-          <div className="whitespace-nowrap text-xs italic text-text-muted">{noActiveAccountLabel}</div>
-        )}
-      </div>}
-
-
       {isStatsOverlay && displayMode === "mini" ? (
         <div
           className="relative flex h-full min-w-0 flex-1 items-center gap-2"

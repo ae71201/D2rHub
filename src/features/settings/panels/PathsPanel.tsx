@@ -148,8 +148,8 @@ export function PathsPanel({
         />
       </div>
 
-      <div className="spatial-panel p-3 space-y-2">
-        <h3 className="text-xs font-bold text-text-primary">辅助路径</h3>
+      <details className="spatial-panel p-3 space-y-2">
+        <summary className="settings-advanced-summary">辅助路径与浏览器 <span>自动探测不正确时再调整</span></summary>
         {([
           ["program_data_agent_path", "Agent.exe 目录", "Agent 目录", "agent"],
           ["app_data_roaming_bnet_path", "Battle.net 数据目录", "Roaming 战网目录", "roaming"],
@@ -189,7 +189,7 @@ export function PathsPanel({
             <option value="edge">Microsoft Edge</option>
           </select>
         </div>
-      </div>
+      </details>
     </div>
   );
 }

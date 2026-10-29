@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emitEvent, invokeCommand, listenEvent } from "../platform/tauri";
 
-import { useGlobalConfig } from "../store/globalConfig";
 import { useAccounts } from "../store/accounts";
-import { readFramerateCap, writeFramerateCap } from "../utils/gameSettings";
+import { readFramerateCap } from "../utils/gameSettings";
 
 export interface AccountQuickSettings {
   resolution: string;
@@ -70,10 +69,6 @@ function hasPatch(patch: SettingsPatch): boolean {
 }
 
 export function useAccountQuickSettings(accountId: string, enabled: boolean) {
-  const sessionKey = useGlobalConfig(state => state.config?.launch_session?.id ?? "");
-  const anyRunning = useAccounts(state => state.accounts.some(account => account.is_running));
-  const scopeKey = sessionKey ? `${sessionKey}:${anyRunning}` : "default";
-  const previousScope = useRef(scopeKey);
   const readEpoch = useRef(0);
 
   const [settings, setSettings] = useState<AccountQuickSettings>(DEFAULT_SETTINGS);
@@ -132,23 +127,19 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
 
     const request = (async () => {
       try {
-        const raw = await invokeCommand<Record<string, unknown>>("get_account_settings", { accountId });
-        const merged = { ...raw };
-        if (patch.resolution !== undefined) {
-          merged["Screen Resolution (Windowed)"] = patch.resolution;
-        }
-        if (patch.fps !== undefined) {
-          Object.assign(merged, writeFramerateCap(merged, patch.fps));
-        }
-
-        await invokeCommand("save_account_settings", { accountId, settings: merged });
+        const changes: Record<string, unknown> = {};
+        if (patch.resolution !== undefined) changes["Screen Resolution (Windowed)"] = patch.resolution;
+        if (patch.fps !== undefined) changes["Framerate Cap"] = patch.fps;
+        await invokeCommand("patch_account_settings", { accountId, patch: changes });
 
         const account = useAccounts.getState().accounts.find((candidate) => candidate.id === accountId);
         if (account && !account.has_customized_settings) {
           useAccounts.getState().updateAccount({ ...account, has_customized_settings: true });
         }
 
-        await emitEvent("account-settings-updated", { accountId });
+        await emitEvent("account-settings-updated", { accountId }).catch(error => {
+          console.warn("Settings saved, but update notification failed", error);
+        });
         if (mountedRef.current) setError(null);
       } catch (saveError) {
         // Preserve edits made while this request was running; newer values win.
@@ -182,16 +173,6 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
     settingsFlushers.set(accountId, flush);
     return () => { if (settingsFlushers.get(accountId) === flush) settingsFlushers.delete(accountId); };
   }, [accountId, flush]);
-
-  useEffect(() => {
-    if (previousScope.current === scopeKey) return;
-    previousScope.current = scopeKey;
-    readEpoch.current++;
-    loadedRef.current = false;
-    pendingPatchRef.current = {};
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    if (enabled) void load(true).catch(() => undefined);
-  }, [scopeKey, load]);
 
   useEffect(() => {
     if (!enabled) return;

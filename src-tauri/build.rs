@@ -2,6 +2,7 @@
 mod generated_permissions;
 
 const APP_COMMANDS: &[&str] = &[
+    "open_drop_screenshots_dir",
     "vision_get_config",
     "vision_save_config",
     "vision_get_status",
@@ -87,6 +88,7 @@ const APP_COMMANDS: &[&str] = &[
     "cancel_launch",
     "get_account_settings",
     "save_account_settings",
+    "patch_account_settings",
     "get_game_settings",
     "snapshot_system_settings_to_account",
     "launch_browser_for_account",

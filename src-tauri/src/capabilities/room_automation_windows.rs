@@ -189,6 +189,22 @@ pub(crate) fn prepare_background_room(
             config, account_id, pid, hwnd, created, cancel,
         )?);
     }
+    if !config.join_only && foreground_pid() != Some(primary_pid) {
+        if !foreground_is_game() {
+            return Err("前台已离开 D2R，已停止创建房间".into());
+        }
+        use crate::application::multi_instance::GameWindowPort;
+        if !crate::infrastructure::system::SystemGameWindowPort.focus_by_pid(primary_pid) {
+            return Err("无法切换到建房主号窗口".into());
+        }
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while foreground_pid() != Some(primary_pid) {
+            if Instant::now() >= deadline {
+                return Err("未能激活建房主号窗口，请重试".into());
+            }
+            wait(cancel, Duration::from_millis(25))?;
+        }
+    }
     let mut input = if config.join_only {
         DesktopInput::acquire_for_messages(targets[0].hwnd, primary_pid)?
     } else {
@@ -690,6 +706,14 @@ pub(crate) fn foreground_pid() -> Option<u32> {
         GetWindowThreadProcessId(hwnd, &mut pid);
     }
     (pid != 0).then_some(pid)
+}
+
+pub(crate) fn foreground_is_game() -> bool {
+    let Some(pid) = foreground_pid() else {
+        return false;
+    };
+    crate::infrastructure::game_layout_windows::snapshot()
+        .is_ok_and(|windows| windows.iter().any(|window| window.pid == pid))
 }
 
 fn open_room_form(

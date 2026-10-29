@@ -245,6 +245,7 @@ export interface DropObservation {
   confidence: number;
   source: string;
   scene_record_id?: number | null;
+  screenshot_path?: string | null;
 }
 
 export interface StatsData {

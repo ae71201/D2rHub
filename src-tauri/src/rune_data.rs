@@ -72,29 +72,6 @@ const RUNE_ALIASES: [(&str, u32); 26] = [
 ];
 
 /// 从旧记录文字或编号中匹配符文，返回 1-based 编号（1-33）
-pub(crate) fn visual_rune_aliases(number: u32) -> Vec<String> {
-    let mut names: Vec<String> = RUNE_ALIASES
-        .iter()
-        .filter(|(_, id)| *id == number)
-        .map(|(name, _)| name.to_string())
-        .collect();
-    if let Some(name) = RUNE_NAMES.get(number.saturating_sub(1) as usize) {
-        names.push(name.to_string());
-    }
-    if let Some(name) = RUNE_NAMES_EN.get(number.saturating_sub(1) as usize) {
-        names.push(name.to_string());
-    }
-    let mut aliases = names.clone();
-    for name in names {
-        aliases.extend([
-            format!("{name}符文"),
-            format!("符文{name}"),
-            format!("{name} Rune"),
-        ]);
-    }
-    aliases
-}
-
 /// 从旧记录文字或编号中匹配符文，返回 1-based 编号（1-33）
 ///
 /// 匹配策略（按优先级）：

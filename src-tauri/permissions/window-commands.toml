@@ -2,6 +2,7 @@
 identifier = "main-window-commands"
 description = "Allows the main application window to invoke the complete D2RHub command surface."
 commands.allow = [
+    "open_drop_screenshots_dir",
     "vision_get_config", "vision_save_config", "vision_get_status",
     "vision_get_resource_package", "vision_prepare_resource_package", "vision_open_resource_directory",
   "vision_preview",
@@ -31,7 +32,7 @@ commands.allow = [
   "export_accounts", "import_accounts",
   "launch_saved_scheme", "save_launch_scheme", "delete_launch_scheme", "get_launch_scheme_defaults",
   "launch_accounts", "launch_battle_net_only", "cancel_launch",
-  "get_account_settings", "save_account_settings", "get_game_settings", "snapshot_system_settings_to_account",
+  "get_account_settings", "save_account_settings", "patch_account_settings", "get_game_settings", "snapshot_system_settings_to_account",
   "launch_browser_for_account", "open_token_login_url", "open_url_in_browser", "check_browser_running", "kill_browser_processes",
   "is_admin", "get_d2r_pids", "kill_all_d2r_processes", "bring_bnet_to_foreground",
   "bring_self_to_foreground", "hide_main_window", "bring_window_by_title_to_front", "get_foreground_window_title",

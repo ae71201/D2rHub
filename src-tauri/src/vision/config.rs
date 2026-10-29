@@ -34,11 +34,6 @@ pub struct VisionConfig {
     pub poll_ms: u64,
     pub area_enabled: bool,
     pub area_roi: Roi,
-    pub drops_enabled: bool,
-    /// Require visual confirmation for low-score drops while labels remain visible.
-    pub drops_enforce: bool,
-    pub labels_visible: bool,
-    pub drop_threshold: f32,
 }
 impl Default for VisionConfig {
     fn default() -> Self {
@@ -61,10 +56,6 @@ impl Default for VisionConfig {
                 width: 0.2,
                 height: 0.09,
             },
-            drops_enabled: true,
-            drops_enforce: true,
-            labels_visible: true,
-            drop_threshold: 0.7,
         }
     }
 }
@@ -75,20 +66,14 @@ impl VisionConfig {
         self.diagnostic_enabled != other.diagnostic_enabled && runtime == *other
     }
     pub fn needs_ocr(&self) -> bool {
-        self.chat_follow || self.area_enabled || self.drops_enabled
+        self.chat_follow || self.area_enabled
     }
     pub fn validate(&self) -> Result<(), String> {
         if !self.chat_roi.valid() || !self.area_roi.valid() {
             return Err("截图区域必须位于游戏客户区内（0～1 比例）".into());
         }
-        if !(1000..=10000).contains(&self.poll_ms)
-            || !self.drop_threshold.is_finite()
-            || !(0.4..=0.95).contains(&self.drop_threshold)
-        {
+        if !(1000..=10000).contains(&self.poll_ms) {
             return Err("视觉识别周期或阈值无效".into());
-        }
-        if self.drops_enforce && (!self.drops_enabled || !self.labels_visible) {
-            return Err("拦截未确认掉落前，请启用核验并确认游戏持续显示掉落标签".into());
         }
         Ok(())
     }
@@ -153,7 +138,7 @@ mod tests {
             }
         );
         assert!(!c.diagnostic_enabled);
-        assert!(c.area_enabled && c.drops_enabled && c.drops_enforce && c.labels_visible);
+        assert!(c.area_enabled);
         c.validate().unwrap();
         let enabled = VisionConfig {
             chat_follow: true,
@@ -179,9 +164,7 @@ mod tests {
             diagnostic_enabled: true,
             chat_send: true,
             area_enabled: true,
-            drops_enabled: true,
-            labels_visible: true,
-            drops_enforce: true,
+
             ..Default::default()
         };
         let first = store(root.to_str().unwrap()).unwrap();
@@ -203,8 +186,7 @@ mod tests {
             chat_send: true,
             chat_follow: true,
             area_enabled: false,
-            drops_enabled: false,
-            drops_enforce: false,
+
             chat_account_id: "follower".into(),
             ..Default::default()
         };
@@ -220,7 +202,7 @@ mod tests {
         let c: VisionConfig = serde_json::from_str("{}").unwrap();
         assert!(!c.diagnostic_enabled);
         assert!(c.needs_ocr());
-        assert!(c.area_enabled && c.drops_enabled && c.drops_enforce && c.labels_visible);
+        assert!(c.area_enabled);
         assert!(!c.chat_send);
         assert!(c.validate().is_ok());
     }
@@ -230,7 +212,7 @@ mod tests {
             r#"{"area_enabled":false,"drops_enabled":false,"drops_enforce":false,"labels_visible":false}"#,
         ).unwrap();
         assert!(!config.needs_ocr());
-        assert!(!config.drops_enforce && !config.labels_visible);
+        assert!(config.validate().is_ok());
         let root = std::env::temp_dir().join(format!("vision-disabled-{}", uuid::Uuid::new_v4()));
         let first = store(root.to_str().unwrap()).unwrap();
         first.save_if_generation(0, config.clone()).unwrap();
@@ -241,15 +223,20 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn rejects_invalid_capture_and_unsafe_enforcement() {
+    fn rejects_invalid_capture() {
         let mut c = VisionConfig::default();
         c.area_roi.x = f32::NAN;
         assert!(c.validate().is_err());
         c = VisionConfig::default();
-        c.labels_visible = false;
-        assert!(c.validate().is_err());
-        c.drops_enabled = true;
-        c.labels_visible = true;
+        c.poll_ms = 1000;
         assert!(c.validate().is_ok());
+    }
+    #[test]
+    fn obsolete_drop_options_cannot_enable_ocr_or_block_recording() {
+        let config: VisionConfig = serde_json::from_str(r#"{"area_enabled":false,"drops_enabled":true,"drops_enforce":true,"labels_visible":false,"drop_threshold":99}"#).unwrap();
+        assert!(!config.needs_ocr());
+        config.validate().unwrap();
+        let saved = serde_json::to_value(config).unwrap();
+        assert!(saved.get("drops_enforce").is_none());
     }
 }

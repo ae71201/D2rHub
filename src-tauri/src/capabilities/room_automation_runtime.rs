@@ -143,7 +143,7 @@ trait RuntimeHost: Send + Sync {
         config: &mut RoomAutomationConfig,
     ) -> Result<(), String>;
     fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String>;
-    fn foreground_pid(&self) -> Option<u32>;
+    fn foreground_is_game(&self) -> bool;
 
     fn validate_prepared_follower(&self, account_id: &str, room_name: &str) -> Result<(), String>;
 
@@ -308,14 +308,14 @@ impl RuntimeHost for WindowsRuntimeHost {
         })
     }
 
-    fn foreground_pid(&self) -> Option<u32> {
+    fn foreground_is_game(&self) -> bool {
         #[cfg(target_os = "windows")]
         {
-            windows::foreground_pid()
+            windows::foreground_is_game()
         }
         #[cfg(not(target_os = "windows"))]
         {
-            None
+            false
         }
     }
 
@@ -904,6 +904,17 @@ impl RoomAutomationManager {
         format!("配置已保存，但模块已安全暂停：{}", details.join("；"))
     }
 
+    fn dispatch_shortcut(&self, action: &str) -> Result<Option<WorkflowStatus>, String> {
+        if !self.host.foreground_is_game() {
+            return Ok(None);
+        }
+        match action {
+            PRIMARY_ACTION => self.start_primary().map(Some),
+            FOLLOWERS_ACTION => self.start_followers().map(Some),
+            _ => Ok(None),
+        }
+    }
+
     pub(crate) fn start_primary(&self) -> Result<WorkflowStatus, String> {
         self.start_room_workflow(false)
     }
@@ -1224,7 +1235,7 @@ impl RoomAutomationManager {
     fn prepare_primary_workflow(
         &self,
         mut config: RoomAutomationConfig,
-        require_primary_foreground: bool,
+        require_game_foreground: bool,
     ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
         let foreground_account = if config.join_only {
@@ -1236,14 +1247,8 @@ impl RoomAutomationManager {
             &config.primary_account_id
         };
         let primary = self.host.running_instance(foreground_account)?;
-        if require_primary_foreground && !config.join_only {
-            let foreground = self.host.foreground_pid();
-            if foreground != Some(primary.pid) {
-                return Err(format!(
-                    "请先切到主号 D2R 窗口再创建房间（账号={}，目标 PID={}，实际前台 PID={foreground:?}）",
-                    foreground_account, primary.pid
-                ));
-            }
+        if require_game_foreground && !self.host.foreground_is_game() {
+            return Err("请在任意 D2R 游戏窗口中使用创建快捷键".into());
         }
         Ok((config, primary))
     }
@@ -1251,11 +1256,10 @@ impl RoomAutomationManager {
     fn prepare_workflow(
         &self,
         config: RoomAutomationConfig,
-        require_primary_foreground: bool,
+        require_game_foreground: bool,
         require_followers: bool,
     ) -> Result<PreparedWorkflow, String> {
-        let (config, primary) =
-            self.prepare_primary_workflow(config, require_primary_foreground)?;
+        let (config, primary) = self.prepare_primary_workflow(config, require_game_foreground)?;
         let mut config = config;
         let mut followers = Vec::with_capacity(config.follower_account_ids.len());
         let mut skipped = Vec::new();
@@ -1306,13 +1310,13 @@ impl RoomAutomationManager {
     fn prepare_and_reserve_workflow(
         &self,
         config: RoomAutomationConfig,
-        require_primary_foreground: bool,
+        require_game_foreground: bool,
         require_followers: bool,
     ) -> Result<(PreparedWorkflow, AccountOperationLeases), String> {
         // 第一次解析筛掉当前没有可用窗口的跟随号，避免它们无意义地参与锁竞争；
         // 取得实际参与者租约后再解析一次，关闭窗口/账号状态变化的竞态。
         let (candidate_config, _, followers) =
-            self.prepare_workflow(config, require_primary_foreground, require_followers)?;
+            self.prepare_workflow(config, require_game_foreground, require_followers)?;
         let mut leased_config = candidate_config.clone();
         leased_config.follower_account_ids = followers
             .iter()
@@ -1321,13 +1325,13 @@ impl RoomAutomationManager {
         let leases = self.acquire_participant_leases(&leased_config)?;
         if followers.is_empty() {
             let (config, primary) =
-                self.prepare_primary_workflow(candidate_config, require_primary_foreground)?;
+                self.prepare_primary_workflow(candidate_config, require_game_foreground)?;
             return Ok(((config, primary, Vec::new()), leases));
         }
         // Only resolve participants whose leases were acquired, even if an
         // offline follower appeared between the two snapshots.
         let prepared =
-            self.prepare_workflow(leased_config, require_primary_foreground, require_followers)?;
+            self.prepare_workflow(leased_config, require_game_foreground, require_followers)?;
         Ok((prepared, leases))
     }
 
@@ -1982,13 +1986,9 @@ fn shortcut_dispatch_loop(
             "RoomAutomation",
             &format!("快捷键 dispatcher 已接收动作：{action}"),
         );
-        let result = match action {
-            PRIMARY_ACTION => manager.start_primary(),
-            FOLLOWERS_ACTION => manager.start_followers(),
-            _ => continue,
-        };
+        let result = manager.dispatch_shortcut(action);
         match result {
-            Ok(status) => crate::logger::log_msg(
+            Ok(Some(status)) => crate::logger::log_msg(
                 "INFO",
                 "RoomAutomation",
                 &format!(
@@ -1996,6 +1996,7 @@ fn shortcut_dispatch_loop(
                     status.task_id, status.phase
                 ),
             ),
+            Ok(None) => {}
             Err(error) => crate::logger::log_msg("WARN", "RoomAutomation", &error),
         }
     }
@@ -2091,6 +2092,7 @@ mod tests {
     }
 
     struct FakeHost {
+        foreground_game: AtomicBool,
         fail_primary: AtomicBool,
         panic_primary: AtomicBool,
         fail_follower_once: AtomicBool,
@@ -2105,6 +2107,7 @@ mod tests {
     impl FakeHost {
         fn new(fail_primary: bool) -> Self {
             Self {
+                foreground_game: AtomicBool::new(true),
                 fail_primary: AtomicBool::new(fail_primary),
                 panic_primary: AtomicBool::new(false),
                 fail_follower_once: AtomicBool::new(false),
@@ -2176,8 +2179,8 @@ mod tests {
             Ok(Self::instance(account_id))
         }
 
-        fn foreground_pid(&self) -> Option<u32> {
-            Some(101)
+        fn foreground_is_game(&self) -> bool {
+            self.foreground_game.load(Ordering::Acquire)
         }
 
         fn prepare_background_room(
@@ -2426,6 +2429,25 @@ mod tests {
             .unwrap();
         wait_for_phase(&manager, WorkflowPhase::Complete);
         manager.stop().unwrap();
+    }
+
+    #[test]
+    fn shortcuts_ignore_other_apps_and_accept_game_windows_without_primary_focus() {
+        let (_root, manager, _leases, host) = manager("game-shortcut-scope", false, false);
+        host.foreground_game.store(false, Ordering::Release);
+        assert!(manager.dispatch_shortcut(PRIMARY_ACTION).unwrap().is_none());
+        assert!(manager
+            .dispatch_shortcut(FOLLOWERS_ACTION)
+            .unwrap()
+            .is_none());
+        assert!(host.primary_calls.lock().is_empty());
+        host.foreground_game.store(true, Ordering::Release);
+        // The trigger may be a follower or an unmanaged D2R instance. Target
+        // selection depends only on the recipe, never the foreground PID.
+        let config = manager.get_config().config;
+        let (_, primary) = manager.prepare_primary_workflow(config, true).unwrap();
+        assert_eq!(primary.pid, 101);
+        assert_eq!(primary.account_id, "main");
     }
 
     #[test]

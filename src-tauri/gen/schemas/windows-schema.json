@@ -927,6 +927,12 @@
           "markdownDescription": "Enables the open_account_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the open_drop_screenshots_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-drop-screenshots-dir",
+          "markdownDescription": "Enables the open_drop_screenshots_dir command without any pre-configured scope."
+        },
+        {
           "description": "Enables the open_logs_dir command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open-logs-dir",
@@ -961,6 +967,12 @@
           "type": "string",
           "const": "allow-open-user-guide",
           "markdownDescription": "Enables the open_user_guide command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the patch_account_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-patch-account-settings",
+          "markdownDescription": "Enables the patch_account_settings command without any pre-configured scope."
         },
         {
           "description": "Enables the patch_desktop_pet_settings command without any pre-configured scope.",
@@ -1911,6 +1923,12 @@
           "markdownDescription": "Denies the open_account_dir command without any pre-configured scope."
         },
         {
+          "description": "Denies the open_drop_screenshots_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-drop-screenshots-dir",
+          "markdownDescription": "Denies the open_drop_screenshots_dir command without any pre-configured scope."
+        },
+        {
           "description": "Denies the open_logs_dir command without any pre-configured scope.",
           "type": "string",
           "const": "deny-open-logs-dir",
@@ -1945,6 +1963,12 @@
           "type": "string",
           "const": "deny-open-user-guide",
           "markdownDescription": "Denies the open_user_guide command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the patch_account_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-patch-account-settings",
+          "markdownDescription": "Denies the patch_account_settings command without any pre-configured scope."
         },
         {
           "description": "Denies the patch_desktop_pet_settings command without any pre-configured scope.",

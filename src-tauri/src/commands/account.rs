@@ -848,51 +848,8 @@ pub fn list_accounts(state: tauri::State<'_, SharedState>) -> Result<Vec<Account
 
     let account_catalog = AccountManagerCatalog::new(&cfg);
     let account_runtime = AccountManagerRuntime::new(state.inner());
-    let mut accounts = AccountQueryService::new(&account_catalog, &account_runtime).list(&cfg)?;
-    if let Some(session) = &cfg.launch_session {
-        if accounts
-            .iter()
-            .any(|account| account.is_running && session.scheme.account_ids.contains(&account.id))
-        {
-            for account in &mut accounts {
-                if let Some(member) = session
-                    .members
-                    .iter()
-                    .find(|member| member.account_id == account.id)
-                {
-                    account.mod_args = member.mod_args.clone().unwrap_or_default();
-                    account.has_customized_settings = true;
-                    if let Some(snapshot) = &member.snapshot {
-                        account.region = snapshot.region.clone();
-                        account.language = snapshot.language.clone();
-                        account.voicelanguage = snapshot.voicelanguage.clone();
-                        account.window_x = snapshot.position.map(|position| position.0);
-                        account.window_y = snapshot.position.map(|position| position.1);
-                        account.active_position_id = member.position_preset_id.clone();
-                        if let (Some(id), Some((x, y))) =
-                            (&account.active_position_id, snapshot.position)
-                        {
-                            if let Some(preset) = account
-                                .position_presets
-                                .iter_mut()
-                                .find(|preset| &preset.id == id)
-                            {
-                                preset.x = x;
-                                preset.y = y;
-                            } else {
-                                account.position_presets.push(WindowPositionPreset {
-                                    id: id.clone(),
-                                    name: "本次位置".into(),
-                                    x,
-                                    y,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let accounts = AccountQueryService::new(&account_catalog, &account_runtime).list(&cfg)?;
+
     Ok(accounts)
 }
 
@@ -1053,7 +1010,7 @@ pub fn update_account_meta(
 /// 在共用同一套客户端与 Token 的国际服服务器之间切换。
 #[tauri::command]
 pub fn update_account_region(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
     region: String,
@@ -1065,21 +1022,7 @@ pub fn update_account_region(
     let repository = AccountManagerCatalog::new(&cfg);
     let mut account = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
     account.switch_international_region(&region)?;
-    if crate::commands::launch_scheme::update_current_member(
-        state.inner(),
-        &app,
-        &account_id,
-        |member| {
-            member
-                .snapshot
-                .as_mut()
-                .ok_or_else(|| AppError::ConfigWriteError("本次账号配置缺失".into()))?
-                .region = account.region.clone();
-            Ok(())
-        },
-    )? {
-        return Ok(());
-    }
+
     let policy = LaunchContextAccountProfilePolicy { config: &cfg };
     AccountProfileService::new(
         &repository,
@@ -1247,15 +1190,6 @@ pub fn set_settings_customized(
     account_id: String,
     customized: bool,
 ) -> Result<(), AppError> {
-    if crate::commands::launch_scheme::current_member(state.inner(), &account_id).is_some() {
-        return if customized {
-            Ok(())
-        } else {
-            Err(AppError::ConfigWriteError(
-                "本次方案使用独立游戏设置；可以编辑设置或复制系统设置，不能改为动态继承".into(),
-            ))
-        };
-    }
     let cfg = state
         .configuration()
         .snapshot()
@@ -1268,7 +1202,7 @@ pub fn set_settings_customized(
 /// 设置账号的窗口位置（持久化到 account.json）
 #[tauri::command]
 pub fn set_account_window_position(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
     window_x: Option<i32>,
@@ -1278,27 +1212,7 @@ pub fn set_account_window_position(
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-    if crate::commands::launch_scheme::update_current_member(
-        state.inner(),
-        &app,
-        &account_id,
-        |member| {
-            member.position_preset_id = None;
-            member
-                .snapshot
-                .as_mut()
-                .ok_or_else(|| AppError::ConfigWriteError("本次账号配置缺失".into()))?
-                .position = window_x.zip(window_y);
-            Ok(())
-        },
-    )? {
-        let mut account = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-        account.window_x = window_x;
-        account.window_y = window_y;
-        account.active_position_id = None;
-        account.token = None;
-        return Ok(account);
-    }
+
     let repository = AccountManagerCatalog::new(&cfg);
     AccountPositionService::new(&repository, state.multi_instance().account_leases())
         .set_window_position(&account_id, window_x, window_y)
@@ -1307,7 +1221,7 @@ pub fn set_account_window_position(
 /// 保存账号的位置胶囊库与主界面默认选择，并同步旧版 window_x/window_y 字段。
 #[tauri::command]
 pub fn update_account_positions(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
     active_position_id: Option<String>,
@@ -1321,23 +1235,7 @@ pub fn update_account_positions(
     candidate
         .replace_position_presets(active_position_id.clone(), position_presets.clone())
         .map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
-    if crate::commands::launch_scheme::update_current_member(
-        state.inner(),
-        &app,
-        &account_id,
-        |member| {
-            member.position_preset_id = active_position_id.clone();
-            member
-                .snapshot
-                .as_mut()
-                .ok_or_else(|| AppError::ConfigWriteError("本次账号配置缺失".into()))?
-                .position = candidate.window_x.zip(candidate.window_y);
-            Ok(())
-        },
-    )? {
-        candidate.token = None;
-        return Ok(candidate);
-    }
+
     let repository = AccountManagerCatalog::new(&cfg);
     AccountPositionService::new(&repository, state.multi_instance().account_leases())
         .replace_positions(&account_id, active_position_id, position_presets)

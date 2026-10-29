@@ -23,18 +23,24 @@ interface AccountsState {
   markSettingsCustomized: (id: string) => Promise<void>;
 }
 
+let latestAccountRead = 0;
+
 export const useAccounts = create<AccountsState>((set, get) => ({
   accounts: [],
   loading: false,
   error: null,
 
   loadAccounts: async () => {
+    const request = ++latestAccountRead;
+    const before = get().accounts;
     set({ loading: true, error: null });
     try {
       const accounts = await invokeCommand<AccountMeta[]>("list_accounts");
-      set({ accounts, loading: false });
+      if (request !== latestAccountRead) return;
+      if (get().accounts === before) set({ accounts, loading: false });
+      else set({ loading: false });
     } catch (e) {
-      set({ error: String(e), loading: false });
+      if (request === latestAccountRead) set({ error: String(e), loading: false });
     }
   },
 

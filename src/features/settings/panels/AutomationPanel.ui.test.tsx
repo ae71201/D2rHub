@@ -139,7 +139,7 @@ it("keeps daily settings concise and lets filters apply without opening diagnost
   expect(screen.queryByRole("checkbox", { name: "符文" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "记录内容" }));
   expect(screen.getByRole("checkbox", { name: "符文" })).toBeTruthy();
-  expect(screen.getByText("场景计时与掉落核验")).toBeTruthy();
+  expect(screen.getByText("场景计时与掉落截图")).toBeTruthy();
   expect(screen.queryByRole("combobox", { name: "监听目标" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "应用掉落过滤" }));
   await waitFor(() => expect(props.persistConfig).toHaveBeenCalledWith(props.config, true));
@@ -148,15 +148,12 @@ it("keeps daily settings concise and lets filters apply without opening diagnost
   expect(screen.getByRole("combobox", { name: "监听目标" })).toBeTruthy();
 });
 
-it("keeps hostile controls above the recognition overview and outside all pages", async () => {
-  const { container } = render(<AutomationPanel {...panelProps()} />);
-  const hostile = screen.getByRole("region", { name: "敌对自动重开" });
-  expect(hostile.closest(".settings-section-body")).toBeNull();
-  const overview = container.querySelector(".recognition-overview")!;
-  expect(hostile.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  for (const name of ["记录内容", "诊断与高级", "监听设置"]) {
-    await userEvent.click(screen.getByRole("button", { name }));
-    expect(screen.getByRole("switch", { name: "启用敌对自动重开" })).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "触发范围" })).toBeTruthy();
-  }
+it("keeps specialist controls in advanced settings without crowding the listening page", async () => {
+  render(<AutomationPanel {...panelProps()} />);
+  expect(screen.queryByRole("region", { name: "敌对自动重开" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "诊断与高级" }));
+  expect(screen.getByRole("switch", { name: "启用敌对自动重开" })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "触发范围" })).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "监听设置" }));
+  expect(screen.queryByRole("region", { name: "敌对自动重开" })).toBeNull();
 });

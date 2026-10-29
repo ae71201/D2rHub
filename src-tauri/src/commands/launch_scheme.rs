@@ -11,64 +11,6 @@ use crate::{
 };
 use tauri::Manager;
 
-pub(crate) fn current_member(
-    state: &SharedState,
-    id: &str,
-) -> Option<crate::domain::config::LaunchGroupMember> {
-    let config = state.configuration().snapshot()?;
-    let session = config.launch_session?;
-    if !state
-        .multi_instance()
-        .instances()
-        .list()
-        .iter()
-        .any(|instance| session.scheme.account_ids.contains(&instance.account_id))
-    {
-        return None;
-    }
-    session
-        .members
-        .into_iter()
-        .find(|member| member.account_id == id)
-}
-
-pub(crate) fn update_current_member(
-    state: &SharedState,
-    app: &tauri::AppHandle,
-    id: &str,
-    update: impl FnOnce(&mut crate::domain::config::LaunchGroupMember) -> Result<(), AppError>,
-) -> Result<bool, AppError> {
-    if current_member(state, id).is_none() {
-        return Ok(false);
-    }
-    let _admission = state
-        .launch_admission
-        .try_lock()
-        .map_err(|_| AppError::ConfigWriteError("启动过程中不能修改账号启动设置".into()))?;
-    let session_id = state
-        .configuration()
-        .snapshot()
-        .and_then(|config| config.launch_session)
-        .map(|session| session.id);
-    let mut applied = false;
-    mutate_loaded_global_config(state, app, |config| {
-        let session = config
-            .launch_session
-            .as_mut()
-            .filter(|session| Some(&session.id) == session_id.as_ref())
-            .ok_or_else(|| AppError::ConfigWriteError("本次运行已变化，请重新打开设置".into()))?;
-        let member = session
-            .members
-            .iter_mut()
-            .find(|member| member.account_id == id)
-            .ok_or_else(|| AppError::ConfigWriteError("账号不属于本次运行".into()))?;
-        update(member)?;
-        applied = true;
-        Ok(true)
-    })?;
-    Ok(applied)
-}
-
 #[tauri::command]
 pub(crate) fn save_launch_scheme(
     app: tauri::AppHandle,
@@ -240,12 +182,6 @@ pub(crate) fn prepare_scheme_launch(
         AppError::ConfigReadError("旧方案需要先编辑并保存，以明确跟房、识别和布局配置".into())
     })?;
     environment.validate(&scheme, &config)?;
-    let accounts = crate::commands::account::list_accounts(state.clone())?;
-    if accounts.iter().any(|account| account.is_running) {
-        return Err(AppError::ConfigReadError(
-            "请先关闭当前运行的游戏，再按方案启动；运行期间可以单独调整布局、跟房和识别".into(),
-        ));
-    }
     let manager = room_manager(app);
     if manager.is_none()
         && config

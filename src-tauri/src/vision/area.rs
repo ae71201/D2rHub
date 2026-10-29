@@ -78,32 +78,31 @@ fn feature_color(image: &RgbImage, color: impl Fn([u8; 3]) -> bool, min_density:
     }
 }
 fn purple([r, g, b]: [u8; 3]) -> bool {
-    r >= 70
-        && b >= 100
+    r >= 95
+        && b >= 150
+        && g <= 90
         && b as u32 * 10 >= r as u32 * 11
-        && b as u32 > g as u32 * 3 / 2
-        && r as u32 > g as u32 * 6 / 5
+        && b as u32 >= g as u32 * 2
+        && r as u32 >= g as u32 * 3 / 2
 }
 pub fn tz_crop(image: &RgbImage, entry: &Feature) -> Option<RgbImage> {
-    let (_, _, _, bottom) = entry.bounds.filter(|_| entry.present)?;
+    let bottom = entry
+        .bounds
+        .filter(|_| entry.present)
+        .map(|v| v.3)
+        .unwrap_or(image.height() / 2);
     if bottom >= image.height() {
         return None;
     }
     let below =
         imageops::crop_imm(image, 0, bottom, image.width(), image.height() - bottom).to_image();
-    let feature = feature_color(&below, purple, 0.045);
+    let feature = feature_color(&below, purple, 0.09);
+    if feature.pixels < 45
+        || feature.pixels as f32 / ((below.width() * below.height()).max(1) as f32) < 0.008
+    {
+        return None;
+    }
     crop(&below, &feature)
-}
-fn terror_text(text: &str) -> bool {
-    [
-        "恐怖区域",
-        "恐惧区域",
-        "恐怖區域",
-        "恐懼區域",
-        "Terror Zone",
-    ]
-    .iter()
-    .any(|v| processing::normalize(text) == processing::normalize(v))
 }
 pub fn crop(image: &RgbImage, feature: &Feature) -> Option<RgbImage> {
     let (x0, y0, x1, y1) = feature.bounds.filter(|_| feature.present)?;
@@ -220,8 +219,7 @@ impl Gate {
             if let Some(result) = self.result.as_mut() {
                 result.confidence = score;
             }
-            if self.result.is_some() {
-                let result = self.result.as_mut().unwrap();
+            if let Some(result) = self.result.as_mut() {
                 if self.entry_name.as_deref() != Some(result.name.as_str()) {
                     static NEXT: std::sync::atomic::AtomicU64 =
                         std::sync::atomic::AtomicU64::new(1);
@@ -231,18 +229,9 @@ impl Gate {
                 }
                 result.announcement = self.entry_id;
                 result.tz = self.tz_seen;
-                if !self.tz_seen {
-                    if let Some(tz) = tz {
-                        let (text, score) = recognize(tz)?;
-                        if score < 0.90 || !terror_text(&text) {
-                            self.last_rejection = Some("unconfirmed_terror_text");
-                            self.result = None;
-                        } else if let Some(result) = self.result.as_mut() {
-                            self.tz_seen = true;
-                            result.tz = true;
-                            result.confidence = result.confidence.min(score);
-                        }
-                    }
+                if tz.is_some() {
+                    self.tz_seen = true;
+                    result.tz = true;
                 }
             }
         } else {
@@ -309,13 +298,21 @@ mod tests {
                 *pixel = image::Rgb([140, 40, 200]);
             }
         }
-        // Red color changes must not hide thin purple TZ lettering.
+        // Sparse purple scenery is below the stricter TZ threshold.
         let entry = Feature {
             present: true,
             pixels: 0,
             strokes: 0,
             bounds: Some((0, 0, 1, 1)),
         };
+        assert!(tz_crop(&noise, &entry).is_none());
+        for y in 4..32 {
+            for x in 20..300 {
+                if (x - 20) % 30 < 8 {
+                    noise.put_pixel(x, y, image::Rgb([140, 40, 200]));
+                }
+            }
+        }
         assert!(tz_crop(&noise, &entry).is_some());
     }
 
@@ -418,6 +415,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(terror.tz);
+        assert_eq!(calls, 1, "purple detection must not invoke OCR");
         assert_eq!(normal.announcement, terror.announcement);
         let fading = gate
             .read(&red, now, &candidates, None, |_| {

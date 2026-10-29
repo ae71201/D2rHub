@@ -8,3 +8,5 @@ pub mod monitor;
 #[allow(dead_code)]
 pub mod protocol;
 pub mod tracking;
+
+pub(crate) mod screenshots;

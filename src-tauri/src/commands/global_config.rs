@@ -103,26 +103,6 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
         current: &GlobalConfig,
         patch: serde_json::Value,
     ) -> Result<GlobalConfig, AppError> {
-        if let Some(expected) = &self.expected_session {
-            let working = patch.as_object().is_some_and(|patch| {
-                patch.keys().any(|key| {
-                    crate::domain::launch_scheme::SETTING_KEYS.contains(&key.as_str())
-                        || [
-                            "window_layout_enabled",
-                            "active_window_layout_id",
-                            "window_layouts",
-                        ]
-                        .contains(&key.as_str())
-                })
-            });
-            if working
-                && current.launch_session.as_ref().map(|session| &session.id) != expected.as_ref()
-            {
-                return Err(AppError::ConfigWriteError(
-                    "本次运行已变化，请重新打开设置".into(),
-                ));
-            }
-        }
         current.apply_user_patch(patch)
     }
 
@@ -132,15 +112,6 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
         mut candidate: GlobalConfig,
     ) -> Result<GlobalConfig, AppError> {
         if self.preserve_schemes {
-            if candidate.launch_session.as_ref().map(|session| &session.id)
-                != previous
-                    .and_then(|config| config.launch_session.as_ref())
-                    .map(|session| &session.id)
-            {
-                return Err(AppError::ConfigWriteError(
-                    "本次运行已变化，请重新打开设置".into(),
-                ));
-            }
             candidate.launch_groups = previous
                 .map(|config| config.launch_groups.clone())
                 .unwrap_or_default();
@@ -395,7 +366,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn working_settings_from_a_previous_run_are_rejected() {
+    fn working_settings_are_independent_of_launch_recipe() {
         let state = std::sync::Arc::new(crate::state::AppState::new());
         let mut policy = GlobalConfigPolicy::new(&state);
         policy.expected_session = Some(Some("old-run".into()));
@@ -405,7 +376,7 @@ mod validation_tests {
                 &current,
                 serde_json::json!({ "rune_audio_target_account": "a" })
             )
-            .is_err());
+            .is_ok());
         assert!(policy
             .apply_patch(
                 &current,

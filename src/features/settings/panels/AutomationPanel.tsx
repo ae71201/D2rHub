@@ -127,7 +127,6 @@ export function AutomationPanel({
   };
   return (
 <div className="recognition-settings settings-guided-page">
-    <HostileRestartSettings config={config} persist={persistGlobalDraft} error={audioStatus?.last_error} />
   <header className="recognition-overview">
     <div className="flex items-center justify-between py-1">
       <div className="min-w-0 pr-4">
@@ -337,8 +336,9 @@ export function AutomationPanel({
     </div>
   </section>
   <section className="settings-section-body" hidden={section !== "advanced"} aria-label={isEnglish ? "Diagnostics & advanced" : "诊断与高级"}>
+    <HostileRestartSettings config={config} persist={persistGlobalDraft} error={audioStatus?.last_error} />
     {config.rune_audio_enabled && (trackingTarget.valid || external) && (
-      <details open className="settings-diagnostics group border-t border-border-default/50 pt-3">
+      <details className="settings-diagnostics group border-t border-border-default/50 pt-3">
         <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-secondary">
           {isEnglish ? "Recognition diagnostics" : "识别诊断"}
           <ChevronDown size={14} className="transition-transform duration-200 group-open:rotate-180" />

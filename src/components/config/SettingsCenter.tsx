@@ -96,6 +96,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [navigationSaving, setNavigationSaving] = useState(false);
   const [layoutDraftDirty, setLayoutDraftDirty] = useState(false);
   const [layoutSaving, setLayoutSaving] = useState(false);
+  const [saveIssue, setSaveIssue] = useState<{ tab: SettingsTabId; message: string } | null>(null);
+  useEffect(() => { if (!open) setSaveIssue(null); }, [open]);
   const [profileChanging, setProfileChanging] = useState(false);
 
   // 快捷键录入、冲突校验与写回由控制器持有；shell 只负责渲染与保存编排。
@@ -111,7 +113,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   useEffect(() => {
     let active = true;
     const check = async (edition: "CN" | "Global", path: string | undefined) => {
-      if (!open || !path) {
+      if (!open || activeTab !== "paths" || !path) {
         if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: null }));
         return;
       }
@@ -127,7 +129,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     return () => {
       active = false;
     };
-  }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
+  }, [open, activeTab, config?.cn_saved_games_path, config?.global_saved_games_path]);
 
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string | null>>({});
   const {
@@ -225,42 +227,37 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   }, [open, initialAccountId]);
 
-  // Opening the wardrobe again only navigates; it must not launch another
-  // round of path/process discovery while the settings window is already open.
+  // Path discovery belongs to the path page, not every settings visit.
   useEffect(() => {
-    if (!open) return;
+    if (!open || activeTab !== "paths") return;
     let cancelled = false;
-    (async () => {
-      const cnSavedGames = await detectSavedGamesPath();
-      const globalSavedGames = await detectGlobalSavedGamesPath();
-      const agent = await detectProgramDataAgentPath();
-      const roaming = await detectAppDataRoamingBnetPath();
-      const browser = await detectBrowserPath();
+    void Promise.allSettled([
+      detectSavedGamesPath(), detectGlobalSavedGamesPath(), detectProgramDataAgentPath(),
+      detectAppDataRoamingBnetPath(), detectBrowserPath(),
+    ]).then(results => {
       if (cancelled) return;
-      setDetectedPaths({
-        cnSavedGames,
-        globalSavedGames,
-        agent,
-        roaming,
-        browser: browser ? browser[0] : null,
-      });
-    })();
+      const value = (index: number) => results[index].status === "fulfilled" ? results[index].value : null;
+      const browser = value(4);
+      setDetectedPaths({ cnSavedGames: value(0) as string | null, globalSavedGames: value(1) as string | null,
+        agent: value(2) as string | null, roaming: value(3) as string | null,
+        browser: Array.isArray(browser) ? browser[0] : null });
+    });
     return () => { cancelled = true; };
-  }, [open]);
+  }, [open, activeTab, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath]);
 
   // Close / Rollback
   const handleClose = () => {
     if (layoutSaving) return;
     if (config && installationPathEditsAreInvalid(committedConfig, config)) {
-      setActiveTab("paths");
-      showToast("error", "请至少保留一组国服或国际服的游戏安装目录；Battle.net 仅供国服兼容模式使用");
+      setSaveIssue({ tab: "paths", message: "游戏安装目录尚未填写完整。修改仍保留在当前草稿中。" });
       return;
     }
     if (navigationSaveRef.current) return;
     navigationSaveRef.current = true;
     setNavigationSaving(true);
     void commitPendingSettings().then((saved) => {
-      if (saved) onClose();
+      if (saved) { setSaveIssue(null); onClose(); }
+      else setSaveIssue({ tab: activeTab, message: "部分修改尚未保存，草稿已保留。你可以继续浏览，稍后重试。" });
     }).finally(() => {
       navigationSaveRef.current = false;
       setNavigationSaving(false);
@@ -426,6 +423,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     region === "KR" ? "亚服" : region === "NA" ? "美服" : region === "EU" ? "欧服" : region === "Global" ? "国际服" : "国服";
   const saveStatusText = gameSettingsSaving || appearanceApplying || navigationSaving || layoutSaving
     ? "保存中"
+    : saveIssue ? (settingsLanguage === "en-US" ? "Unsaved draft kept" : "未保存 · 草稿保留")
     : layoutDraftDirty
       ? (settingsLanguage === "en-US" ? "Layout draft unsaved" : "布局草稿未保存")
       : hasAnyUnsavedChanges
@@ -433,7 +431,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       : "已保存";
 
   const handleTabChange = async (nextTab: SettingsTabId): Promise<boolean> => {
-    if (layoutSaving || navigationSaveRef.current || (modWorkflow.busy && nextTab !== "tasks" && nextTab !== "mod-processing")) return false;
+    if (layoutSaving || navigationSaveRef.current) return false;
     if (nextTab === activeTab) {
       if (nextTab === "mod-processing" && !modWorkflow.busy) modWorkflow.actions.openLibrary();
       return true;
@@ -441,7 +439,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     navigationSaveRef.current = true;
     setNavigationSaving(true);
     try {
-      if (!(await commitPendingSettings())) return false;
+      if (!saveIssue && !(await commitPendingSettings())) {
+        setSaveIssue({ tab: activeTab, message: "部分修改尚未保存，草稿已保留。你可以继续浏览，稍后重试。" });
+      }
       if (nextTab === "mod-processing" && !modWorkflow.busy) modWorkflow.actions.openLibrary();
       setActiveTab(nextTab);
       return true;
@@ -449,6 +449,14 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       navigationSaveRef.current = false;
       setNavigationSaving(false);
     }
+  };
+
+  const retryPendingSettings = async () => {
+    if (navigationSaveRef.current) return;
+    navigationSaveRef.current = true;
+    setNavigationSaving(true);
+    try { if (await commitPendingSettings()) setSaveIssue(null); }
+    finally { navigationSaveRef.current = false; setNavigationSaving(false); }
   };
 
   const handleSelectedAccountChange = (nextAccountId: string) => {
@@ -477,8 +485,20 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       installedModules={installedModules}
       onClose={handleClose}
       onTabChange={handleTabChange}
-      dismissible={!pendingDisclosureModule && !profileChanging && !modWorkflow.busy && !layoutSaving}
+      dismissible={!pendingDisclosureModule && !profileChanging && !layoutSaving}
     >
+      {modWorkflow.busy && activeTab !== "mod-processing" && <div className="settings-save-feedback" role="status">
+        <span>{settingsLanguage === "en-US" ? "Mod processing continues in the background." : "Mod 正在后台加工，可以继续使用其他设置。"}</span>
+        <button type="button" className="control-btn" onClick={() => setActiveTab("mod-processing")}>{settingsLanguage === "en-US" ? "View progress" : "查看进度"}</button>
+      </div>}
+      {saveIssue && <div className="settings-save-feedback" role="alert">
+        <p>{settingsLanguage === "en-US" ? "Some changes are unsaved. Your draft is kept while you browse settings." : saveIssue.message}</p>
+        <div>
+          <button type="button" className="control-btn" onClick={() => setActiveTab(saveIssue.tab)}>{settingsLanguage === "en-US" ? "Return to edits" : "返回修改处"}</button>
+          <button type="button" className="control-btn" disabled={navigationSaving} onClick={() => void retryPendingSettings()}>{settingsLanguage === "en-US" ? "Retry save" : "重试保存"}</button>
+          <button type="button" className="control-btn" disabled={navigationSaving} onClick={() => { setSelectedAccountId(""); setSaveIssue(null); onClose(); }}>{settingsLanguage === "en-US" ? "Discard unsaved changes and close" : "放弃未保存修改并关闭"}</button>
+        </div>
+      </div>}
       <Suspense fallback={<div role="status" className="p-3 text-sm text-text-muted">{settingsLanguage === "en-US" ? "Loading settings…" : "正在加载设置…"}</div>}>
             {!minimalMode && activeTab === "module-management" && config && (
               <ModuleManagementPanel

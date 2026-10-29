@@ -1,3 +1,4 @@
+import { RecognitionQuickEdit } from "./RecognitionQuickEdit";
 import { PackageOpen, Square, UserPlus } from "lucide-react";
 
 import type { LaunchGroupController } from "../../hooks/useLaunchGroupController";
@@ -78,7 +79,7 @@ export function MainActionBar({
         </button>
       ) : (
         <>
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="dashboard-launch-controls" role="group" aria-label={config?.app_language === "en-US" ? "Launch and close accounts" : "账号启动与关闭"}>
           {closingSelection && closeAction}
           {batchSelection?.mode !== "close" && <LaunchButton
             count={batchSelection?.mode === "launch" ? batchSelection.ids.length : launchableAccountIds.length}
@@ -104,7 +105,10 @@ export function MainActionBar({
             onLaunch={launchGroups.launch}
             onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
           />}
-          {!batchSelection?.mode && closeAction}
+          <div className="dashboard-close-action">{!batchSelection?.mode && closeAction}</div>
+        </div>
+        <div className="dashboard-tool-controls">
+        <div className="dashboard-quick-controls" role="group" aria-label={config?.app_language === "en-US" ? "Quick settings" : "功能快捷设置"}>
           {showOptionalFeatures && !batchSelection?.mode && (
             <RoomAutomationQuickEdit
               active={config?.installed_optional_modules?.includes("room-automation") === true}
@@ -112,9 +116,10 @@ export function MainActionBar({
               onOpenSettings={onOpenRoomAutomation}
             />
           )}
+          {showOptionalFeatures && !batchSelection?.mode && <RecognitionQuickEdit />}
           {onOpenWindowLayouts && <WindowLayoutQuickControls onOpenSettings={onOpenWindowLayouts} disabled={launching || !!batchBusy || !!draft} />}
         </div>
-        <div className="flex-1" />
+        <div className="dashboard-manage-controls" role="group" aria-label={config?.app_language === "en-US" ? "Management" : "管理工具"}>
         <button type="button" className="control-btn" onClick={onOpenModManager}>
           <PackageOpen size={13} strokeWidth={1.9} aria-hidden="true" />
           Mod 管理
@@ -125,14 +130,14 @@ export function MainActionBar({
           disabled={launching || saving || !!batchBusy}
           onToggle={onToggleLaunchGroupPanel}
         />
-        </>
-      )}
-      <>
           <button onClick={onAddAccount} className="control-btn add-account-cta">
             <UserPlus size={13} strokeWidth={1.9} />
             添加账号
           </button>
-      </>
+        </div>
+        </div>
+        </>
+      )}
     </ActionBar>
   );
 }

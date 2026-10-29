@@ -14,6 +14,10 @@ interface AccountSettingsControllerOptions {
   renameAccount: (id: string, newName: string) => Promise<boolean>;
 }
 
+function changedSettings(base: SettingsMap, next: SettingsMap): SettingsMap {
+  return Object.fromEntries(Object.entries(next).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(base[key])));
+}
+
 export function useAccountSettingsController({
   accounts,
   loadAccounts,
@@ -30,6 +34,10 @@ export function useAccountSettingsController({
   const [accountWinXDraft, setAccountWinXDraft] = useState<number | null>(null);
   const [accountWinYDraft, setAccountWinYDraft] = useState<number | null>(null);
   const gameSettingsRequestRef = useRef(0);
+  const savedSettingsRef = useRef<SettingsMap>({});
+  const latestSettingsRef = useRef<SettingsMap>({});
+  const selectedIdRef = useRef(selectedAccountId);
+  selectedIdRef.current = selectedAccountId;
   const previousAccountRef = useRef<AccountMeta | undefined>(undefined);
 
   const loadGameSettings = useCallback(async (accountId: string) => {
@@ -39,6 +47,8 @@ export function useAccountSettingsController({
     try {
       const data = await invokeCommand<SettingsMap>("get_account_settings", { accountId });
       if (requestId !== gameSettingsRequestRef.current) return;
+      savedSettingsRef.current = data;
+      latestSettingsRef.current = data;
       setGameSettings(data);
       setGameSettingsChanged(false);
     } catch (error) {
@@ -101,14 +111,19 @@ export function useAccountSettingsController({
 
   const updateGameSetting = (key: string, value: unknown) => {
     if (gameSettingsLoadError) return;
-    setGameSettings((previous) => key === FRAMERATE_CAP_KEY
-      ? writeFramerateCap(previous, Number(value))
-      : ({ ...previous, [key]: value }));
+    const previous = latestSettingsRef.current;
+    const next = key === FRAMERATE_CAP_KEY ? writeFramerateCap(previous, Number(value)) : { ...previous, [key]: value };
+    latestSettingsRef.current = next;
+    setGameSettings(next);
     setGameSettingsChanged(true);
   };
 
   const saveAccount = async (quiet = false) => {
     if (!selectedAccountId) return true;
+    // Capture the draft before metadata writes yield; switching accounts during
+    // a rename must not send the newly selected account's fields to this one.
+    const sentSettings = latestSettingsRef.current;
+    const settingsPatch = changedSettings(savedSettingsRef.current, sentSettings);
     setGameSettingsSaving(true);
     try {
       const account = accounts.find((candidate) => candidate.id === selectedAccountId);
@@ -117,7 +132,7 @@ export function useAccountSettingsController({
       if (nextName && nextName !== (account.display_name || account.id)) {
         if (!(await renameAccount(selectedAccountId, nextName))) return false;
       }
-      if (accountWinXDraft !== account.window_x || accountWinYDraft !== account.window_y) {
+      if (accountWinXDraft !== (account.window_x ?? null) || accountWinYDraft !== (account.window_y ?? null)) {
         await invokeCommand("set_account_window_position", {
           accountId: selectedAccountId,
           windowX: accountWinXDraft,
@@ -125,12 +140,19 @@ export function useAccountSettingsController({
         });
       }
       if (gameSettingsChanged) {
-        await invokeCommand("save_account_settings", {
-          accountId: selectedAccountId,
-          settings: gameSettings,
-        });
-        setGameSettingsChanged(false);
-        await emitEvent("account-settings-updated", { accountId: selectedAccountId });
+        const sent = sentSettings;
+        const patch = settingsPatch;
+        if (Object.keys(patch).length) {
+          const saved = await invokeCommand<SettingsMap>("patch_account_settings", { accountId: selectedAccountId, patch });
+          if (selectedIdRef.current === selectedAccountId) {
+            const pending = changedSettings(sent, latestSettingsRef.current);
+            savedSettingsRef.current = saved;
+            latestSettingsRef.current = { ...saved, ...pending };
+            setGameSettings(latestSettingsRef.current);
+            setGameSettingsChanged(Object.keys(pending).length > 0);
+          }
+          await emitEvent("account-settings-updated", { accountId: selectedAccountId }).catch(error => console.warn("Settings saved; notification failed", error));
+        } else setGameSettingsChanged(false);
       }
       await loadAccounts();
       if (!quiet) showToast("success", `账号 "${nextName || account.display_name || account.id}" 的设置已保存`);
@@ -149,6 +171,8 @@ export function useAccountSettingsController({
       const settings = await invokeCommand<SettingsMap>("snapshot_system_settings_to_account", {
         accountId: selectedAccountId,
       });
+      savedSettingsRef.current = settings;
+      latestSettingsRef.current = settings;
       setGameSettings(settings);
       setGameSettingsLoadError(null);
       setGameSettingsChanged(false);

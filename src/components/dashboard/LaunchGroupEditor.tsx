@@ -1,3 +1,4 @@
+import { switchPrimary } from "../../features/roomAutomation/roles";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowDown, ArrowUp, Copy, Trash2 } from "lucide-react";
@@ -37,7 +38,6 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
     if (room.follower_account_ids.some(id => !selected.some(account => account.id === id) || id === room.primary_account_id)) errors.push("跟房：请选择有效的小号");
   }
   if (settings.rune_audio_target_account && !selected.some(account => account.id === settings.rune_audio_target_account)) errors.push("识别：请选择方案内的账号");
-  if (env.layout && env.layout.windows.length < draft.members.length) errors.push("布局：位置数量少于账号数量");
   const ready = draft.name.trim() && draft.members.length && draft.members.every(member => member.snapshot && member.resolution && member.fps != null) && !errors.length;
   const createLayout = async () => {
     setLayoutBusy(true);
@@ -127,7 +127,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
           <p className="scheme-note">内存整理、浏览器清理和 Agent 策略使用公共启动设置。{onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("agent")}>前往公共启动设置</button>}</p>
         </>}
         {tab === "room" && <>
-          <div className="scheme-fields"><label>主号<select value={room.primary_account_id} onChange={event => edit(env => { env.room.primary_account_id = event.target.value; env.room.follower_account_ids = env.room.follower_account_ids.filter(id => id !== event.target.value); })}>{options}</select></label></div>
+          <div className="scheme-fields"><label>主号<select value={room.primary_account_id} onChange={event => edit(env => { env.room = switchPrimary(env.room, event.target.value); })}>{options}</select></label></div>
           <p>跟随账号（按勾选顺序派发）</p><div className="scheme-account-picker">{selected.filter(account => account.id !== room.primary_account_id).map(account => <label key={account.id}><input type="checkbox" checked={room.follower_account_ids.includes(account.id)} onChange={event => edit(env => { env.room.follower_account_ids = event.target.checked ? [...env.room.follower_account_ids, account.id] : env.room.follower_account_ids.filter(id => id !== account.id); })}/>{name(account.id)}{room.follower_account_ids.includes(account.id) && ` · ${room.follower_account_ids.indexOf(account.id) + 1}`}</label>)}</div>
           <p className="scheme-note">不指定任何账号时，本方案不使用跟房。快捷键、延时、跟随方式、协作模式及房间规则使用公共设置；序号持续递增。{onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("room-automation")}>前往公共跟房设置</button>}</p>
           <p className="scheme-note">公共模块关闭时不运行。启动方案只准备跟房账号，不会自动建房或进房。参与账号需要带房间工具的 Mod。</p>
@@ -139,7 +139,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
         </>}
         {tab === "layout" && <>
           <div className="scheme-fields"><label>布局模板<select value="" onChange={event => { const layout = config.window_layouts?.find(layout => layout.id === event.target.value); if (layout) edit(env => { env.layout = structuredClone(layout); }); }}><option value="">选择模板，复制到方案…</option>{config.window_layouts?.map(layout => <option key={layout.id} value={layout.id}>{layout.name}</option>)}</select></label><button className="control-btn" disabled={!draft.members.length} onClick={() => void createLayout()}>生成 {draft.members.length || 1} 窗口布局</button><button className="control-btn" onClick={() => edit(env => { env.layout = null; })}>不使用统一布局</button></div>
-          {env.layout ? <><SchemeLayoutPreview layout={env.layout} names={draft.members.map(member => name(member.account_id))}/><p className="scheme-note">布局内容属于此方案。账号对应固定位置，启动失败或补启动不会改变其他账号的位置。</p><label>布局名称<input value={env.layout.name} onChange={event => edit(env => { env.layout!.name = event.target.value; })}/></label>
+          {env.layout ? <><SchemeLayoutPreview layout={env.layout} names={draft.members.map(member => name(member.account_id))}/><p className="scheme-note">布局只在启动或点击应用时使用。位置不足时，多余账号沿用自身位置；启动后可自由调整。</p><label>布局名称<input value={env.layout.name} onChange={event => edit(env => { env.layout!.name = event.target.value; })}/></label>
           {draft.members.map((member, index) => { const slot = env.layout!.windows[index]; return slot && <section className="scheme-account" key={member.account_id}><strong>位置 {index + 1} · {name(member.account_id)}</strong><div className="scheme-fields"><label>显示器<select value={slot.monitor_id} onChange={event => edit(env => { env.layout!.windows[index].monitor_id = event.target.value; })}>{env.layout!.monitors.map(monitor => <option key={monitor.id} value={monitor.id}>{monitor.name}</option>)}</select></label>{([["x", "X"], ["y", "Y"], ["width", "分辨率宽"], ["height", "分辨率高"]] as const).map(([key, label]) => <label key={key}>{label}<input type="number" value={slot[key]} onChange={event => edit(env => { env.layout!.windows[index][key] = Number(event.target.value); })}/></label>)}</div></section>; })}</> : <p className="scheme-note">使用方案内各账号自己的位置与分辨率。</p>}
         </>}
       </fieldset>

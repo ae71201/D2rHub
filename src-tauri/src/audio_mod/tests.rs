@@ -1952,6 +1952,35 @@ fn published_legacy_manifests_remain_usable_but_request_an_update() {
 }
 
 #[test]
+fn old_audio_group_is_usable_but_offers_update_even_at_current_overall_recipe() {
+    let root = test_mods_directory("audio_group_update");
+    write_test_audio_mod(
+        &root,
+        "old-audio",
+        serde_json::json!({
+            "manifest_format": "d2r-audio-telemetry-mod",
+            "producer": "d2r-audio-mod", "protocol_version": PROTOCOL_VERSION,
+            "recipe_version": REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+            "mod_name": "old-audio", "build_mode": "minimal",
+            "feature_groups": [{"id": AUDIO_TELEMETRY_FEATURE_ID, "recipe_version": 4,
+                "fingerprint": test_audio_fingerprint().replace("audio-v5;", "audio-v4;")}]
+        }),
+    );
+    let compatible = compatibility(&root, "-mod old-audio -txt");
+    assert!(compatible.ready);
+    assert!(compatible.update_required);
+    assert_eq!(compatible.reason_code, "update_available");
+    let installed = installed_mods(&root);
+    let old = installed
+        .iter()
+        .find(|item| item.name == "old-audio")
+        .unwrap();
+    assert!(old.update_required);
+    assert!(!old.audio_reusable);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn current_and_future_recipes_do_not_trigger_false_updates() {
     let root = test_mods_directory("current_recipe");
     for version in [

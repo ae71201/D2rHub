@@ -593,6 +593,15 @@ fn handle_rune_detection(
         );
     }
     emit_tracking_snapshot(app, &snapshot);
+    super::screenshots::schedule(
+        app,
+        config.target_pid,
+        observation_id,
+        rune_number,
+        &event.timestamp,
+        &snapshot.current_scene,
+        &event.rune_name,
+    );
 }
 
 fn handle_item_detection(
@@ -699,20 +708,18 @@ fn handle_visual_location(
         if let Err(error) =
             crate::stats::save_completed_segment(&app.state::<crate::state::SharedState>(), segment)
         {
-            crate::logger::log_msg(
-                "ERROR",
-                "RuneAudio",
-                &format!("保存 OCR 场景分段失败: {error}"),
-            );
+            crate::logger::log_msg("ERROR", "RuneAudio", &format!("保存场景分段失败: {error}"));
         }
     }
     {
         let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
-        current.scene_ocr_events += 1;
+        if !candidate.audio_mapped {
+            current.scene_ocr_events += 1;
+        }
     }
     crate::logger::log_msg(
         "INFO",
-        "SceneOCR",
+        "SceneRecognition",
         &format!(
             "场景更新：{}，TZ={}，上一分段={}，新计时起点={:?}",
             outcome.snapshot.current_scene,
@@ -854,30 +861,9 @@ fn capture_loop(
                     crate::vision::audio::Evidence::Area(candidate) => {
                         if handle_visual_location(&app, &mut tracker, candidate) {
                             drop_gate.clear();
-                            visual.change_scene();
                             break;
                         }
                     }
-                    crate::vision::audio::Evidence::Drop(
-                        TelemetryMarker::Rune { rune_number },
-                        confidence,
-                    ) => {
-                        handle_rune_detection(&app, &config, &mut tracker, rune_number, confidence);
-                    }
-                    crate::vision::audio::Evidence::Drop(
-                        TelemetryMarker::Item { item_id },
-                        confidence,
-                    ) => {
-                        handle_item_detection(
-                            &app,
-                            &config,
-                            &mut tracker,
-                            &item_catalog,
-                            item_id,
-                            confidence,
-                        );
-                    }
-                    _ => {}
                 }
             }
             let _ = event_handle.wait_for_event(500);
@@ -1006,10 +992,11 @@ fn capture_loop(
                     marker @ TelemetryMarker::Rune { rune_number } => {
                         let tracked = should_record_rune(&config, &tracker, rune_number);
                         let logical_event = tracked
-                            && drop_gate.observe_with_confidence(
+                            && drop_gate.observe_with_evidence(
                                 marker,
                                 detection.start_frame,
                                 detection.confidence,
+                                detection.repeated,
                             );
                         record_decoded_packet(
                             detection.marker,
@@ -1019,16 +1006,7 @@ fn capture_loop(
                             &item_catalog,
                             logical_event,
                         );
-                        let aliases = crate::rune_data::visual_rune_aliases(rune_number);
-                        if logical_event
-                            && !visual.drop(
-                                &app,
-                                config.target_pid,
-                                marker,
-                                detection.confidence,
-                                aliases,
-                            )
-                        {
+                        if logical_event {
                             handle_rune_detection(
                                 &app,
                                 &config,
@@ -1043,10 +1021,11 @@ fn capture_loop(
                             .resolve(item_id)
                             .is_some_and(|item| should_record_item(&config, &tracker, item));
                         let logical_event = tracked
-                            && drop_gate.observe_with_confidence(
+                            && drop_gate.observe_with_evidence(
                                 marker,
                                 detection.start_frame,
                                 detection.confidence,
+                                detection.repeated,
                             );
                         record_decoded_packet(
                             detection.marker,
@@ -1056,19 +1035,7 @@ fn capture_loop(
                             &item_catalog,
                             logical_event,
                         );
-                        let aliases = item_catalog
-                            .resolve(item_id)
-                            .map(|item| vec![item.name.clone(), item.name_en.clone()])
-                            .unwrap_or_default();
-                        if logical_event
-                            && !visual.drop(
-                                &app,
-                                config.target_pid,
-                                marker,
-                                detection.confidence,
-                                aliases,
-                            )
-                        {
+                        if logical_event {
                             handle_item_detection(
                                 &app,
                                 &config,
@@ -1079,7 +1046,23 @@ fn capture_loop(
                             );
                         }
                     }
-                    TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {}
+                    marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => {
+                        record_decoded_packet(
+                            marker,
+                            detection.confidence,
+                            detection.start_frame,
+                            &catalog,
+                            &item_catalog,
+                            false,
+                        );
+                        if let Some(candidate) =
+                            visual.observe_audio_area(marker, &catalog, detection.confidence)
+                        {
+                            if handle_visual_location(&app, &mut tracker, candidate) {
+                                drop_gate.clear();
+                            }
+                        }
+                    }
                 }
             }
         }

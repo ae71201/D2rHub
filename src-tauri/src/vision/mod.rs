@@ -2,14 +2,11 @@
 mod area;
 mod area_names;
 pub mod audio;
-mod capture;
+pub(crate) mod capture;
 mod chat_ocr;
 pub mod commands;
 pub mod config;
 pub(crate) mod diagnostics;
-mod drop_match;
-mod drop_worker;
-mod labels;
 mod ocr;
 pub(crate) mod processing;
 mod resources;
@@ -87,6 +84,7 @@ pub struct Status {
 }
 #[derive(Clone, Default)]
 pub struct Candidate {
+    pub audio_mapped: bool,
     pub name: String,
     pub name_en: String,
     pub aliases: Vec<String>,
@@ -97,14 +95,12 @@ pub struct Candidate {
 }
 pub enum Kind {
     Area(Vec<Candidate>),
-    Drop(Vec<String>),
 }
 pub struct Request {
     pub pid: u32,
     pub kind: Kind,
     pub reply: mpsc::SyncSender<Result<Option<Candidate>, String>>,
     pub created: Instant,
-    pub context: u64,
 }
 struct Worker {
     chat_follow: bool,
@@ -141,7 +137,6 @@ impl Vision {
         &self,
         pid: u32,
         kind: Kind,
-        context: u64,
     ) -> Result<mpsc::Receiver<Result<Option<Candidate>, String>>, String> {
         if !self.status.lock().ready {
             return Err("视觉资源尚未就绪".into());
@@ -156,7 +151,6 @@ impl Vision {
                 kind,
                 reply: tx,
                 created: Instant::now(),
-                context,
             })
             .map_err(|_| "视觉核验队列已满".to_string())?;
         Ok(rx)
@@ -187,7 +181,7 @@ pub fn project_configuration(app: &tauri::AppHandle, g: &crate::domain::config::
         let audio = g
             .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
             && g.rune_audio_enabled
-            && (c.area_enabled || c.drops_enabled);
+            && c.area_enabled;
         let room = g.optional_module_runtime_allowed(
             crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
         ) && app
@@ -217,7 +211,7 @@ impl CapabilityDriver for Vision {
         let handle=std::thread::Builder::new().name("visual-recognition".into()).spawn(move||{
             status.lock().running=true;
             let preparation=Instant::now();
-            diagnostics::event(configuration().diagnostic_enabled,"worker_start",serde_json::json!({"chat":config.chat_follow,"area":config.area_enabled,"drops":config.drops_enabled,"enforce":config.drops_enforce,"poll_ms":config.poll_ms,"chat_roi":config.chat_roi,"area_roi":config.area_roi,"needs_ocr":config.needs_ocr()}));
+            diagnostics::event(configuration().diagnostic_enabled,"worker_start",serde_json::json!({"chat":config.chat_follow,"area":config.area_enabled,"poll_ms":config.poll_ms,"chat_roi":config.chat_roi,"area_roi":config.area_roi,"needs_ocr":config.needs_ocr()}));
             let result=if config.needs_ocr() { tauri::async_runtime::block_on(async {
                 tokio::select! {
                     result=resources::ensure_preferred(&root,&stopped,&preferred,|message|{status.lock().message=message})=>result,
@@ -279,8 +273,6 @@ fn run(
     let mut last_chat_error: Option<(String, Instant)> = None;
     let mut area_gate = area::Gate::default();
     let mut area_context = None;
-    let mut drop_reader = drop_worker::Drops::default();
-    let mut queued = std::collections::VecDeque::new();
     while !stop.load(Ordering::Acquire) {
         if c.chat_follow
             && (Instant::now() >= next_chat || chat.pending.is_some())
@@ -310,107 +302,23 @@ fn run(
                 }
             }
         }
-        let request = queued
-            .pop_front()
-            .or_else(|| rx.recv_timeout(Duration::from_millis(50)).ok());
+        let request = rx.recv_timeout(Duration::from_millis(50)).ok();
         if let Some(request) = request {
             let kind = match request.kind {
                 Kind::Area(_) => "area",
-                Kind::Drop(_) => "drop",
             };
             let mut trace =
                 diagnostics::Trace::new(configuration().diagnostic_enabled, kind, request.pid);
             trace.fields["queue_ms"] =
                 serde_json::json!(request.created.elapsed().as_secs_f64() * 1000.0);
-            trace.fields["enforce"] = serde_json::json!(c.drops_enforce);
-            if let Kind::Drop(aliases) = &request.kind {
-                trace.fields["expected_names"] = serde_json::json!(aliases
-                    .iter()
-                    .take(8)
-                    .map(|name| diagnostics::short(name))
-                    .collect::<Vec<_>>());
-            }
-            if matches!(request.kind, Kind::Drop(_))
-                && request.created.elapsed() <= Duration::from_secs(3)
-            {
-                let mut batch = vec![request];
-                let collect_until = Instant::now() + Duration::from_millis(100);
-                while Instant::now() < collect_until
-                    && batch.len() < 8
-                    && !stop.load(Ordering::Acquire)
-                {
-                    let Ok(next) =
-                        rx.recv_timeout(collect_until.saturating_duration_since(Instant::now()))
-                    else {
-                        break;
-                    };
-                    if next.pid == batch[0].pid
-                        && next.context == batch[0].context
-                        && matches!(next.kind, Kind::Drop(_))
-                        && next.created.elapsed() <= Duration::from_secs(3)
-                    {
-                        batch.push(next);
-                    } else {
-                        queued.push_back(next);
-                    }
-                }
-                trace.fields["batch_size"] = serde_json::json!(batch.len());
-                let results = if !c.labels_visible {
-                    Err("未确认地面标签持续可见，跳过掉落核验".into())
-                } else if let Some(ocr) = ocr.as_mut() {
-                    drop_reader.evaluate(&batch, ocr, stop, &mut trace)
-                } else {
-                    Err("OCR 资源尚未就绪".into())
-                };
-                let mut matched = 0;
-                for (index, request) in batch.into_iter().enumerate() {
-                    let result = match &results {
-                        Ok(values) => {
-                            if values[index].is_none()
-                                && (trace.fields["budget_exhausted"] == true
-                                    || trace.fields["unconfirmed_reason"].is_string())
-                            {
-                                Err(trace.fields["unconfirmed_reason"]
-                                    .as_str()
-                                    .unwrap_or("掉落核验达到处理上限，结果不确定")
-                                    .into())
-                            } else {
-                                Ok(values[index].clone())
-                            }
-                        }
-                        Err(error) => Err(error.clone()),
-                    };
-                    matched += usize::from(matches!(&result, Ok(Some(_))));
-                    diagnostics::event(
-                        configuration().diagnostic_enabled,
-                        "drop_batch_result",
-                        serde_json::json!({"pid":request.pid,"context":request.context,"matched":matches!(&result,Ok(Some(_))),"error":result.as_ref().err(),"expected":if let Kind::Drop(v)=&request.kind{v.clone()}else{vec![]}}),
-                    );
-                    deliver(request, result, status);
-                }
-                trace.fields["outcome"] = serde_json::json!(if results.is_err() {
-                    "unavailable"
-                } else if matched > 0 {
-                    "matched"
-                } else {
-                    "unmatched"
-                });
-                trace.fields["matched_events"] = serde_json::json!(matched);
-                continue;
-            }
             let result = if request.created.elapsed() > Duration::from_secs(3) {
                 Err("核验请求已过期".into())
             } else {
-                match ocr.as_mut() {
-                    Some(ocr) => {
-                        if area_context != Some(request.pid) {
-                            area_gate = area::Gate::default();
-                            area_context = Some(request.pid);
-                        }
-                        evaluate_area(&request, c, ocr, &mut area_gate, &mut trace)
-                    }
-                    None => Err("OCR 资源尚未就绪".into()),
+                if area_context != Some(request.pid) {
+                    area_gate = area::Gate::default();
+                    area_context = Some(request.pid);
                 }
+                evaluate_area(&request, c, ocr.as_mut(), &mut area_gate, &mut trace)
             };
             trace.fields["outcome"] = serde_json::json!(match &result {
                 Ok(Some(_)) => "matched",
@@ -448,13 +356,11 @@ fn deliver(request: Request, result: Result<Option<Candidate>, String>, status: 
 fn evaluate_area(
     r: &Request,
     c: &config::VisionConfig,
-    ocr: &mut ocr::Ocr,
+    ocr: Option<&mut ocr::Ocr>,
     gate: &mut area::Gate,
     trace: &mut diagnostics::Trace,
 ) -> Result<Option<Candidate>, String> {
-    let Kind::Area(candidates) = &r.kind else {
-        return Err("核验请求已过期".into());
-    };
+    let Kind::Area(candidates) = &r.kind;
     let captured = trace.measure_result("capture", || capture::capture(r.pid, Some(c.area_roi)))?;
     trace.fields["capture_metrics"] = serde_json::json!(captured.metrics);
     let feature = trace.measure("red_text_gate", || area::feature(&captured.image));
@@ -468,6 +374,7 @@ fn evaluate_area(
     };
     let tz = area::tz_crop(&captured.image, &feature);
     trace.fields["tz_candidate"] = serde_json::json!(tz.is_some());
+    let ocr = ocr.ok_or("OCR 资源尚未就绪")?;
     let result = gate.read(&line, Instant::now(), candidates, tz.as_ref(), |line| {
         trace.fields["ocr_calls"] =
             serde_json::json!(trace.fields["ocr_calls"].as_u64().unwrap_or(0) + 1);

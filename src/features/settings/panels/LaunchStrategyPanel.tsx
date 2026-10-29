@@ -23,7 +23,75 @@ export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchSt
 
   return (
     <div className="settings-content-grid">
-      <section className="spatial-panel p-3 space-y-2" aria-labelledby="agent-strategy-title">
+
+
+      <section className="spatial-panel p-3 space-y-2" aria-labelledby="keep-battle-net-title">
+        <div>
+          <h2 id="keep-battle-net-title" className="text-sm font-semibold text-text-secondary mb-1">多开后保留战网</h2>
+          <p id="keep-battle-net-description" className="text-2xs text-text-muted">所选账号参与本次启动且全部账号启动成功后，单独重新打开它的战网客户端，不重复启动游戏；取消或启动失败时跳过。</p>
+        </div>
+        <label className="block text-xs text-text-secondary" htmlFor="keep-battle-net-account">保留战网的账号</label>
+        <select
+          id="keep-battle-net-account"
+          className="settings-input"
+          aria-describedby="keep-battle-net-description keep-battle-net-status"
+          value={selectedAccountId}
+          onChange={event => updateConfig(c => { c.keep_battle_net_account_id = event.target.value || null; })}
+        >
+          <option value="">不保留</option>
+          {selectedAccountUnavailable && <option value={selectedAccountId} disabled>原账号不可用，请重新选择</option>}
+          {battleNetAccounts.map(account => (
+            <option key={account.id} value={account.id} data-i18n-skip>{account.display_name || account.id}</option>
+          ))}
+        </select>
+        <p id="keep-battle-net-status" className={`text-2xs ${selectedAccountUnavailable ? "text-warning" : "text-text-muted"}`}>
+          {selectedAccountUnavailable
+            ? "原账号已删除、未初始化或已改为 Token 模式，请重新选择。"
+            : battleNetAccounts.length === 0
+              ? "暂无可用的战网模式账号，请先添加并初始化战网模式账号。"
+              : "仅可选择已初始化的战网模式账号。"}
+        </p>
+      </section>
+
+      <section className="spatial-panel p-3 space-y-2" aria-labelledby="application-options-title">
+        <h2 id="application-options-title" className="text-xs font-bold text-text-primary">应用行为</h2>
+        <div className="flex items-center justify-between gap-3 py-1.5">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">启动时自动整理内存</span>
+            <p id="launch-memory-description" className="text-2xs text-text-muted">成功启动数量达到一半（向上取整）和批次结束时，整理已成功启动窗口的内存；单窗口仅整理一次，后续加载可能短暂卡顿。</p>
+          </div>
+          <Toggle
+            checked={config.launch_trim_memory ?? true}
+            ariaLabel="启动时自动整理内存"
+            descriptionId="launch-memory-description"
+            onChange={v => updateConfig(c => { c.launch_trim_memory = v; })}
+          />
+        </div>
+        <div className="flex items-center justify-between py-1.5">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">自动关闭隔离浏览器</span>
+            <p className="text-2xs text-text-muted">在账号挂载或登录完自动关闭浏览器以释放内存</p>
+          </div>
+          <Toggle checked={!!config.auto_close_browser} onChange={v => updateConfig(c => { c.auto_close_browser = v; })} />
+        </div>
+        <div className="flex items-center justify-between py-1.5 border-t border-border-default/50 pt-2">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">每日检查更新</span>
+            <p className="text-2xs text-text-muted">每天首次启动检查软件、加工器和已安装Mod；仅提示，不自动安装</p>
+          </div>
+          <Toggle checked={!!config.enable_auto_update} onChange={v => updateConfig(c => { c.enable_auto_update = v; })} />
+        </div>
+        <label className="flex items-center justify-between gap-3 py-1.5">
+          <span className="text-sm font-semibold text-text-secondary">下载源</span>
+          <select className="settings-input" style={{ width: "auto" }} value={config.download_source ?? "auto"}
+            onChange={e => updateConfig(c => { c.download_source = e.target.value as "auto" | "gitee" | "github"; })}>
+            <option value="auto">自动</option><option value="gitee">优先 Gitee</option><option value="github">优先 GitHub</option>
+          </select>
+        </label>
+        <p className="text-2xs text-text-muted">自动模式按网络地区选择；首选源失败时切换备用源，取消下载不会重试。</p>
+      </section>
+      <details className="spatial-panel p-3 space-y-2" >
+        <summary className="settings-advanced-summary">高级启动兼容设置 <span>遇到战网多开问题时调整</span></summary>
         <div>
           <h2 id="agent-strategy-title" className="text-sm font-semibold text-text-secondary block mb-1">多开 Agent 限制行为</h2>
           <p className="text-2xs text-text-muted">防止启动多个战网客户端冲突的控制策略</p>
@@ -100,73 +168,7 @@ export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchSt
             <p className="text-2xs text-text-muted">仅当活跃战网进程数达到或超过阈值时才终结 Agent，避免多开限制发生。</p>
           </div>
         )}
-      </section>
-
-      <section className="spatial-panel p-3 space-y-2" aria-labelledby="keep-battle-net-title">
-        <div>
-          <h2 id="keep-battle-net-title" className="text-sm font-semibold text-text-secondary mb-1">多开后保留战网</h2>
-          <p id="keep-battle-net-description" className="text-2xs text-text-muted">所选账号参与本次启动且全部账号启动成功后，单独重新打开它的战网客户端，不重复启动游戏；取消或启动失败时跳过。</p>
-        </div>
-        <label className="block text-xs text-text-secondary" htmlFor="keep-battle-net-account">保留战网的账号</label>
-        <select
-          id="keep-battle-net-account"
-          className="settings-input"
-          aria-describedby="keep-battle-net-description keep-battle-net-status"
-          value={selectedAccountId}
-          onChange={event => updateConfig(c => { c.keep_battle_net_account_id = event.target.value || null; })}
-        >
-          <option value="">不保留</option>
-          {selectedAccountUnavailable && <option value={selectedAccountId} disabled>原账号不可用，请重新选择</option>}
-          {battleNetAccounts.map(account => (
-            <option key={account.id} value={account.id} data-i18n-skip>{account.display_name || account.id}</option>
-          ))}
-        </select>
-        <p id="keep-battle-net-status" className={`text-2xs ${selectedAccountUnavailable ? "text-warning" : "text-text-muted"}`}>
-          {selectedAccountUnavailable
-            ? "原账号已删除、未初始化或已改为 Token 模式，请重新选择。"
-            : battleNetAccounts.length === 0
-              ? "暂无可用的战网模式账号，请先添加并初始化战网模式账号。"
-              : "仅可选择已初始化的战网模式账号。"}
-        </p>
-      </section>
-
-      <section className="spatial-panel p-3 space-y-2" aria-labelledby="application-options-title">
-        <h2 id="application-options-title" className="text-xs font-bold text-text-primary">应用行为</h2>
-        <div className="flex items-center justify-between gap-3 py-1.5">
-          <div>
-            <span className="text-sm font-semibold text-text-secondary">启动时自动整理内存</span>
-            <p id="launch-memory-description" className="text-2xs text-text-muted">成功启动数量达到一半（向上取整）和批次结束时，整理已成功启动窗口的内存；单窗口仅整理一次，后续加载可能短暂卡顿。</p>
-          </div>
-          <Toggle
-            checked={config.launch_trim_memory ?? true}
-            ariaLabel="启动时自动整理内存"
-            descriptionId="launch-memory-description"
-            onChange={v => updateConfig(c => { c.launch_trim_memory = v; })}
-          />
-        </div>
-        <div className="flex items-center justify-between py-1.5">
-          <div>
-            <span className="text-sm font-semibold text-text-secondary">自动关闭隔离浏览器</span>
-            <p className="text-2xs text-text-muted">在账号挂载或登录完自动关闭浏览器以释放内存</p>
-          </div>
-          <Toggle checked={!!config.auto_close_browser} onChange={v => updateConfig(c => { c.auto_close_browser = v; })} />
-        </div>
-        <div className="flex items-center justify-between py-1.5 border-t border-border-default/50 pt-2">
-          <div>
-            <span className="text-sm font-semibold text-text-secondary">每日检查更新</span>
-            <p className="text-2xs text-text-muted">每天首次启动检查软件、加工器和已安装Mod；仅提示，不自动安装</p>
-          </div>
-          <Toggle checked={!!config.enable_auto_update} onChange={v => updateConfig(c => { c.enable_auto_update = v; })} />
-        </div>
-        <label className="flex items-center justify-between gap-3 py-1.5">
-          <span className="text-sm font-semibold text-text-secondary">下载源</span>
-          <select className="settings-input" style={{ width: "auto" }} value={config.download_source ?? "auto"}
-            onChange={e => updateConfig(c => { c.download_source = e.target.value as "auto" | "gitee" | "github"; })}>
-            <option value="auto">自动</option><option value="gitee">优先 Gitee</option><option value="github">优先 GitHub</option>
-          </select>
-        </label>
-        <p className="text-2xs text-text-muted">自动模式按网络地区选择；首选源失败时切换备用源，取消下载不会重试。</p>
-      </section>
+      </details>
     </div>
   );
 }

@@ -1216,18 +1216,6 @@ pub async fn launch_battle_net_only(
         .launch_admission
         .try_lock()
         .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
-    if state
-        .configuration()
-        .snapshot()
-        .is_some_and(|config| config.launch_session.is_some())
-        && crate::commands::account::list_accounts(state.clone())?
-            .iter()
-            .any(|account| account.is_running)
-    {
-        return Err(AppError::ConfigReadError(
-            "方案运行期间请使用本次账号的启动操作".into(),
-        ));
-    }
     launch_battle_net_only_task(app, state, account_ids, None).await
 }
 
@@ -1932,59 +1920,12 @@ pub async fn launch_accounts(
 type AccountLaunchRequest = (Option<Vec<String>>, Option<Vec<LaunchAccountEntry>>);
 
 fn resolve_session_launch(
-    app: &tauri::AppHandle,
-    state: &tauri::State<'_, SharedState>,
+    _app: &tauri::AppHandle,
+    _state: &tauri::State<'_, SharedState>,
     ids: Option<Vec<String>>,
     entries: Option<Vec<LaunchAccountEntry>>,
 ) -> Result<AccountLaunchRequest, AppError> {
-    let config = state.configuration().snapshot();
-    let Some(session) = config
-        .as_ref()
-        .and_then(|config| config.launch_session.as_ref())
-    else {
-        return Ok((ids, entries));
-    };
-    let accounts = crate::commands::account::list_accounts(state.clone())?;
-    if !accounts.iter().any(|account| account.is_running) {
-        crate::commands::global_config::mutate_loaded_global_config(
-            state.inner(),
-            app,
-            |config| {
-                config.launch_session = None;
-                Ok(true)
-            },
-        )?;
-        return Ok((ids, entries));
-    }
-    if entries.is_some() {
-        return Err(AppError::ConfigReadError(
-            "运行期间不能应用另一套启动参数，请使用账号启动按钮补启动".into(),
-        ));
-    }
-    let requested = ids.unwrap_or_default();
-    let resolved = requested
-        .into_iter()
-        .map(|id| {
-            let member = session
-                .members
-                .iter()
-                .find(|member| member.account_id == id)
-                .ok_or_else(|| {
-                    AppError::ConfigReadError("运行期间只能补启动本次方案内的账号".into())
-                })?;
-            Ok(LaunchAccountEntry {
-                account_id: id,
-                overrides: crate::application::multi_instance::LaunchAccountOverrides {
-                    snapshot: member.snapshot.clone(),
-                    mod_args: member.mod_args.clone().unwrap_or_default(),
-                    position_preset_id: None,
-                    resolution: member.resolution.clone(),
-                    fps: member.fps,
-                },
-            })
-        })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    Ok((None, Some(resolved)))
+    Ok((ids, entries))
 }
 
 #[tauri::command]
@@ -2148,47 +2089,7 @@ pub(crate) async fn retry_launch_task(
             entries,
             session_id,
         } => {
-            let current = state
-                .configuration()
-                .snapshot()
-                .and_then(|config| config.launch_session);
-            if session_id.as_deref() != current.as_ref().map(|session| session.id.as_str()) {
-                return Err(AppError::ConfigReadError(
-                    "原启动任务已结束，请从方案入口重新启动".into(),
-                ));
-            }
-            let entries = if let Some(session) = current {
-                let ids = account_ids.clone().unwrap_or_else(|| {
-                    entries
-                        .as_ref()
-                        .map(|entries| {
-                            entries
-                                .iter()
-                                .map(|entry| entry.account_id.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                });
-                Some(
-                    session
-                        .members
-                        .into_iter()
-                        .filter(|member| ids.contains(&member.account_id))
-                        .map(|member| LaunchAccountEntry {
-                            account_id: member.account_id,
-                            overrides: crate::application::multi_instance::LaunchAccountOverrides {
-                                snapshot: member.snapshot,
-                                mod_args: member.mod_args.unwrap_or_default(),
-                                position_preset_id: None,
-                                resolution: member.resolution,
-                                fps: member.fps,
-                            },
-                        })
-                        .collect(),
-                )
-            } else {
-                entries
-            };
+            let _ = session_id; // Retry the original action, independent of the latest recipe.
             launch_accounts_task(
                 app,
                 state,

@@ -12,8 +12,8 @@ interface Roi { x: number; y: number; width: number; height: number }
 interface Config {
   diagnostic_enabled: boolean;
   chat_send: boolean; chat_follow: boolean; chat_account_id: string; chat_roi: Roi; poll_ms: number;
-  area_enabled: boolean; area_roi: Roi; drops_enabled: boolean; drops_enforce: boolean;
-  labels_visible: boolean; drop_threshold: number;
+  area_enabled: boolean; area_roi: Roi;
+
 }
 interface Preview { image_url: string; mask_url: string; tz_image_url?: string | null; candidate_lines: number; line_analysis: Array<{matched: boolean; marker_runs: number; reason: string}> }
 interface Snapshot { generation: number; config: Config }
@@ -73,10 +73,9 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
   const commit = (patch: Partial<Config>) => {
     if (!draft) return;
     const next = { ...draft, ...patch };
-    if (patch.drops_enabled === false || patch.labels_visible === false) next.drops_enforce = false;
     update(next); void save(next);
   };
-  const toggle = (key: "diagnostic_enabled" | "chat_send" | "chat_follow" | "area_enabled" | "drops_enabled" | "drops_enforce" | "labels_visible", title: string, description: string, unavailable = false) => (
+  const toggle = (key: "diagnostic_enabled" | "chat_send" | "chat_follow" | "area_enabled", title: string, description: string, unavailable = false) => (
     <div className="feature-setting-row">
       <div><strong>{title}</strong><p>{description}</p></div>
       <Toggle checked={draft?.[key] ?? false} ariaLabel={title} disabled={busy || unavailable} onChange={value => commit({ [key]: value })} />
@@ -95,8 +94,8 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
   return <details className="feature-settings spatial-panel" onToggle={e => { if (e.target === e.currentTarget) setOpened(e.currentTarget.open); }}>
     <summary className="feature-settings-heading">
       <ScanLine size={17} aria-hidden="true" />
-      <span><strong>{mode === "chat" ? (en ? "Cross-PC room signals" : "跨电脑聊天信号") : (en ? "Scene timing & drop verification" : "场景计时与掉落核验")}</strong>
-        <small>{mode === "chat" ? (en ? "Follow another player's next room" : "通过聊天信号，跟随另一台电脑进入下一局") : (en ? "Supplement area names and verify uncertain drops" : "补充地区名称，核验低分掉落")}</small></span>
+      <span><strong>{mode === "chat" ? (en ? "Cross-PC room signals" : "跨电脑聊天信号") : (en ? "Scene timing & drop screenshots" : "场景计时与掉落截图")}</strong>
+        <small>{mode === "chat" ? (en ? "Follow another player's next room" : "通过聊天信号，跟随另一台电脑进入下一局") : (en ? "Recognize scenes and save confirmed high-rune screenshots" : "补充地区名称，保存高号符文掉落截图")}</small></span>
       <ChevronDown className="feature-chevron" size={15} aria-hidden="true" />
     </summary>
     <div className="feature-settings-body">
@@ -112,13 +111,8 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
         </> : <>
           {toggle("area_enabled", en ? "Recognize scenes and time runs" : "场景识别与计时", en ? "OCR alone identifies scenes and starts, splits or stops run timers. Red entry text and purple Terror Zone text are read separately every second." : "仅通过 OCR 识别场景并开始、切换或停止计时；每秒检查红字地区名和下方紫色 TZ 文字，分行用原图识别。")}
           <p className="feature-help">{en ? "Turning scene OCR off disables automatic scene timing and drop attribution." : "关闭场景 OCR 后，不再自动识别地点、切换计时或确定掉落归属。"}</p>
-          {toggle("drops_enabled", en ? "Verify low-score drops" : "核验低分掉落", en ? "Locate dark or blue item labels, then read original name crops to verify audio. Nearby events share captures." : "定位黑底或悬浮蓝底标签，再用原图读取名称核对声纹；相近事件共用截图，不做二值化 OCR。")}
-          {draft.drops_enabled && <div className="feature-dependent">
-            {toggle("labels_visible", en ? "Item names stay visible" : "地面物品名称持续可见", en ? "Keep item names visible in game. This setting does not press keys or change the game." : "请在游戏中保持名称文字持续显示。此项不会替你修改游戏或按键。")}
-            <div className="feature-field-row"><label htmlFor={`drop-threshold-${mode}`}>{en ? "Verify below" : "核验分数低于"}</label><div className="feature-unit-input"><input id={`drop-threshold-${mode}`} className="settings-input" type="number" min="40" max="95" value={Math.round(draft.drop_threshold * 100)} disabled={busy} onChange={e => { if (Number.isFinite(e.target.valueAsNumber)) update({ drop_threshold: e.target.valueAsNumber / 100 }); }} onBlur={() => { if (dirty) void save(draft); }} /><span>%</span></div></div>
-            {toggle("drops_enforce", en ? "Record confirmed drops only" : "只记录核验通过的低分掉落", draft.labels_visible ? (en ? "On by default. Hidden or unreadable labels may cause missed drops." : "默认开启；遮挡或识别失败时可能漏记。") : (en ? "Confirm visible item names first." : "先确认地面物品名称持续可见。"), !draft.labels_visible)}
-            {!draft.labels_visible && <p className="feature-help">{en ? "Verification pauses until item names are visible." : "未确认名称可见前，掉落视觉核验会跳过。"}</p>}
-          </div>}
+          <p className="feature-note">{en ? "Confirmed rune drops #24–#33 automatically save a full game-window PNG. Images do not verify or block drops; capture failures leave audio records intact. Files are grouped by date, and the database stores only the linked path." : "声纹确认 #24–#33 符文后，自动保存游戏窗口 PNG 截图，按日期归档。截图不识别、不核验、不拦截掉落；保存失败不影响声纹记录。数据库只保存关联路径。"}</p>
+          <Button size="sm" onClick={() => { void invokeCommand("open_drop_screenshots_dir").catch(e => setError(String(e))); }}><FolderOpen size={14} aria-hidden="true" />{en ? "Open drop screenshots" : "打开掉落截图目录"}</Button>
           <p className="feature-help">{en ? "Images are processed locally. OCR resources are prepared only when needed." : "截图仅在本机处理，识别资源按需准备。"}</p>
         </>}
         <details className="feature-disclosure"><summary><Settings2 size={14} aria-hidden="true" />{en ? "Capture and timing" : "截图与识别参数"}<ChevronDown size={14} className="feature-chevron" aria-hidden="true" /></summary><div className="feature-disclosure-body">
@@ -138,7 +132,7 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
           </>}
         </div></details>
         <details className="feature-disclosure"><summary><Bug size={14} aria-hidden="true" />{en ? "Diagnostics and resources" : "诊断与资源"}<ChevronDown size={14} className="feature-chevron" aria-hidden="true" /></summary><div className="feature-disclosure-body">
-          {toggle("diagnostic_enabled", en ? "Diagnostic logging" : "记录诊断日志", en ? "Shared by chat, area and drop recognition. No screenshots are saved." : "聊天、地区与掉落识别共用，仅排查问题时开启，不保存截图。")}
+          {toggle("diagnostic_enabled", en ? "Diagnostic logging" : "记录诊断日志", en ? "Diagnostic logs for chat and scene recognition; independent of drop screenshots." : "聊天与地区识别诊断日志，仅排查问题时开启；与掉落截图保存无关。")}
           {status && <><p className="feature-help">{status.message || (en ? "Service idle" : "服务待机")}</p><dl className="feature-metrics">{[[en ? "Checked" : "核验", status.checked], [en ? "Matched" : "匹配", status.matched], [en ? "Unmatched" : "未匹配", status.rejected], [en ? "Uncertain" : "不确定", status.unavailable]].map(([label, count]) => <div key={label}><dt>{label}</dt><dd>{count ?? 0}</dd></div>)}</dl></>}
           <div className="feature-actions"><Button size="sm" onClick={() => { void invokeCommand("open_logs_dir").catch(e => setError(String(e))); }}><FolderOpen size={14} aria-hidden="true" />{en ? "Open logs folder" : "打开日志"}</Button><Button size="sm" disabled={busy} onClick={() => { void save(draft); }}><RefreshCw size={14} aria-hidden="true" />{en ? "Retry resources" : "重试资源准备"}</Button></div>
         </div></details>

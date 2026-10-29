@@ -38,8 +38,8 @@ pub use frame_calibration::{
 pub use instances::{InstanceRegistry, InstanceRegistrySnapshot, RunningInstance};
 pub use launch::{CancellationTicket, LaunchOrchestrator};
 pub use launch_plan::{
-    launch_queue_can_continue, validate_graphics_override, LaunchAccountEntry,
-    LaunchAccountOverrides, LaunchBatchPlan, LaunchGraphicsOverride,
+    launch_queue_can_continue, LaunchAccountEntry, LaunchAccountOverrides, LaunchBatchPlan,
+    LaunchGraphicsOverride,
 };
 pub use leases::{
     AccountCatalogLeaseManager, AccountLeaseManager, AccountOperationLease, AccountOperationLeases,

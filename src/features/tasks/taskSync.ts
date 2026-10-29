@@ -11,6 +11,10 @@ export function mergeTaskSnapshot(
   if (previous && previous.revision >= incoming.revision) return current;
   const next = new Map(current);
   next.set(incoming.task_id, incoming);
+  // Match the backend history window; running tasks are never evicted.
+  const completed = [...next.values()].filter(task => task.state !== "running")
+    .sort((a, b) => b.task_id - a.task_id);
+  for (const task of completed.slice(100)) next.delete(task.task_id);
   return next;
 }
 

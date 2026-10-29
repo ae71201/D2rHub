@@ -1026,19 +1026,6 @@ pub fn assign_mod_capsule_to_account(
     } else {
         String::new()
     };
-    if crate::commands::launch_scheme::update_current_member(
-        state.inner(),
-        &app,
-        &account_id,
-        |member| {
-            member.mod_args = Some(arguments.clone());
-            Ok(())
-        },
-    )
-    .map_err(|error| error.to_string())?
-    {
-        return Ok(());
-    }
     let mut mod_list = account.mod_list;
     if !arguments.is_empty() && !mod_list.iter().any(|entry| entry.trim() == arguments) {
         mod_list.push(arguments.clone());

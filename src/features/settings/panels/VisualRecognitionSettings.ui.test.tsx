@@ -11,7 +11,6 @@ const config = {
   chat_send: false, chat_follow: false, chat_account_id: "follower", poll_ms: 2000,
   chat_roi: { x: 0, y: 0.05, width: 0.6, height: 0.45 },
   area_enabled: false, area_roi: { x: 0.15, y: 0.02, width: 0.7, height: 0.3 },
-  drops_enabled: false, drops_enforce: false, labels_visible: false, drop_threshold: 0.7,
 };
 describe("visual settings", () => {
   it("uses the primary account and exposes no conflicting send/listen switches", async () => {
@@ -38,7 +37,7 @@ describe("visual settings", () => {
     });
     const user=userEvent.setup();
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop verification"));
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
     await screen.findByText("Capture and timing");
     await user.click(screen.getByText("Capture and timing"));
     await user.click(screen.getByRole("button",{name:"Preview capture region"}));
@@ -49,30 +48,16 @@ describe("visual settings", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Preview image could not load");
   });
 
-  it("guards confirmation prerequisites and clears enforcement when verification is disabled", async () => {
-    let stored = { generation: 1, config: { ...config } };
-    vi.mocked(invokeCommand).mockImplementation(async (command, payload) => {
-      if (command === "vision_get_config") return stored;
-      if (command === "vision_save_config") {
-        stored = { generation: stored.generation + 1, config: (payload as { config: typeof config }).config };
-        return stored;
-      }
-      return { message: "idle" };
-    });
+  it("removes drop verification and opens the screenshot directory", async () => {
+    vi.mocked(invokeCommand).mockImplementation(async command => command === "vision_get_config"
+      ? { generation: 1, config } : { message: "idle" });
     const user = userEvent.setup();
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop verification"));
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
+    await user.click(await screen.findByRole("button", { name: "Open drop screenshots" }));
+    expect(invokeCommand).toHaveBeenCalledWith("open_drop_screenshots_dir");
+    expect(screen.queryByRole("switch", { name: "Verify low-score drops" })).toBeNull();
     expect(screen.queryByRole("switch", { name: "Record confirmed drops only" })).toBeNull();
-    await user.click(await screen.findByRole("switch", { name: "Verify low-score drops" }));
-    await screen.findByText("Saved");
-    expect((screen.getByRole("switch", { name: "Record confirmed drops only" }) as HTMLButtonElement).disabled).toBe(true);
-    await user.click(screen.getByRole("switch", { name: "Item names stay visible" }));
-    await waitFor(() => expect(stored.config.labels_visible).toBe(true));
-    await user.click(screen.getByRole("switch", { name: "Record confirmed drops only" }));
-    await waitFor(() => expect(stored.config.drops_enforce).toBe(true));
-    await user.click(screen.getByRole("switch", { name: "Verify low-score drops" }));
-    await waitFor(() => expect(stored.config.drops_enabled).toBe(false));
-    expect(stored.config.drops_enforce).toBe(false);
   });
   it("waits for an in-flight save when switching pages immediately", async () => {
     let stored = { generation: 4, config: { ...config } };
@@ -89,8 +74,8 @@ describe("visual settings", () => {
     });
     const user = userEvent.setup();
     const view = render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop verification"));
-    await screen.findByRole("switch", { name: "Verify low-score drops" });
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
+    await screen.findByRole("switch", { name: "Recognize scenes and time runs" });
     await user.click(screen.getByText("Diagnostics and resources"));
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
     view.unmount();
@@ -113,8 +98,8 @@ describe("visual settings", () => {
     const view = render(<VisualRecognitionSettings mode="audio" language="en-US" />);
     expect(invokeCommand).not.toHaveBeenCalled();
     const user = userEvent.setup();
-    await user.click(screen.getByText("Scene timing & drop verification"));
-    await user.click(await screen.findByLabelText("Verify low-score drops"));
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
+    await user.click(await screen.findByLabelText("Recognize scenes and time runs"));
     await screen.findByText("Saved");
     // Another page changes an unrelated field before the next save.
     stored = { generation: 8, config: { ...stored.config, chat_send: true } };
@@ -122,13 +107,12 @@ describe("visual settings", () => {
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
     await waitFor(() => expect(stored.config.diagnostic_enabled).toBe(true));
     expect(stored.config.chat_send).toBe(true);
-    expect(stored.config.drops_enabled).toBe(true);
-    expect(stored.config.drops_enforce).toBe(false);
+    expect(stored.config.area_enabled).toBe(true);
     view.unmount();
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop verification"));
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
     expect((await screen.findByLabelText("Diagnostic logging")).getAttribute("aria-checked")).toBe("true");
-    expect((screen.getByLabelText("Verify low-score drops")).getAttribute("aria-checked")).toBe("true");
+    expect((screen.getByLabelText("Recognize scenes and time runs")).getAttribute("aria-checked")).toBe("true");
   });
   it("retains failed edits across collapse and allows explicit retry", async () => {
     vi.mocked(invokeCommand).mockImplementation(async (command) => {
@@ -138,13 +122,13 @@ describe("visual settings", () => {
     });
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
     const user = userEvent.setup();
-    await user.click(screen.getByText("Scene timing & drop verification"));
-    await screen.findByRole("switch", { name: "Verify low-score drops" });
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
+    await screen.findByRole("switch", { name: "Recognize scenes and time runs" });
     await user.click(screen.getByText("Diagnostics and resources"));
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
     expect((await screen.findByRole("alert")).textContent).toContain("disk error");
-    await user.click(screen.getByText("Scene timing & drop verification"));
-    await user.click(screen.getByText("Scene timing & drop verification"));
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
+    await user.click(screen.getByText("Scene timing & drop screenshots"));
     expect((screen.getByLabelText("Diagnostic logging")).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByText("Save needs attention")).toBeTruthy();
     await user.click(screen.getByText("Save changes"));

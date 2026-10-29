@@ -6,6 +6,7 @@
  * payload shapes remain owned by the feature that consumes them.
  */
 export const TAURI_COMMANDS = [
+    "open_drop_screenshots_dir",
     "vision_get_config", "vision_save_config", "vision_get_status",
   "vision_preview",
   "vision_get_resource_package", "vision_prepare_resource_package", "vision_open_resource_directory",
@@ -117,6 +118,7 @@ export const TAURI_COMMANDS = [
   "room_automation_start_primary",
   "restore_window_placement",
   "save_account_settings",
+  "patch_account_settings",
   "save_global_config",
   "save_overlay_geometry",
   "save_scene_record",

@@ -210,6 +210,7 @@ pub fn run() {
         })
         // ── 全局配置 ──
         .invoke_handler(tauri::generate_handler![
+            vision::commands::open_drop_screenshots_dir,
             vision::commands::vision_get_config,
             vision::commands::vision_save_config,
             vision::commands::vision_get_status,
@@ -298,6 +299,7 @@ pub fn run() {
             // ── Settings 编辑器 ──
             commands::settings::get_account_settings,
             commands::settings::save_account_settings,
+            commands::settings::patch_account_settings,
             commands::settings::get_game_settings,
             commands::settings::snapshot_system_settings_to_account,
             // ── 浏览器 ──

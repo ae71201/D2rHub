@@ -236,3 +236,12 @@ mod tests {
                 && directive.split_whitespace().any(|token| token == "data:")));
     }
 }
+
+#[tauri::command(async)]
+pub fn open_drop_screenshots_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let root = crate::rune_audio::screenshots::directory(
+        &app.state::<crate::state::SharedState>().app_data_dir,
+    );
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    open::that(root).map_err(|e| e.to_string())
+}

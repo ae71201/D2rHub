@@ -56,3 +56,14 @@ describe("task snapshot synchronization", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 });
+
+it("bounds completed history without evicting running work", () => {
+  let current = new Map([[1, { ...task(1), task_id: 1 }]]);
+  for (let id = 2; id <= 200; id++) {
+    current = new Map(mergeTaskSnapshot(current, { ...task(id, "succeeded"), task_id: id }));
+  }
+  expect(current.size).toBe(101);
+  expect(current.has(1)).toBe(true);
+  expect(current.has(2)).toBe(false);
+  expect(current.has(200)).toBe(true);
+});

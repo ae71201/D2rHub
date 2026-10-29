@@ -101,6 +101,8 @@ pub struct DropObservation {
     pub confidence: f32,
     pub source: String,
     pub scene_record_id: Option<i64>,
+    /// PNG path relative to stateData; the image itself stays outside SQLite.
+    pub screenshot_path: Option<String>,
 }
 
 /// 全部统计数据
@@ -260,7 +262,7 @@ fn ensure_drop_observation_schema(conn: &Connection) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    for column in ["source_id", "source_name"] {
+    for column in ["source_id", "source_name", "screenshot_path"] {
         if !columns.iter().any(|existing| existing == column) {
             conn.execute(
                 &format!("ALTER TABLE drop_observations ADD COLUMN {column} TEXT"),
@@ -405,6 +407,24 @@ pub(crate) fn insert_drop_observation(
         .lock()
         .map_err(|error| format!("数据库锁失败: {error}"))?;
     insert_drop_observation_into(&conn, observation)
+}
+
+pub(crate) fn attach_drop_screenshot(root: &str, id: i64, relative: &str) -> Result<(), String> {
+    let conn = get_db(root)?.lock().map_err(|e| e.to_string())?;
+    attach_drop_screenshot_into(&conn, id, relative)
+}
+
+fn attach_drop_screenshot_into(conn: &Connection, id: i64, relative: &str) -> Result<(), String> {
+    let changed = conn
+        .execute(
+            "UPDATE drop_observations SET screenshot_path = ?1 WHERE id = ?2",
+            rusqlite::params![relative, id],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed != 1 {
+        return Err("掉落记录已不存在，截图仍保留在外部目录".into());
+    }
+    Ok(())
 }
 
 fn insert_drop_observation_into(
@@ -786,7 +806,7 @@ fn query_drop_observations(conn: &Connection) -> Result<Vec<DropObservation>, St
         .prepare(
             "SELECT id, observed_at, account_id, kind, telemetry_id, item_code, category,
                     display_name, display_name_en, rune_number, confidence, source,
-                    scene_record_id, COALESCE(source_id, account_id), COALESCE(source_name, account_id)
+                    scene_record_id, COALESCE(source_id, account_id), COALESCE(source_name, account_id), screenshot_path
              FROM drop_observations
              ORDER BY id ASC",
         )
@@ -813,6 +833,7 @@ fn query_drop_observations(conn: &Connection) -> Result<Vec<DropObservation>, St
                 confidence: row.get(10)?,
                 source: row.get(11)?,
                 scene_record_id: row.get(12)?,
+                screenshot_path: row.get(15)?,
             })
         })
         .map_err(|error| format!("查询掉落声纹观测失败: {error}"))?
@@ -1837,6 +1858,22 @@ mod tests {
         let old = super::query_drop_observations(&conn).unwrap();
         assert_eq!(old[0].source_id, "account");
         assert_eq!(old[0].account_id, "account");
+        assert!(old[0].screenshot_path.is_none());
+        super::attach_drop_screenshot_into(
+            &conn,
+            old[0].id,
+            "drop-screenshots/2026-10-29/event.png",
+        )
+        .unwrap();
+        ensure_drop_observation_schema(&conn).unwrap();
+        let linked = super::query_drop_observations(&conn).unwrap();
+        assert_eq!(
+            linked[0].screenshot_path.as_deref(),
+            Some("drop-screenshots/2026-10-29/event.png")
+        );
+        assert!(super::attach_drop_screenshot_into(&conn, -1, "missing.png").is_err());
+        assert_eq!(super::query_drop_observations(&conn).unwrap().len(), 1);
+
         super::insert_drop_observation_into(
             &conn,
             super::NewDropObservation {

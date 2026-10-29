@@ -1,3 +1,4 @@
+import { switchPrimary } from "../../roomAutomation/roles";
 import { RoomCollaborationMode } from "../../roomAutomation/RoomCollaborationMode";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { copyRoomRule, parseRoomRule } from "../../roomAutomation/ruleShare";
@@ -499,14 +500,7 @@ export function RoomAutomationPanel({
                 placeholder={copy.selectPrimary}
                 disabled={editorDisabled}
                 invalid={!!validation?.fieldErrors.primary}
-                onChange={(primary_account_id) => updateDraft((current) => {
-                  const follower_account_ids = current.follower_account_ids.filter((id) => id !== primary_account_id);
-                  return {
-                    ...current,
-                    primary_account_id,
-                    follower_account_ids,
-                  };
-                })}
+                onChange={(id) => updateDraft((current) => switchPrimary(current, id))}
               />
               {validation?.fieldErrors.primary && <small role="alert">{validation.fieldErrors.primary}</small>}
             </div>

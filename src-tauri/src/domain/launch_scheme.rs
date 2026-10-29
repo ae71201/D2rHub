@@ -256,11 +256,6 @@ impl SchemeEnvironment {
                 std::slice::from_ref(layout),
                 Some(&layout.id),
             )?;
-            if layout.windows.len() < group.members.len() {
-                return Err(AppError::ConfigReadError(
-                    "布局位置少于方案账号，请补充位置".into(),
-                ));
-            }
         }
         Ok(())
     }

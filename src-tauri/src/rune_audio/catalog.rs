@@ -72,6 +72,60 @@ pub struct NamedLocation {
     pub kind: LocationKind,
 }
 
+impl NamedLocation {
+    /// Keep exact floor names for recognition; collapse floors only at the
+    /// statistics boundary. No fuzzy matching of unrelated area names.
+    pub fn statistics_location(mut self) -> Self {
+        if self.kind == LocationKind::Wilderness {
+            self.scene_name = floor_family(&self.scene_name);
+            self.scene_name_en = floor_family(&self.scene_name_en);
+        }
+        self
+    }
+}
+
+fn floor_family(name: &str) -> String {
+    let name = name.trim();
+    if let Some(body) = name.strip_suffix('层').or_else(|| name.strip_suffix('層')) {
+        let base = body.trim_end_matches(|c: char| {
+            c.is_ascii_digit()
+                || "０１２３４５６７８９一二三四五六七八九十百〇零壹贰貳叁參肆伍陆陸柒捌玖拾"
+                    .contains(c)
+        });
+        if base.len() != body.len() {
+            let base = base.strip_suffix('第').unwrap_or(base).trim_end();
+            if !base.is_empty() {
+                return base.to_owned();
+            }
+        }
+    }
+    let lower = name.to_ascii_lowercase();
+    if let Some(index) = lower.rfind(" level ") {
+        let number = name[index + 7..].trim();
+        if index > 0 && !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
+            return name[..index].trim_end().to_owned();
+        }
+    }
+    name.to_owned()
+}
+
+#[cfg(test)]
+#[test]
+fn statistics_groups_numbered_floors_without_merging_distinct_places() {
+    for (input, expected) in [
+        ("地下墓穴一层", "地下墓穴"),
+        ("地下墓穴第三層", "地下墓穴"),
+        ("遗忘之塔地牢第5层", "遗忘之塔地牢"),
+        ("Worldstone Keep Level 3", "Worldstone Keep"),
+        ("塔·拉夏之墓", "塔·拉夏之墓"),
+        ("塔·拉夏的墓室", "塔·拉夏的墓室"),
+        ("库拉斯特下层区", "库拉斯特下层区"),
+        ("先祖之路", "先祖之路"),
+    ] {
+        assert_eq!(floor_family(input), expected);
+    }
+}
+
 pub fn scene_name_identity(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_alphanumeric())
@@ -194,6 +248,14 @@ impl LocationCatalog {
         let mut names: Vec<_> = (1..=MAX_AREA_ID)
             .filter(|id| self.has_name(*id))
             .filter_map(|area_id| self.resolve(TelemetryMarker::Area { area_id }))
+            .filter(|location| {
+                let name = scene_name_identity(&location.scene_name);
+                let english = scene_name_identity(&location.scene_name_en);
+                !name.is_empty()
+                    && !english.starts_with("area")
+                    && !name.starts_with("地图area")
+                    && !name.starts_with("场景area")
+            })
             .map(|location| NamedLocation {
                 scene_name: location.scene_name,
                 scene_name_en: location.scene_name_en,

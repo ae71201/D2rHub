@@ -60,6 +60,16 @@ pub(super) struct ValidatedAudioMod {
     pub(super) current_feature_protocol: bool,
 }
 
+impl ValidatedAudioMod {
+    fn update_available(&self) -> bool {
+        !self.current_feature_protocol
+            || self.feature_groups.iter().any(|group| {
+                group.id == AUDIO_TELEMETRY_FEATURE_ID
+                    && group.recipe_version < AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
+            })
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ValidatedGeneratorOutput {
     pub(super) directory: PathBuf,
@@ -585,7 +595,7 @@ fn compatibility_with(
     match validate(mods_directory, &name) {
         Ok(validated) => {
             if !validated.has_audio_telemetry {
-                let update_required = !validated.current_feature_protocol;
+                let update_required = validated.update_available();
                 return Compatibility {
                     mod_name,
                     has_txt,
@@ -602,7 +612,7 @@ fn compatibility_with(
                     },
                 };
             }
-            let update_required = !validated.current_feature_protocol;
+            let update_required = validated.update_available();
             Compatibility {
                 mod_name,
                 has_txt,
@@ -617,7 +627,8 @@ fn compatibility_with(
                     "ready".to_string()
                 },
                 message: if update_required {
-                    "旧版识别 Mod 仍可使用；重新加工后可获得可验证、可复用的独立功能组".to_string()
+                    "当前 Mod 有新版功能模块可用；请在 Mod 管理中更新，声纹 r5 新增地区声纹"
+                        .to_string()
                 } else {
                     "识别 Mod 已准备好".to_string()
                 },
@@ -738,7 +749,7 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 .as_ref()
                 .is_ok_and(|validated| validated.has_audio_telemetry);
             let update_required = match validation.as_ref() {
-                Ok(validated) => !validated.current_feature_protocol,
+                Ok(validated) => validated.update_available(),
                 Err(_) => update_metadata.is_some(),
             };
             let feature_groups = validation

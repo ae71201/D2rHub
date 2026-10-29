@@ -8,6 +8,9 @@ import type { GlobalConfigPatch } from "../../utils/globalConfigPatch";
 import type { SettingsTabId } from "../../features/settings/settingsRegistry";
 import { SettingsCenter } from "./SettingsCenter";
 
+const modRuntime = vi.hoisted(() => ({ busy: false }));
+vi.mock("../../features/mods/workflow/useModWorkflow", () => ({ useModWorkflow: () => ({ busy: modRuntime.busy, actions: { openLibrary: vi.fn(), requestProcessing: vi.fn() } }) }));
+
 const navigation = vi.hoisted(() => ({ result: null as Promise<boolean> | null }));
 
 vi.mock("../../platform/tauri", () => ({
@@ -46,7 +49,12 @@ const initial = {
 
 beforeEach(() => {
   navigation.result = null;
-  useGlobalConfig.setState({ config: initial });
+  modRuntime.busy = false;
+  useGlobalConfig.setState({ config: initial, patch: vi.fn(async changes => {
+    const saved = { ...useGlobalConfig.getState().config!, ...changes };
+    useGlobalConfig.setState({ config: saved });
+    return saved;
+  }) });
   useAccounts.setState({ accounts: [] });
 });
 afterEach(cleanup);
@@ -76,13 +84,16 @@ it("keeps navigation pending until the isolated draft is committed", async () =>
   expect(screen.getByLabelText("Current section").textContent).toBe("agent");
 });
 
-it("returns false and preserves the visible draft when navigation save fails", async () => {
+it("allows navigation while preserving a failed draft and offering recovery", async () => {
   const patch = vi.fn(async () => { throw new Error("disk full"); });
   useGlobalConfig.setState({ patch });
   mount();
   fireEvent.change(await screen.findByLabelText("Game path"), { target: { value: "D:\\D2R" } });
   fireEvent.click(screen.getByText("Change section"));
-  await act(async () => { expect(await navigation.result).toBe(false); });
+  await act(async () => { expect(await navigation.result).toBe(true); });
+  expect(screen.getByLabelText("Current section").textContent).toBe("agent");
+  expect(screen.getByRole("alert")).toBeTruthy();
+  fireEvent.click(screen.getByText("返回修改处"));
   expect(screen.getByLabelText("Current section").textContent).toBe("paths");
   expect((screen.getByLabelText("Game path") as HTMLInputElement).value).toBe("D:\\D2R");
   expect(useGlobalConfig.getState().config?.cn_game_path).toBe(initial.cn_game_path);
@@ -107,4 +118,26 @@ it("keeps settings open when the user types another change during close-save", a
   expect(onClose).not.toHaveBeenCalled();
   expect((screen.getByLabelText("Game path") as HTMLInputElement).value).toBe("E:\\D2R");
   expect(useGlobalConfig.getState().config?.cn_game_path).toBe("D:\\D2R");
+});
+
+it("offers an explicit discard exit instead of trapping an invalid path draft", async () => {
+  useGlobalConfig.setState({ patch: vi.fn(async () => { throw new Error("invalid path"); }) });
+  const onClose = vi.fn(); mount(onClose);
+  fireEvent.change(await screen.findByLabelText("Game path"), { target: { value: "" } });
+  fireEvent.click(screen.getByText("Close settings"));
+  expect(onClose).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByText("放弃未保存修改并关闭"));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(useGlobalConfig.getState().config?.cn_game_path).toBe(initial.cn_game_path);
+});
+
+it("keeps unrelated navigation and closing available during background Mod work", async () => {
+  modRuntime.busy = true;
+  const onClose = vi.fn(); mount(onClose);
+  await screen.findByLabelText("Game path");
+  expect(screen.getByText("Mod 正在后台加工，可以继续使用其他设置。")).toBeTruthy();
+  fireEvent.click(screen.getByText("Change section"));
+  await act(async () => { expect(await navigation.result).toBe(true); });
+  fireEvent.click(screen.getByText("Close settings"));
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
 });

@@ -24,12 +24,6 @@ struct AccountWindowIdentity {
 fn identities(config: &GlobalConfig, state: &SharedState) -> Vec<AccountWindowIdentity> {
     AccountManager::list_ids(&config.accounts_dir)
         .into_iter()
-        .filter(|id| {
-            config
-                .launch_session
-                .as_ref()
-                .is_none_or(|session| session.scheme.account_ids.contains(id))
-        })
         .filter_map(|id| {
             let account = AccountManager::load_meta(&config.accounts_dir, &id).ok()?;
             Some(AccountWindowIdentity {
@@ -234,9 +228,6 @@ pub async fn get_game_layout_account_order(
         if observed.is_empty() {
             return Ok(Vec::new());
         }
-        if let Some(session) = &config.launch_session {
-            return Ok(session.scheme.account_ids.clone());
-        }
         Ok(match_accounts(&identities(&config, &state), &observed)
             .into_iter()
             .map(|(id, _)| id)
@@ -257,20 +248,7 @@ pub async fn capture_game_window_layout(
             .snapshot()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".into()))?;
         let observed = windows::snapshot()?;
-        let mut matched = match_accounts(&identities(&config, &state), &observed);
-        if let Some(session) = &config.launch_session {
-            // Never compact missing members: restoration uses fixed session slots.
-            if session.scheme.account_ids.iter().any(|id| {
-                !matched
-                    .iter()
-                    .any(|(found, _)| found.eq_ignore_ascii_case(id))
-            }) {
-                return Err(AppError::FileError(
-                    "本次方案仍有账号未打开游戏窗口，请全部启动后再捕获布局".into(),
-                ));
-            }
-            matched.sort_by_key(|(id, _)| layout_slot_index(&config, id, 0));
-        }
+        let matched = match_accounts(&identities(&config, &state), &observed);
         if matched.is_empty() {
             return Err(AppError::FileError(
                 "未找到可识别的账号游戏窗口，请先启动游戏".into(),
@@ -344,7 +322,7 @@ fn captured_slot(
 
 #[tauri::command]
 pub async fn capture_account_window_position(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
     activate: Option<bool>,
@@ -397,25 +375,7 @@ pub async fn capture_account_window_position(
         account
             .replace_position_presets(active_id, presets)
             .map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
-        let in_session = crate::commands::launch_scheme::update_current_member(
-            &state,
-            &app,
-            &account_id,
-            |member| {
-                if activate.unwrap_or(true) {
-                    member.position_preset_id = account.active_position_id.clone();
-                    member
-                        .snapshot
-                        .as_mut()
-                        .ok_or_else(|| AppError::ConfigWriteError("本次账号配置缺失".into()))?
-                        .position = account.window_x.zip(account.window_y);
-                }
-                Ok(())
-            },
-        )?;
-        if !in_session {
-            AccountManager::save_meta(&config.accounts_dir, &account)?;
-        }
+        AccountManager::save_meta(&config.accounts_dir, &account)?;
         state
             .multi_instance()
             .instances()
@@ -495,32 +455,8 @@ pub(crate) fn prepare_launch_layout(
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    let needed = existing.len()
-        + requested
-            .iter()
-            .filter(|id| {
-                !existing
-                    .iter()
-                    .any(|existing| existing.eq_ignore_ascii_case(id))
-            })
-            .count();
-    if needed > rectangles.len() {
-        return Err(AppError::ConfigReadError(format!(
-            "布局“{}”有 {} 个位置，本次需要 {needed} 个。请增加布局窗口数量或选择不使用布局",
-            layout.name,
-            rectangles.len()
-        )));
-    }
-    let fixed_order = config
-        .launch_session
-        .as_ref()
-        .map(|session| session.scheme.account_ids.clone())
-        .unwrap_or_default();
-    if !fixed_order.is_empty() && fixed_order.len() > rectangles.len() {
-        return Err(AppError::ConfigReadError(
-            "布局位置不足，无法保留本次方案的账号位置对应关系".into(),
-        ));
-    }
+    let _ = requested;
+    let fixed_order = Vec::new();
     Ok(Some(LaunchLayoutPlan {
         fixed_order,
         next: existing.len(),
@@ -535,18 +471,8 @@ pub struct LayoutRestoreResult {
     pub failures: Vec<String>,
 }
 
-fn layout_slot_index(config: &GlobalConfig, id: &str, fallback: usize) -> usize {
-    config
-        .launch_session
-        .as_ref()
-        .and_then(|session| {
-            session
-                .scheme
-                .account_ids
-                .iter()
-                .position(|account| account.eq_ignore_ascii_case(id))
-        })
-        .unwrap_or(fallback)
+fn layout_slot_index(_config: &GlobalConfig, _id: &str, fallback: usize) -> usize {
+    fallback
 }
 
 pub(crate) fn restore_layout(
@@ -564,13 +490,6 @@ pub(crate) fn restore_layout(
     let rectangles = layout.resolve(&configured_monitors(Some(config))?)?;
     let observed = windows::snapshot()?;
     let matched = match_accounts(&identities(config, state), &observed);
-    if matched.len() > rectangles.len() {
-        return Err(AppError::FileError(format!(
-            "当前有 {} 个账号窗口，布局只有 {} 个位置，请增加窗口数量",
-            matched.len(),
-            rectangles.len()
-        )));
-    }
     let mut result = LayoutRestoreResult {
         applied: Vec::new(),
         failures: Vec::new(),
@@ -580,9 +499,6 @@ pub(crate) fn restore_layout(
     for (ordinal, (id, window)) in matched.iter().enumerate().rev() {
         let index = layout_slot_index(config, id, ordinal);
         let Some(rectangle) = rectangles.get(index).copied() else {
-            result
-                .failures
-                .push(format!("账号 {id} 对应的布局位置 {} 不存在", index + 1));
             continue;
         };
         let registry = state.multi_instance().instances();

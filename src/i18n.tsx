@@ -19,7 +19,7 @@ const keyedMessages = {
   "account.close.selectedHint": { zh: "仅关闭选中账号的游戏进程", en: "Close only the selected accounts' game processes" },
   "account.close.busy": { zh: "处理中…", en: "Working…" },
   "launch.scheme.label": { zh: "启动方案", en: "Launch Schemes" },
-  "launch.scheme.subtitle": { zh: "账号、跟房、识别与布局，一套配置独立启动", en: "Independent accounts, room automation, recognition and layout" },
+  "launch.scheme.subtitle": { zh: "启动时应用账号、跟房、识别与布局，之后自由调整", en: "Apply accounts, room automation, recognition and layout at launch; adjust freely afterwards" },
   "launch.scheme.count": { zh: "{count} 个方案", en: "{count} schemes" },
   "launch.scheme.empty.title": { zh: "还没有启动方案", en: "No Launch Schemes Yet" },
   "launch.scheme.empty.body": {

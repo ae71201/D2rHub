@@ -58,8 +58,8 @@ export function VisionResourceCard({ en }: { en: boolean }) {
       <div className="resource-title"><strong>{title}</strong>
         {data && <span>{en ? "Download" : "下载"} {(data.size / 1048576).toFixed(1)} MB</span>}
       </div>
-      <p>{en ? "Shared by scene recognition, drop verification and room signals. Download once for all accounts and game editions."
-        : "用于地区识别、掉落核验和聊天跟房；所有账号与游戏版本共用，下载一次即可。"}</p>
+      <p>{en ? "Shared by scene recognition and room signals. Download once for all accounts and game editions."
+        : "用于地区识别和聊天跟房；所有账号与游戏版本共用，下载一次即可。"}</p>
     </div>
     <div className="resource-metadata">
       <small>{en ? "Gitee mirror available; follows your download source setting." : "支持 Gitee 国内镜像，遵循软件的下载源设置。"}</small>

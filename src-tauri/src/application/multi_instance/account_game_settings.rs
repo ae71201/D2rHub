@@ -33,6 +33,28 @@ impl<'a> AccountGameSettingsService<'a> {
         self.accounts.save_account_settings(&account, &settings)
     }
 
+    /// Read and merge under the same exclusive lease; unrelated settings cannot
+    /// be overwritten by an older frontend snapshot.
+    pub fn patch(&self, account_id: &str, patch: GameSettings) -> Result<GameSettings, AppError> {
+        ensure_nonempty(&patch, "设置修改")?;
+        let _lease = self.leases.try_acquire(account_id)?;
+        let account = self.accounts.load(account_id)?;
+        let mut settings = if account.has_customized_settings {
+            self.accounts.read_account_settings(account_id)?
+        } else {
+            self.accounts.read_system_settings_required(&account)?
+        };
+        ensure_nonempty(&settings, "原始 Settings.json")?;
+        if let Some(fps) = patch.get("Framerate Cap") {
+            if settings.contains_key("Framerate Target") {
+                settings.insert("Framerate Target".into(), fps.clone());
+            }
+        }
+        settings.extend(patch);
+        self.accounts.save_account_settings(&account, &settings)?;
+        Ok(settings)
+    }
+
     pub fn snapshot_system(&self, account_id: &str) -> Result<GameSettings, AppError> {
         let _lease = self.leases.try_acquire(account_id)?;
         let account = self.accounts.load(account_id)?;
@@ -137,6 +159,36 @@ mod tests {
             self.saves.lock().unwrap().push(self.system.clone());
             Ok(self.system.clone())
         }
+    }
+
+    #[test]
+    fn patch_preserves_other_fields_and_updates_existing_legacy_fps() {
+        let mut repository = FakeRepository::new(true);
+        repository
+            .private
+            .insert("Framerate Target".into(), json!(30));
+        repository
+            .private
+            .insert("Texture Quality".into(), json!(3));
+        let leases = AccountLeaseManager::default();
+        let service = AccountGameSettingsService::new(&repository, &leases);
+        let saved = service
+            .patch(
+                "acount1",
+                GameSettings::from([("Framerate Cap".into(), json!(60))]),
+            )
+            .unwrap();
+        assert_eq!(saved["Texture Quality"], 3);
+        assert_eq!(saved["Framerate Target"], 60);
+        assert_eq!(repository.saves.lock().unwrap()[0], saved);
+        let held = leases.try_acquire("acount1").unwrap();
+        assert!(service
+            .patch(
+                "acount1",
+                GameSettings::from([("Framerate Cap".into(), json!(90))])
+            )
+            .is_err());
+        drop(held);
     }
 
     #[test]

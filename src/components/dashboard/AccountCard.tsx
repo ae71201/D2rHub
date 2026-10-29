@@ -175,7 +175,7 @@ export function AccountGridItem({
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
   modCapsuleLoading, modCapsuleError, onRequestModCapsules,
-  getPositionSchemeUsage, onUpdateToken, onReinitialize, config, runtimeStatus,
+  onUpdateToken, onReinitialize, config, runtimeStatus,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -301,12 +301,6 @@ export function AccountGridItem({
   };
 
   const deletePosition = async (position: WindowPositionPreset) => {
-    const usedBy = getPositionSchemeUsage?.(account.id, position.id) ?? [];
-    if (usedBy.length > 0) {
-      showToast("warning", `位置“${position.name}”正被方案“${usedBy.join("、")}”使用，请先更换方案配置`);
-      setPositionDelConfirmId(null);
-      return;
-    }
     const next = positionPresets.filter(candidate => candidate.id !== position.id);
     const nextActive = account.active_position_id === position.id
       ? next[0]?.id ?? null
@@ -410,7 +404,7 @@ export function AccountGridItem({
     : drawer.fps;
   const configModeLabel = isSelectionMode
     ? "方案画质"
-    : config?.launch_session?.scheme.account_ids.includes(account.id) && account.is_running ? "本次配置" : account.has_customized_settings ? "独立配置" : "系统配置";
+    : account.has_customized_settings ? "独立配置" : "系统配置";
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──

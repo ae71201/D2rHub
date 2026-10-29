@@ -4,7 +4,7 @@ import { LogicalSize } from "@tauri-apps/api/window";
 import { useLaunch } from "../store/launch";
 import { useAccounts } from "../store/accounts";
 import { showToast } from "../components/ui/Toast";
-import type { AudioModRuntimeWarning, GlobalConfig, LaunchProgress } from "../store/types";
+import type { AudioModRuntimeWarning, GlobalConfig, ModCapsulePool, LaunchProgress } from "../store/types";
 import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
 import { validateTrackingTarget } from "../utils/trackingTarget";
 
@@ -142,7 +142,14 @@ export function useAutoUpdate(
         // A network failure must not suppress the next startup's check.
         localStorage.setItem(key, today);
       };
-      await Promise.allSettled([check("software"), check("resources")]);
+      // Local recipe updates must be checked even when today's online checks
+      // already ran, or the network is unavailable.
+      const checkModules = async () => {
+        const pool = await invokeCommand<ModCapsulePool>("get_mod_capsule_pool");
+        const outdated = pool.capsules.filter(mod => mod.update_required);
+        if (outdated.length) showToast("info", `Mod 模块可更新：${outdated.map(mod => `${mod.edition === "CN" ? "国服" : "国际服"} ${mod.name}`).join("、")}。请在 Mod 管理中更新对应 Mod。`);
+      };
+      await Promise.allSettled([checkModules(), check("software"), check("resources")]);
       checking.current = false;
     };
     const timer = setTimeout(() => void run(), 3000);

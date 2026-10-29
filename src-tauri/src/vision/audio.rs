@@ -8,23 +8,88 @@ use std::{
 use tauri::Manager;
 pub enum Evidence {
     Area(Candidate),
-    Drop(TelemetryMarker, f32),
 }
 struct Pending {
-    epoch: u64,
     config_epoch: u64,
-    marker: Option<TelemetryMarker>,
-    confidence: f32,
-    enforce: bool,
     created: Instant,
     rx: mpsc::Receiver<Result<Option<Candidate>, String>>,
 }
 #[derive(Default)]
 pub struct AudioVision {
-    epoch: u64,
     pending: Vec<Pending>,
     next_area: Option<Instant>,
     area_candidates: Option<Vec<Candidate>>,
+    fusion: SceneFusion,
+}
+
+/// Both channels map independently. Cached OCR is not a new entry, and a
+/// conflicting audio loop must persist before replacing a visual entry.
+#[derive(Default)]
+struct SceneFusion {
+    current: Option<(Candidate, Instant)>,
+    visual_entry: Option<(String, Option<u64>)>,
+    pending_audio: Option<(String, Instant)>,
+}
+
+fn scene_key(candidate: &Candidate) -> Option<String> {
+    let location = candidate.location.clone()?.statistics_location();
+    Some(format!(
+        "{:?}:{}",
+        location.kind,
+        scene_name_identity(&location.scene_name)
+    ))
+}
+
+impl SceneFusion {
+    fn accept(&mut self, candidate: Candidate, observed: Instant) -> Option<Candidate> {
+        let key = scene_key(&candidate)?;
+        if candidate.audio_mapped {
+            if let Some((current, at)) = &self.current {
+                if scene_key(current).as_ref() == Some(&key) {
+                    self.pending_audio = None;
+                    return None;
+                }
+                if !current.audio_mapped {
+                    let pending = self
+                        .pending_audio
+                        .get_or_insert_with(|| (key.clone(), observed));
+                    if pending.0 != key
+                        || observed.saturating_duration_since(pending.1) > Duration::from_secs(6)
+                    {
+                        *pending = (key, observed);
+                        return None;
+                    }
+                    if observed.saturating_duration_since(*at) < Duration::from_secs(2)
+                        || observed.saturating_duration_since(pending.1)
+                            < Duration::from_millis(500)
+                    {
+                        return None;
+                    }
+                }
+            }
+        } else {
+            let entry = (candidate.name.clone(), candidate.announcement);
+            let fresh = self.visual_entry.as_ref() != Some(&entry);
+            if let Some((current, at)) = &self.current {
+                if observed < *at {
+                    return None;
+                }
+                if !fresh {
+                    if scene_key(current).as_ref() != Some(&key) || !candidate.tz || current.tz {
+                        return None;
+                    }
+                    let mut refined = current.clone();
+                    refined.tz = true;
+                    self.current = Some((refined.clone(), *at));
+                    return Some(refined);
+                }
+            }
+            self.visual_entry = Some(entry);
+        }
+        self.pending_audio = None;
+        self.current = Some((candidate.clone(), observed));
+        Some(candidate)
+    }
 }
 
 fn area_candidates(catalog: &LocationCatalog) -> Vec<Candidate> {
@@ -53,16 +118,27 @@ fn area_candidates(catalog: &LocationCatalog) -> Vec<Candidate> {
 }
 
 impl AudioVision {
-    pub fn change_scene(&mut self) {
-        if !self.pending.is_empty() {
-            super::diagnostics::event(
-                super::configuration().diagnostic_enabled,
-                "pending_invalidated",
-                serde_json::json!({"reason":"scene_changed","count":self.pending.len(),"scene_epoch":self.epoch}),
-            );
-        }
-        self.epoch += 1;
-        self.pending.clear();
+    pub fn observe_audio_area(
+        &mut self,
+        marker: TelemetryMarker,
+        catalog: &LocationCatalog,
+        confidence: f32,
+    ) -> Option<Candidate> {
+        let location = catalog.resolve(marker)?;
+        let named = catalog
+            .named_locations()
+            .into_iter()
+            .find(|v| v.scene_name == location.scene_name && v.kind == location.kind);
+        let named = named?;
+        let candidate = Candidate {
+            name: named.scene_name.clone(),
+            name_en: named.scene_name_en.clone(),
+            location: Some(named),
+            confidence,
+            audio_mapped: true,
+            ..Default::default()
+        };
+        self.fusion.accept(candidate, Instant::now())
     }
     pub fn tick_area(&mut self, app: &tauri::AppHandle, pid: u32, catalog: &LocationCatalog) {
         if !super::configuration().area_enabled
@@ -71,72 +147,33 @@ impl AudioVision {
             return;
         }
         self.next_area = Some(Instant::now() + Duration::from_secs(1));
-        if self.pending.iter().any(|p| p.marker.is_none()) {
+        if !self.pending.is_empty() {
             return;
         }
         let candidates = self
             .area_candidates
             .get_or_insert_with(|| area_candidates(catalog))
             .clone();
-        self.submit(app, pid, Kind::Area(candidates), None, 0.0, false);
+        self.submit(app, pid, Kind::Area(candidates));
     }
-    /// True means the audio event must wait for confirmation. Observe-only never blocks it.
-    pub fn drop(
-        &mut self,
-        app: &tauri::AppHandle,
-        pid: u32,
-        marker: TelemetryMarker,
-        confidence: f32,
-        aliases: Vec<String>,
-    ) -> bool {
-        let c = super::configuration();
-        if !c.drops_enabled || !c.labels_visible || confidence >= c.drop_threshold {
-            return false;
-        }
-        self.submit(
-            app,
-            pid,
-            Kind::Drop(aliases),
-            Some(marker),
-            confidence,
-            c.drops_enforce,
-        );
-        c.drops_enforce
-    }
-    fn submit(
-        &mut self,
-        app: &tauri::AppHandle,
-        pid: u32,
-        kind: Kind,
-        marker: Option<TelemetryMarker>,
-        confidence: f32,
-        enforce: bool,
-    ) {
+    fn submit(&mut self, app: &tauri::AppHandle, pid: u32, kind: Kind) {
         let diagnostic = super::configuration().diagnostic_enabled;
         if self.pending.len() >= 8 {
             super::diagnostics::event(
                 diagnostic,
                 "submit_rejected",
-                serde_json::json!({"pid":pid,"reason":"pending_full","marker":marker}),
+                serde_json::json!({"pid":pid,"reason":"pending_full"}),
             );
             return;
         }
         let Some(service) = app.try_state::<Arc<Vision>>() else {
             return;
         };
-        match service.submit(pid, kind, self.epoch) {
+        match service.submit(pid, kind) {
             Ok(rx) => {
-                super::diagnostics::event(
-                    diagnostic,
-                    "submitted",
-                    serde_json::json!({"pid":pid,"marker":marker,"audio_score":confidence,"enforce":enforce,"scene_epoch":self.epoch}),
-                );
+                super::diagnostics::event(diagnostic, "submitted", serde_json::json!({"pid":pid}));
                 self.pending.push(Pending {
-                    epoch: self.epoch,
                     config_epoch: super::config_epoch(),
-                    marker,
-                    confidence,
-                    enforce,
                     created: Instant::now(),
                     rx,
                 });
@@ -145,7 +182,7 @@ impl AudioVision {
                 super::diagnostics::event(
                     diagnostic,
                     "submit_rejected",
-                    serde_json::json!({"pid":pid,"marker":marker,"error":super::diagnostics::short(&error)}),
+                    serde_json::json!({"pid":pid,"error":super::diagnostics::short(&error)}),
                 );
                 service.status.lock().message = error;
             }
@@ -155,29 +192,25 @@ impl AudioVision {
         let c = super::configuration();
         let mut out = Vec::new();
         self.pending.retain(|p| {
-            if p.epoch != self.epoch
-                || p.config_epoch != super::config_epoch()
+            if p.config_epoch != super::config_epoch()
                 || p.created.elapsed() > Duration::from_secs(6)
             {
-                super::diagnostics::event(c.diagnostic_enabled,"result_discarded",serde_json::json!({"marker":p.marker,"scene_epoch":p.epoch,"age_ms":p.created.elapsed().as_secs_f64()*1000.0,"reason":if p.epoch!=self.epoch {"scene_changed"}else if p.config_epoch!=super::config_epoch(){"config_changed"}else{"timeout"}}));
+                super::diagnostics::event(c.diagnostic_enabled,"result_discarded",serde_json::json!({"age_ms":p.created.elapsed().as_secs_f64()*1000.0,"reason":if p.config_epoch!=super::config_epoch(){"config_changed"}else{"timeout"}}));
                 return false;
             }
             match p.rx.try_recv() {
                 Ok(Ok(Some(candidate))) => {
-                    super::diagnostics::event(c.diagnostic_enabled,"result_consumed",serde_json::json!({"marker":p.marker,"name":super::diagnostics::short(&candidate.name),"action":if p.marker.is_none(){"area_name_update"}else if p.enforce && c.drops_enabled && c.drops_enforce{"confirmed_drop"}else{"observation_only"}}));
-                    if let Some(marker) = p.marker {
-                        if p.enforce && c.drops_enabled && c.drops_enforce {
-                            out.push(Evidence::Drop(marker, p.confidence));
+                    if c.area_enabled {
+                        if let Some(candidate) = self.fusion.accept(candidate, p.created) {
+                            out.push(Evidence::Area(candidate));
                         }
-                    } else if c.area_enabled {
-                        out.push(Evidence::Area(candidate));
                     }
                     false
                 }
                 Err(mpsc::TryRecvError::Empty) => true,
                 other => {
                     let reason=match other {Ok(Ok(None))=>"unmatched",Ok(Err(_))=>"unavailable",Err(_)=>"worker_disconnected",_=>"discarded"};
-                    super::diagnostics::event(c.diagnostic_enabled,"result_not_applied",serde_json::json!({"marker":p.marker,"reason":reason,"enforce":p.enforce}));
+                    super::diagnostics::event(c.diagnostic_enabled,"result_not_applied",serde_json::json!({"reason":reason}));
                     false
                 },
             }
@@ -192,6 +225,107 @@ mod tests {
     use crate::rune_audio::catalog::{
         AreaCatalogEntry, AreaCatalogFile, LocationKind, AREA_CATALOG_FILE_NAME,
     };
+
+    fn evidence(name: &str, audio: bool, announcement: u64) -> Candidate {
+        Candidate {
+            name: name.into(),
+            location: Some(crate::rune_audio::catalog::NamedLocation {
+                scene_name: name.into(),
+                scene_name_en: name.into(),
+                kind: LocationKind::Wilderness,
+            }),
+            audio_mapped: audio,
+            announcement: (!audio).then_some(announcement),
+            confidence: 0.95,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn independent_channels_accept_either_source_without_three_second_ocr_lockout() {
+        let now = Instant::now();
+        let mut fusion = SceneFusion::default();
+        assert!(fusion.accept(evidence("先祖之路", true, 0), now).is_some());
+        // A new visual entry is useful even immediately after an audio entry.
+        assert!(fusion
+            .accept(
+                evidence("水晶通道", false, 1),
+                now + Duration::from_millis(100)
+            )
+            .is_some());
+        assert!(fusion
+            .accept(evidence("水晶通道", false, 1), now + Duration::from_secs(1))
+            .is_none());
+        let mut visual_only = SceneFusion::default();
+        assert!(visual_only
+            .accept(evidence("先祖之路", false, 2), now)
+            .is_some());
+    }
+
+    #[test]
+    fn conflicting_audio_requires_fresh_confirmation_and_cached_ocr_cannot_revert_it() {
+        let now = Instant::now();
+        let mut fusion = SceneFusion::default();
+        let visual = evidence("先祖之路", false, 1);
+        fusion.accept(visual.clone(), now).unwrap();
+        let audio = evidence("水晶通道", true, 0);
+        assert!(fusion
+            .accept(audio.clone(), now + Duration::from_secs(2))
+            .is_none());
+        assert!(fusion
+            .accept(audio.clone(), now + Duration::from_millis(2100))
+            .is_none());
+        assert!(fusion.accept(audio, now + Duration::from_secs(3)).is_some());
+        assert!(fusion
+            .accept(visual, now + Duration::from_secs(4))
+            .is_none());
+        assert!(fusion
+            .accept(evidence("先祖之路", false, 2), now + Duration::from_secs(5))
+            .is_some());
+    }
+
+    #[test]
+    fn stale_inflight_ocr_is_ignored_and_late_tz_refines_current_entry() {
+        let now = Instant::now();
+        let mut fusion = SceneFusion::default();
+        fusion
+            .accept(evidence("水晶通道", true, 0), now + Duration::from_secs(1))
+            .unwrap();
+        assert!(fusion.accept(evidence("先祖之路", false, 1), now).is_none());
+        let mut visual = evidence("水晶通道", false, 2);
+        fusion
+            .accept(visual.clone(), now + Duration::from_secs(2))
+            .unwrap();
+        visual.tz = true;
+        assert!(
+            fusion
+                .accept(visual.clone(), now + Duration::from_secs(3))
+                .unwrap()
+                .tz
+        );
+        assert!(fusion
+            .accept(visual, now + Duration::from_secs(4))
+            .is_none());
+    }
+
+    #[test]
+    fn floor_evidence_has_one_statistical_identity() {
+        let now = Instant::now();
+        let mut fusion = SceneFusion::default();
+        let first = evidence("地下墓穴一层", false, 1);
+        let second = evidence("地下墓穴二层", true, 0);
+        assert_eq!(scene_key(&first), scene_key(&second));
+        fusion.accept(first, now).unwrap();
+        assert!(fusion
+            .accept(second, now + Duration::from_secs(1))
+            .is_none());
+        assert!(fusion
+            .accept(
+                evidence("地下墓穴二层", false, 2),
+                now + Duration::from_secs(2)
+            )
+            .is_some());
+    }
 
     fn catalog_with_names(names: &[(u32, &str, &str)]) -> LocationCatalog {
         let directory = std::env::temp_dir().join(format!("named-scenes-{}", uuid::Uuid::new_v4()));
@@ -220,6 +354,34 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(directory).unwrap();
         catalog
+    }
+
+    #[test]
+    fn audio_accepts_only_named_locations_and_repeated_ambience_does_not_renew_priority() {
+        let catalog = catalog_with_names(&[
+            (104, "绝望平原", "Plains of Despair"),
+            (105, "地图 Area 105", "Area 105"),
+        ]);
+        let mut vision = AudioVision::default();
+        let (_tx, rx) = mpsc::channel();
+        vision.pending.push(Pending {
+            config_epoch: 0,
+            created: Instant::now(),
+            rx,
+        });
+        assert!(vision
+            .observe_audio_area(TelemetryMarker::Area { area_id: 104 }, &catalog, 0.95)
+            .is_some());
+        let first = vision.fusion.current.as_ref().unwrap().1;
+        assert!(vision
+            .observe_audio_area(TelemetryMarker::Area { area_id: 104 }, &catalog, 0.95)
+            .is_none());
+        assert_eq!(vision.fusion.current.as_ref().unwrap().1, first);
+        assert!(vision
+            .observe_audio_area(TelemetryMarker::Area { area_id: 105 }, &catalog, 0.95)
+            .is_none());
+        assert_eq!(vision.fusion.current.as_ref().unwrap().0.name, "绝望平原");
+        assert_eq!(vision.pending.len(), 1, "unknown audio must not cancel OCR");
     }
 
     #[test]
@@ -299,7 +461,7 @@ mod tests {
             "town".into(),
         );
         let sewer = stopped.completed_segment.unwrap();
-        assert_eq!(sewer.scene_name, "下水道一层");
+        assert_eq!(sewer.scene_name, "下水道");
         assert_eq!(sewer.timer_seconds, 10.0);
     }
 

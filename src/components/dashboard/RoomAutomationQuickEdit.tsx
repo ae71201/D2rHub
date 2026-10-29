@@ -1,3 +1,5 @@
+import { useAccounts } from "../../store/accounts";
+import { switchPrimary } from "../../features/roomAutomation/roles";
 import { RoomCollaborationMode, roomModeLabel } from "../../features/roomAutomation/RoomCollaborationMode";
 import type { CollaborationMode } from "../../features/roomAutomation/types";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -34,6 +36,8 @@ interface RoomAutomationQuickEditProps {
 }
 
 interface RoomNamingDraft {
+  primary_account_id: string;
+  follower_account_ids: string[];
   collaborationMode: CollaborationMode;
   prefix: string;
   password: string;
@@ -104,6 +108,8 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
 
 function namingDraft(config: RoomAutomationConfig): RoomNamingDraft {
   return {
+    primary_account_id: config.primary_account_id,
+    follower_account_ids: [...(config.follower_account_ids ?? [])],
     collaborationMode: config.collaboration_mode ?? "default",
     prefix: config.name_prefix,
     password: config.password,
@@ -142,6 +148,8 @@ export function RoomAutomationQuickEdit({
   language,
   onOpenSettings,
 }: RoomAutomationQuickEditProps) {
+  const allAccounts = useAccounts(state => state.accounts);
+  const accounts = allAccounts.filter(account => account.initialized);
   const locale = normalizeSettingsLanguage(language);
   const copy = QUICK_EDIT_COPY[locale];
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -248,7 +256,9 @@ export function RoomAutomationQuickEdit({
       try {
         const latest = await roomAutomationGateway.getConfig();
         // Preserve live sequence updates and settings this editor did not change.
-        const candidate: RoomAutomationConfig = { ...latest.config };
+        let candidate: RoomAutomationConfig = { ...latest.config };
+        if (fields.has("primary_account_id")) candidate = switchPrimary(candidate, pending.primary_account_id);
+        if (fields.has("follower_account_ids")) candidate.follower_account_ids = pending.follower_account_ids.filter(id => id !== candidate.primary_account_id);
         if (fields.has("collaborationMode")) candidate.collaboration_mode = pending.collaborationMode;
         if (fields.has("prefix")) candidate.name_prefix = pending.prefix;
         if (fields.has("password")) candidate.password = pending.password;
@@ -339,6 +349,15 @@ export function RoomAutomationQuickEdit({
           </header>
 
           <fieldset className="room-quick-edit-fields" disabled={saving}>
+          <label>{locale === "en-US" ? "Leader" : "主号"}<select aria-label={locale === "en-US" ? "Leader" : "主号"} value={draft.primary_account_id} onChange={event => {
+            const next = switchPrimary(draft, event.target.value);
+            updateDraft({ primary_account_id: next.primary_account_id, follower_account_ids: next.follower_account_ids });
+          }}><option value="">—</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.display_name || account.id}</option>)}</select></label>
+          <p className="room-quick-role-label">{locale === "en-US" ? "Followers" : "小号"}</p>
+          <div className="scheme-account-picker" aria-label={locale === "en-US" ? "Followers" : "小号"}>
+            {accounts.filter(account => account.id !== draft.primary_account_id).map(account => <label key={account.id}><input type="checkbox" checked={draft.follower_account_ids.includes(account.id)} onChange={event => updateDraft({ follower_account_ids: event.target.checked ? [...draft.follower_account_ids, account.id] : draft.follower_account_ids.filter(id => id !== account.id) })}/>{account.display_name || account.id}</label>)}
+          </div>
+          <p className="feature-help">{locale === "en-US" ? "Changing leader keeps the other followers. Applied when closed." : "切换主号保留其他小号，旧主号自动加入小号。关闭时应用。"}</p>
           <RoomCollaborationMode compact value={draft.collaborationMode} onChange={collaborationMode => updateDraft({ collaborationMode })} disabled={saving} en={locale === "en-US"} />
           <div className="room-quick-toolbar">
             <span>{locale === "en-US" ? "Room rule" : "房间规则"}</span>

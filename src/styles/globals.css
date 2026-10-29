@@ -2481,25 +2481,6 @@ html, body, #root {
   box-shadow: none;
 }
 
-.overlay-account-scroll {
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
-  touch-action: pan-y;
-}
-.overlay-account-scroll::-webkit-scrollbar {
-  display: none;
-}
-.overlay-account-scroll.is-scrollable,
-.overlay-account-scroll.is-scrollable * {
-  -webkit-app-region: no-drag;
-}
-.overlay-account-scroll.is-scrollable {
-  cursor: grab;
-}
-.overlay-account-scroll.is-scrollable[data-dragging="true"] {
-  cursor: grabbing;
-}
-
 .overlay-window-mini {
   flex-direction: row;
   align-items: center;
@@ -2561,11 +2542,6 @@ html, body, #root {
   bottom: 0;
   left: 0;
   cursor: nesw-resize;
-}
-
-.overlay-account-pill {
-  padding-block: 1px;
-  line-height: 1;
 }
 
 .overlay-mini-terror-zone {

@@ -44,15 +44,25 @@ impl DropPresenceGate {
         self.observe_with_confidence(marker, observed_at_frame, 1.0)
     }
 
-    /// High-confidence drops are accepted immediately. A lower-confidence packet must be
-    /// followed by the same identity on a separate ground heartbeat before it becomes a
-    /// logical drop. This keeps the detector's configured sensitivity without persisting a
-    /// one-off correlation sidelobe as a rare drop.
+    /// Legacy callers without packet-pair evidence require a second ground heartbeat
+    /// for low-confidence observations. The monitor uses observe_with_evidence so two
+    /// independently verified copies in one playback can also confirm a drop.
+    #[cfg(test)]
     pub fn observe_with_confidence(
         &mut self,
         marker: TelemetryMarker,
         observed_at_frame: u64,
         confidence: f32,
+    ) -> bool {
+        self.observe_with_evidence(marker, observed_at_frame, confidence, false)
+    }
+
+    pub fn observe_with_evidence(
+        &mut self,
+        marker: TelemetryMarker,
+        observed_at_frame: u64,
+        confidence: f32,
+        repeated: bool,
     ) -> bool {
         if !matches!(
             marker,
@@ -78,7 +88,7 @@ impl DropPresenceGate {
             return false;
         }
 
-        if confidence >= Self::IMMEDIATE_CONFIRMATION_CONFIDENCE {
+        if repeated || confidence >= Self::IMMEDIATE_CONFIRMATION_CONFIDENCE {
             self.last_seen.insert(marker, observed_at_frame);
             self.pending_low_confidence.remove(&marker);
             return true;
@@ -295,6 +305,7 @@ pub struct SegmentTracker {
     revision: u64,
     sample_rate: u32,
     current_announcement: Option<u64>,
+    current_detail: Option<String>,
     #[cfg(test)]
     catalog: LocationCatalog,
 }
@@ -332,6 +343,7 @@ impl SegmentTracker {
             revision: 0,
             sample_rate,
             current_announcement: None,
+            current_detail: None,
             #[cfg(test)]
             catalog,
         }
@@ -449,14 +461,31 @@ impl SegmentTracker {
         observed_at_ms: i64,
         absolute_time: String,
     ) -> TrackingOutcome {
-        let exact = TrackedLocation::named(location, tz);
+        let detail = scene_name_identity(&location.scene_name);
+        let floor_changed = self.current_detail.as_ref().is_some_and(|v| *v != detail);
+        self.current_detail = Some(detail);
+        let mut exact = TrackedLocation::named(location.statistics_location(), tz);
         let same_scene = self.current_location.as_ref().is_some_and(|current| {
             current.kind == exact.kind
                 && scene_name_identity(&current.scene_name)
                     == scene_name_identity(&exact.scene_name)
         });
-        let same_entry =
-            announcement.is_some() && announcement == self.current_announcement && same_scene;
+        // Audio and the subsequent screenshot describe one entry. Adopt the
+        // first visual announcement without splitting its existing timer.
+        let same_entry = same_scene
+            && (floor_changed
+                || announcement.is_none()
+                || self.current_announcement.is_none()
+                || announcement == self.current_announcement);
+        if same_entry {
+            exact.tz |= self
+                .current_location
+                .as_ref()
+                .is_some_and(|current| current.tz);
+            if announcement.is_some() {
+                self.current_announcement = announcement;
+            }
+        }
         if same_scene
             && self
                 .current_location
@@ -674,78 +703,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ocr_floor_changes_split_wall_clock_timers_and_same_scene_is_idempotent() {
+    fn floors_share_timer_but_different_regions_split_and_tz_refines() {
         let mut tracker = tracker();
         let location = |name: &str| NamedLocation {
             scene_name: name.into(),
             scene_name_en: name.into(),
             kind: LocationKind::Wilderness,
         };
-        let names = [
-            "女眷住处一层",
-            "女眷住处二层",
-            "王宫地下一层",
-            "王宫地下二层",
-        ];
-        let times = [1_000, 4_000, 8_000, 13_000];
-        let mut journey = None;
-        for (index, name) in names.iter().enumerate() {
-            let outcome = tracker.observe_visual_location(
-                location(name),
-                false,
-                None,
-                times[index],
-                "sample".into(),
-            );
-            assert!(outcome.changed);
-            assert_eq!(outcome.snapshot.current_scene, *name);
-            assert_eq!(outcome.snapshot.timer_started_at_ms, Some(times[index]));
-            if index == 0 {
-                assert!(outcome.completed_segment.is_none());
-                journey = tracker.journey_id.clone();
-            } else {
-                let finished = outcome.completed_segment.unwrap();
-                assert_eq!(finished.scene_name, names[index - 1]);
-                assert_eq!(
-                    finished.timer_seconds,
-                    (times[index] - times[index - 1]) as f64 / 1000.0
-                );
-                assert_eq!(Some(finished.journey_id), journey);
-            }
-            let repeat = tracker.observe_visual_location(
-                location(name),
-                false,
-                None,
-                times[index] + 500,
-                "repeat".into(),
-            );
-            assert!(!repeat.changed);
-            assert_eq!(repeat.snapshot.timer_started_at_ms, Some(times[index]));
-        }
-        let tz =
-            tracker.observe_visual_location(location(names[3]), true, None, 15_000, "tz".into());
-        assert!(tz.changed);
-        assert!(tz.snapshot.tz);
-        assert_eq!(tz.completed_segment.unwrap().timer_seconds, 2.0);
-        let normal = tracker.observe_visual_location(
-            location(names[3]),
+        let first = tracker.observe_visual_location(
+            location("女眷住处一层"),
             false,
-            None,
-            17_000,
-            "normal".into(),
+            Some(1),
+            1_000,
+            "first".into(),
         );
-        assert!(normal.changed);
-        assert!(!normal.snapshot.tz);
-        assert_eq!(normal.completed_segment.unwrap().timer_seconds, 2.0);
+        assert_eq!(first.snapshot.current_scene, "女眷住处");
+        let floor = tracker.observe_visual_location(
+            location("女眷住处二层"),
+            false,
+            Some(2),
+            4_000,
+            "floor".into(),
+        );
+        assert!(!floor.changed);
+        assert_eq!(floor.snapshot.timer_started_at_ms, Some(1_000));
+        assert!(floor.completed_segment.is_none());
+        let region = tracker.observe_visual_location(
+            location("王宫地下一层"),
+            false,
+            Some(3),
+            8_000,
+            "region".into(),
+        );
+        assert_eq!(region.completed_segment.unwrap().timer_seconds, 7.0);
+        assert_eq!(region.snapshot.current_scene, "王宫地下");
+        let floor = tracker.observe_visual_location(
+            location("王宫地下二层"),
+            true,
+            Some(4),
+            13_000,
+            "floor".into(),
+        );
+        assert!(floor.snapshot.tz);
+        assert!(floor.completed_segment.is_none());
+        assert_eq!(floor.snapshot.timer_started_at_ms, Some(8_000));
+        let normal = tracker.observe_visual_location(
+            location("王宫地下二层"),
+            false,
+            Some(4),
+            17_000,
+            "fade".into(),
+        );
+        assert!(!normal.changed);
+        assert!(normal.snapshot.tz);
         let town = NamedLocation {
             scene_name: "鲁高因".into(),
             scene_name_en: "Lut Gholein".into(),
             kind: LocationKind::Town,
         };
-        let stopped = tracker.observe_visual_location(town, false, None, 20_000, "town".into());
-        assert_eq!(stopped.completed_segment.unwrap().timer_seconds, 3.0);
+        let stopped = tracker.observe_visual_location(town, false, Some(5), 20_000, "town".into());
+        let finished = stopped.completed_segment.unwrap();
+        assert_eq!(finished.scene_name, "王宫地下");
+        assert_eq!(finished.timer_seconds, 12.0);
         assert!(!stopped.snapshot.is_timing);
-        assert!(stopped.snapshot.is_town);
     }
     #[test]
     fn late_tz_text_refines_one_entry_but_new_entry_restarts_the_same_area() {
@@ -1052,5 +1072,15 @@ mod tests {
         assert!(!gate.observe(TelemetryMarker::Rune { rune_number: 0 }, 400));
         assert!(!gate.observe(TelemetryMarker::Rune { rune_number: 34 }, 500));
         assert!(gate.observe(TelemetryMarker::Item { item_id: 40 }, 600));
+    }
+    #[test]
+    fn verified_packet_pair_confirms_a_single_playback_once() {
+        let mut gate = DropPresenceGate::new(48_000);
+        let marker = TelemetryMarker::Rune { rune_number: 25 };
+        assert!(!gate.observe_with_evidence(marker, 1000, 0.60, false));
+        assert!(gate.observe_with_evidence(marker, 8128, 0.60, true));
+        assert!(!gate.observe_with_evidence(marker, 16000, 0.60, true));
+        gate.clear();
+        assert!(gate.observe_with_evidence(marker, 20000, 0.60, true));
     }
 }
